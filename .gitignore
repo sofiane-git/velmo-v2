@@ -49,3 +49,5 @@ chroma-data/
 # MLOps run artifacts
 mlops/report.md
 mlops/*.json
+
+archives/
