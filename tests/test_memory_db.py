@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -24,7 +22,8 @@ def test_new_id_has_prefix():
 
 
 def test_unreachable_postgres_falls_back_to_sqlite():
-    engine = make_memory_engine("postgresql+psycopg://x:x@127.0.0.1:1/doesnotexist")
+    with pytest.warns(RuntimeWarning, match="injoignable"):
+        engine = make_memory_engine("postgresql+psycopg://x:x@127.0.0.1:1/doesnotexist")
     assert engine.url.drivername == "sqlite"
 
 

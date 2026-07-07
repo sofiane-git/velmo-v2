@@ -9,7 +9,8 @@ from __future__ import annotations
 import os
 import sqlite3
 import uuid
-from datetime import datetime, timedelta
+import warnings
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import (
@@ -24,7 +25,6 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
-    select,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -134,13 +134,22 @@ def _postgres_reachable(url: str, timeout_seconds: int = 1) -> bool:
 def make_memory_engine(url: str | None = None) -> Engine:
     """Postgres réel si `url` (ou `DB_URL`) est joignable ; sinon SQLite fichier
     persistant (`var/velmo_memory.db`) — jamais `:memory:` par défaut, pour que
-    deux `MemoryManager()` séparés partagent le même état (R2). Une `url`
-    explicite est toujours utilisée telle quelle (pas de sonde, pas de repli) :
-    c'est le point d'entrée des tests qui veulent une base isolée.
+    deux `MemoryManager()` séparés partagent le même état (R2).
+
+    Une `url` explicite non-Postgres (ex. `sqlite:///:memory:`) est toujours
+    utilisée telle quelle, sans sonde ni repli : c'est le point d'entrée des
+    tests qui veulent une base isolée. Une `url` explicite Postgres est en
+    revanche sondée comme le chemin par défaut : si elle est injoignable, on
+    retombe aussi sur le fichier SQLite partagé (avec un avertissement, pas
+    silencieusement).
     """
     if url is not None:
-        # For explicit postgres URLs, fall back to SQLite if unreachable
         if url.startswith("postgresql") and not _postgres_reachable(url):
+            warnings.warn(
+                f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             path = _default_sqlite_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             engine = create_engine(f"sqlite:///{path}", future=True)
@@ -151,6 +160,11 @@ def make_memory_engine(url: str | None = None) -> Engine:
         if _postgres_reachable(pg_url):
             engine = create_engine(pg_url, future=True)
         else:
+            warnings.warn(
+                f"Postgres injoignable ({pg_url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             path = _default_sqlite_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             engine = create_engine(f"sqlite:///{path}", future=True)
@@ -158,7 +172,7 @@ def make_memory_engine(url: str | None = None) -> Engine:
     if engine.url.drivername.startswith("sqlite"):
 
         @event.listens_for(engine, "connect")
-        def _enable_sqlite_fk(dbapi_connection, connection_record):  # noqa: ANN001
+        def _enable_sqlite_fk(dbapi_connection: object, connection_record: object) -> None:
             if isinstance(dbapi_connection, sqlite3.Connection):
                 dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
