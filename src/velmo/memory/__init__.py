@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from .db import (
+    Conversation,
     add_episode,
     append_message,
     delete_episodes_matching,
@@ -125,7 +126,7 @@ class MemoryManager:
         finally:
             session.close()
 
-    def _maybe_compress(self, session, user_id: str, thread) -> None:
+    def _maybe_compress(self, session: Session, user_id: str, thread: Conversation) -> None:
         if thread.token_count <= self.token_budget:
             return
         older = older_messages(session, thread.thread_id, self.keep_last_n_turns * 2, thread.summarized_up_to_turn)
@@ -168,7 +169,7 @@ class MemoryManager:
         finally:
             session.close()
 
-    def inspect(self, user_id: str) -> dict:
+    def inspect(self, user_id: str) -> dict[str, object]:
         session = self._Session()
         try:
             return {

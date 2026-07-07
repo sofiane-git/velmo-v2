@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 from velmo.memory.episodic import LocalEpisodic, get_episodic_backend
 
 
