@@ -230,13 +230,21 @@ def _next_turn(session: Session, thread_id: str) -> int:
     return (last or 0) + 1
 
 
-def append_message(session: Session, thread_id: str, user_id: str, role: str, content: str) -> Message:
+def append_message(
+    session: Session,
+    thread_id: str,
+    user_id: str,
+    role: str,
+    content: str,
+    now: datetime | None = None,
+) -> Message:
     conv = session.get(Conversation, thread_id)
     assert conv is not None
     turn = _next_turn(session, thread_id)
     msg = Message(id=new_id("msg"), thread_id=thread_id, user_id=user_id, role=role, content=content, turn=turn)
     session.add(msg)
     conv.token_count += max(1, len(content) // 4)
+    conv.last_message_at = now or datetime.utcnow()
     return msg
 
 

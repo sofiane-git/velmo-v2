@@ -97,13 +97,26 @@ def test_thread_reused_within_session_gap_and_rotated_after():
     get_or_create_user(session, "u3")
     t0 = datetime(2026, 1, 1, 10, 0, 0)
     thread1 = get_or_create_active_thread(session, "u3", session_gap_hours=4, now=t0)
-    append_message(session, thread1.thread_id, "u3", "user", "hello")
+    append_message(session, thread1.thread_id, "u3", "user", "hello", now=t0)
     session.commit()
 
     thread_same = get_or_create_active_thread(session, "u3", session_gap_hours=4, now=t0 + timedelta(hours=1))
     assert thread_same.thread_id == thread1.thread_id
 
-    thread_new = get_or_create_active_thread(session, "u3", session_gap_hours=4, now=t0 + timedelta(hours=5))
+    # Activity at t0+1h must refresh last_message_at (last-activity semantics,
+    # not thread-creation-time semantics): a check at t0+4h30 is only 3h30
+    # after that activity, so the thread must still be considered fresh even
+    # though it is 4h30 after the thread was first opened.
+    append_message(session, thread_same.thread_id, "u3", "user", "still here", now=t0 + timedelta(hours=1))
+    session.commit()
+    thread_still_same = get_or_create_active_thread(
+        session, "u3", session_gap_hours=4, now=t0 + timedelta(hours=4, minutes=30)
+    )
+    assert thread_still_same.thread_id == thread1.thread_id
+
+    thread_new = get_or_create_active_thread(
+        session, "u3", session_gap_hours=4, now=t0 + timedelta(hours=1) + timedelta(hours=5)
+    )
     assert thread_new.thread_id != thread1.thread_id
     session.close()
 
