@@ -46,8 +46,14 @@ out/
 *.db
 chroma-data/
 
+# Memory subsystem SQLite fallback (offline/dev persistence)
+var/
+
 # MLOps run artifacts
 mlops/report.md
 mlops/*.json
 
 archives/
+
+# Superpowers skill specs/plans (local working docs, not committed)
+docs/superpowers/
