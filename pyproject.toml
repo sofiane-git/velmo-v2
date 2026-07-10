@@ -24,6 +24,15 @@ llm = [
     "langchain-azure-ai>=1.0,<2.0",
     "azure-ai-inference>=1.0.0b9",
 ]
+# Garde-fous : classifieur de modération local + juge/Prompt Shields/PII Azure.
+guardrails = [
+    "pyyaml>=6,<7",
+    "requests>=2,<3",
+    "openai>=1.50,<3",
+    "azure-ai-contentsafety>=1.0,<2",
+    "azure-ai-textanalytics>=5.3,<6",
+    "detoxify>=0.5,<0.6",
+]
 
 [dependency-groups]
 dev = [
