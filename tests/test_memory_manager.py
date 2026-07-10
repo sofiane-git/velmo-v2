@@ -77,3 +77,22 @@ def test_inspect_shape():
     assert set(result.keys()) == {"facts", "procedures", "episodic"}
     assert result["facts"]["shoe_size"] == "L"
     assert result["procedures"] == []
+
+
+def test_write_persists_procedures_from_extractor():
+    from velmo.memory.extractor import ExtractedProcedure, ExtractionResult
+
+    class _ProcExtractor:
+        def extract(self, user_message, assistant_message):
+            return ExtractionResult(
+                procedures=[
+                    ExtractedProcedure(
+                        trigger="refund_offer", rule="Proposer un bon de 10%.", confidence=0.9
+                    )
+                ]
+            )
+
+    mm = _mm(extractor=_ProcExtractor())
+    mm.write("up", "Peu importe.", "Ok.")
+    procs = mm.inspect("up")["procedures"]
+    assert any(p["trigger"] == "refund_offer" for p in procs)

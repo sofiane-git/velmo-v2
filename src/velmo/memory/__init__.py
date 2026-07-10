@@ -28,8 +28,11 @@ from .db import (
     recent_messages,
     redact_messages,
     upsert_fact,
+    upsert_procedure,
     write_audit,
 )
+from velmo.llm import LLM, get_llm
+
 from .episodic import EpisodicStore, get_episodic_backend
 from .extractor import FactExtractor, RuleBasedExtractor
 
@@ -68,6 +71,7 @@ class MemoryManager:
         db_url: str | None = None,
         extractor: FactExtractor | None = None,
         episodic_store: EpisodicStore | None = None,
+        llm: LLM | None = None,
     ) -> None:
         self.token_budget = token_budget
         self.confidence_threshold = confidence_threshold
@@ -77,6 +81,7 @@ class MemoryManager:
         self._Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
         self.extractor = extractor or RuleBasedExtractor()
         self.episodic_store = episodic_store or get_episodic_backend()
+        self.llm = llm or get_llm()
 
     def read(self, user_id: str, message: str) -> MemoryContext:
         session = self._Session()
@@ -116,6 +121,15 @@ class MemoryManager:
                     write_audit(session, user_id, "write", f"fact:{ef.key}")
                 if ef.type == "dispute":
                     has_dispute = True
+
+            for ep in extracted.procedures:
+                if ep.confidence < self.confidence_threshold:
+                    continue
+                _, changed = upsert_procedure(
+                    session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
+                )
+                if changed:
+                    write_audit(session, user_id, "write", f"procedure:{ep.trigger}")
             session.commit()
 
             if has_dispute:
