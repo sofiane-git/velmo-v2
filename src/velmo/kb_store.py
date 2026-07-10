@@ -5,11 +5,13 @@ Les deux exposent `search(query, k) -> list[dict]` renvoyant des extraits sourc�
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
 import unicodedata
 from pathlib import Path
+from urllib.parse import urlparse
 
 KB_DOCS_DIR = Path(__file__).resolve().parents[2] / "kb" / "docs"
 
@@ -75,7 +77,8 @@ class ChromaKB:
 
 def get_kb():
     """Renvoie le backend Chroma si configuré et disponible, sinon le backend local."""
-    if not os.getenv("CHROMA_URL"):
+    chroma_url = os.getenv("CHROMA_URL")
+    if not chroma_url:
         return LocalKB()
     try:
         import chromadb
@@ -83,9 +86,16 @@ def get_kb():
     except ImportError:
         return LocalKB()
 
-    client = chromadb.HttpClient(host="chroma", port=8000)
-    embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
-    )
-    collection = client.get_or_create_collection("velmo_faq", embedding_function=embedder)
-    return ChromaKB(collection)
+    try:
+        parsed = urlparse(chroma_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 8000
+        client = chromadb.HttpClient(host=host, port=port)
+        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+        )
+        collection = client.get_or_create_collection("velmo_faq", embedding_function=embedder)
+        return ChromaKB(collection)
+    except Exception as exc:
+        logging.warning("[kb] Chroma indisponible (%s) — fallback sur LocalKB.", exc)
+        return LocalKB()
