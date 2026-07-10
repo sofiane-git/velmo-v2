@@ -21,13 +21,13 @@ from velmo.llm import LLM
 class ExtractedFact(BaseModel):
     key: str
     value: str
-    type: str          # preference | identity | order | dispute
+    type: str  # preference | identity | order | dispute
     confidence: float  # 0..1
 
 
 class ExtractedProcedure(BaseModel):
-    trigger: str       # contexte d'application, ex. "refund_offer"
-    rule: str          # instruction en langage naturel
+    trigger: str  # contexte d'application, ex. "refund_offer"
+    rule: str  # instruction en langage naturel
     confidence: float  # 0..1
 
 
@@ -84,7 +84,9 @@ class RuleBasedExtractor:
             m = _SIZE_RE.search(user_message)
             if m:
                 facts.append(
-                    ExtractedFact(key="shoe_size", value=m.group(1), type="preference", confidence=0.9)
+                    ExtractedFact(
+                        key="shoe_size", value=m.group(1), type="preference", confidence=0.9
+                    )
                 )
 
         if any(t in low for t in _CLUB_TRIGGERS):
@@ -92,7 +94,10 @@ class RuleBasedExtractor:
             if m:
                 facts.append(
                     ExtractedFact(
-                        key="clubs", value=m.group(1).strip(" ."), type="preference", confidence=0.85
+                        key="clubs",
+                        value=m.group(1).strip(" ."),
+                        type="preference",
+                        confidence=0.85,
                     )
                 )
 
@@ -132,7 +137,10 @@ class RuleBasedExtractor:
             if m:
                 facts.append(
                     ExtractedFact(
-                        key="address", value=m.group(1).strip(" ."), type="identity", confidence=0.85
+                        key="address",
+                        value=m.group(1).strip(" ."),
+                        type="identity",
+                        confidence=0.85,
                     )
                 )
 

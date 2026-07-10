@@ -29,7 +29,9 @@ def test_clubs_extracted():
 
 
 def test_segment_revendeur_extracted():
-    result = RuleBasedExtractor().extract("Je suis revendeur, je commande souvent en volume.", "Note.")
+    result = RuleBasedExtractor().extract(
+        "Je suis revendeur, je commande souvent en volume.", "Note."
+    )
     fact = next(f for f in result.facts if f.key == "segment")
     assert fact.value == "revendeur"
 
@@ -87,9 +89,11 @@ class _StubJSONLLM:
 
 def test_llm_extractor_parses_facts_and_procedures():
     payload = (
-        'Voici le résultat :\n'
-        '{"facts": [{"key": "shoe_size", "value": "L", "type": "preference", "confidence": 0.9}], '
-        '"procedures": [{"trigger": "refund_offer", "rule": "Proposer un bon de 10%.", "confidence": 0.8}]}'
+        "Voici le résultat :\n"
+        '{"facts": [{"key": "shoe_size", "value": "L", '
+        '"type": "preference", "confidence": 0.9}], '
+        '"procedures": [{"trigger": "refund_offer", '
+        '"rule": "Proposer un bon de 10%.", "confidence": 0.8}]}'
     )
     result = LLMExtractor(_StubJSONLLM(payload)).extract("Je fais du L.", "Noté.")
     assert result.facts[0].key == "shoe_size"
