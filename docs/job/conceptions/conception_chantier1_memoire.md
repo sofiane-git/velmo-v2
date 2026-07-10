@@ -283,6 +283,8 @@ Trois leviers combinés :
 
 Point clé : le « juge » de la mémoire long terme n'est **ni l'agent principal, ni un humain**, mais un **composant LLM dédié** qui tourne en post-traitement. On sépare _répondre_ (agent) et _mémoriser_ (extracteur) pour que le jugement de rétention n'interfère pas avec la réponse au client.
 
+> **Quel modèle pour l'extracteur ?** Pas le modèle de chat (Kimi-K2.6) — tâche étroite et structurée (JSON court, faits/règles), pas de génération conversationnelle : un modèle **plus petit/moins cher suffit**, même logique que le split classifieur-local/LLM-juge-cloud du _[chantier 2](conception_chantier2_guardrails.md)_. Décision : réutiliser **gpt-4o-mini** (déjà provisionné pour le LLM-juge guardrails, coût déjà couvert formation) plutôt qu'un 3ᵉ modèle à déployer — évite de multiplier les endpoints/credentials. Contrepartie assumée : couple légèrement le déploiement du chantier 1 (mémoire) à celui du chantier 2 (guardrails) sur le même modèle Azure OpenAI. Sans lien avec `get_llm()` par défaut (Kimi-K2.6, hors-ligne = `EchoLLM`) : l'extracteur LLM reçoit son propre client `LLM` injecté au constructeur, indépendant du modèle utilisé pour répondre au client ou pour le résumé glissant.
+
 ### Le flux de décision (à chaque fin de tour)
 
 ```mermaid
