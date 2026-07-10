@@ -17,6 +17,7 @@ from velmo.memory.db import (
     append_message,
     delete_episodes_matching,
     delete_facts_matching,
+    delete_procedure_matching,
     get_or_create_active_thread,
     get_or_create_user,
     list_episodes,
@@ -29,6 +30,7 @@ from velmo.memory.db import (
     recent_messages,
     redact_messages,
     upsert_fact,
+    upsert_procedure,
     write_audit,
 )
 
@@ -263,4 +265,38 @@ def test_list_procedures_empty_by_default():
     session = _session()
     get_or_create_user(session, "u10")
     assert list_procedures(session, "u10") == []
+    session.close()
+
+
+def test_upsert_procedure_inserts_then_updates():
+    session = _session()
+    get_or_create_user(session, "p1")
+
+    proc, changed = upsert_procedure(session, "p1", "refund_offer", "Bon de 10%.", 0.8, "th-x")
+    session.commit()
+    assert changed is True
+    assert proc.trigger == "refund_offer"
+
+    _, changed_same = upsert_procedure(session, "p1", "refund_offer", "Bon de 10%.", 0.8, "th-x")
+    assert changed_same is False  # règle identique = pas de changement
+
+    updated, changed_new = upsert_procedure(
+        session, "p1", "refund_offer", "Bon de 20%.", 0.9, "th-y"
+    )
+    session.commit()
+    assert changed_new is True
+    assert updated.rule == "Bon de 20%."
+
+
+def test_delete_procedure_matching_by_trigger_and_rule():
+    session = _session()
+    get_or_create_user(session, "p2")
+    upsert_procedure(session, "p2", "refund_offer", "Proposer un geste commercial.", 0.9, None)
+    upsert_procedure(session, "p2", "greeting", "Tutoyer le client.", 0.9, None)
+    session.commit()
+
+    removed = delete_procedure_matching(session, "p2", "refund")
+    session.commit()
+    assert len(removed) == 1
+    assert {p.trigger for p in list_procedures(session, "p2")} == {"greeting"}
     session.close()

@@ -26,6 +26,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
+    or_,
     select,
     text,
 )
@@ -370,6 +371,69 @@ def redact_messages(session: Session, user_id: str, value: str) -> int:
     for msg in rows:
         msg.content = msg.content.replace(value, "[information supprimée]")
     return len(rows)
+
+
+def upsert_procedure(
+    session: Session,
+    user_id: str,
+    trigger: str,
+    rule: str,
+    confidence: float,
+    source_thread_id: str | None,
+) -> tuple[Procedure, bool]:
+    """Insérer ou mettre à jour une procédure.
+
+    Retourne (procédure, booléen) où le booléen indique si la procédure a changé.
+    """
+    existing = session.scalars(
+        select(Procedure).where(
+            Procedure.user_id == user_id, Procedure.trigger == trigger
+        )
+    ).first()
+    now = utcnow()
+    if existing is None:
+        proc = Procedure(
+            id=new_id("proc"),
+            user_id=user_id,
+            trigger=trigger,
+            rule=rule,
+            confidence=confidence,
+            active=True,
+            source_thread_id=source_thread_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(proc)
+        return proc, True
+    if existing.rule == rule:
+        return existing, False
+    existing.rule = rule
+    existing.confidence = confidence
+    existing.source_thread_id = source_thread_id
+    existing.updated_at = now
+    return existing, True
+
+
+def delete_procedure_matching(
+    session: Session, user_id: str, target: str
+) -> list[Procedure]:
+    """Supprimer les procédures dont le trigger ou la règle contient target.
+
+    Retourne la liste des procédures supprimées.
+    """
+    pattern = f"%{_escape_like(target)}%"
+    matches = session.scalars(
+        select(Procedure).where(
+            Procedure.user_id == user_id,
+            or_(
+                Procedure.trigger.ilike(pattern, escape="\\"),
+                Procedure.rule.ilike(pattern, escape="\\"),
+            ),
+        )
+    ).all()
+    for proc in matches:
+        session.delete(proc)
+    return list(matches)
 
 
 def add_episode(
