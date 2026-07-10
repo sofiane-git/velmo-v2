@@ -106,7 +106,7 @@ class MemoryManager:
 
             extracted = self.extractor.extract(user_message, assistant_message)
             has_dispute = False
-            for ef in extracted:
+            for ef in extracted.facts:
                 if ef.confidence < self.confidence_threshold:
                     continue
                 _, changed = upsert_fact(
