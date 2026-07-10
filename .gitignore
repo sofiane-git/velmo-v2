@@ -57,3 +57,4 @@ archives/
 
 # Superpowers skill specs/plans (local working docs, not committed)
 docs/superpowers/
+.worktrees/
