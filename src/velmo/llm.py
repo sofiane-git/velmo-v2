@@ -7,7 +7,7 @@ tournent sans dépendre du SDK ni d'un endpoint joignable.
 from __future__ import annotations
 
 import os
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 
 class LLM(Protocol):
@@ -29,7 +29,7 @@ class EchoLLM:
 class AzureLLM:
     """Adapte le modèle de chat Azure AI Inference à l'interface `LLM`."""
 
-    def __init__(self, model) -> None:
+    def __init__(self, model: Any) -> None:
         self._model = model
 
     def invoke(self, system: str, context: str, message: str) -> str:
@@ -37,7 +37,7 @@ class AzureLLM:
         if context:
             messages.append({"role": "system", "content": f"Mémoire:\n{context}"})
         messages.append({"role": "user", "content": message})
-        return self._model.invoke(messages).content
+        return cast(str, self._model.invoke(messages).content)
 
 
 def get_llm() -> LLM:

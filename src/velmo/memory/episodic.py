@@ -9,7 +9,7 @@ import os
 import re
 import unicodedata
 import uuid
-from typing import Protocol
+from typing import Any, Protocol
 
 
 def _strip_accents(s: str) -> str:
@@ -55,7 +55,7 @@ class LocalEpisodic:
 class ChromaEpisodic:
     """Rappel sémantique via ChromaDB, filtré `user_id` en metadata."""
 
-    def __init__(self, collection) -> None:
+    def __init__(self, collection: Any) -> None:
         self._collection = collection
 
     def add(self, user_id: str, summary: str, source_thread_id: str | None) -> str:
@@ -92,7 +92,9 @@ def get_episodic_backend() -> EpisodicStore:
 
     try:
         client = chromadb.HttpClient(host="chroma", port=8000)
-        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
+        # SentenceTransformerEmbeddingFunction est injecté dynamiquement dans le
+        # module par chromadb au runtime (globals()[...] = attr) : invisible à mypy.
+        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(  # type: ignore[attr-defined]
             model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
         )
         collection = client.get_or_create_collection("velmo_episodes", embedding_function=embedder)

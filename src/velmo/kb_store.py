@@ -11,9 +11,16 @@ import os
 import re
 import unicodedata
 from pathlib import Path
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 KB_DOCS_DIR = Path(__file__).resolve().parents[2] / "kb" / "docs"
+
+
+class KnowledgeBase(Protocol):
+    """Interface commune aux backends FAQ (local et Chroma)."""
+
+    def search(self, query: str, k: int = 5) -> list[dict[str, Any]]: ...
 
 
 def _strip_accents(s: str) -> str:
@@ -47,9 +54,9 @@ class LocalKB:
         # terme banal (« livraison », « maillot »).
         self._weight = {tok: math.log(1 + n / count) for tok, count in df.items()}
 
-    def search(self, query: str, k: int = 5) -> list[dict]:
+    def search(self, query: str, k: int = 5) -> list[dict[str, Any]]:
         q = _tokens(query)
-        scored: list[tuple[float, dict]] = []
+        scored: list[tuple[float, dict[str, Any]]] = []
         for source, toks, text in self._indexed:
             score = sum(self._weight.get(tok, 0.0) for tok in (q & toks))
             if score > 0:
@@ -62,10 +69,10 @@ class LocalKB:
 class ChromaKB:
     """Recherche sémantique via Chroma + embeddings multilingues e5."""
 
-    def __init__(self, collection) -> None:
+    def __init__(self, collection: Any) -> None:
         self._collection = collection
 
-    def search(self, query: str, k: int = 5) -> list[dict]:
+    def search(self, query: str, k: int = 5) -> list[dict[str, Any]]:
         result = self._collection.query(query_texts=[query], n_results=k)
         docs = result.get("documents", [[]])[0]
         metas = result.get("metadatas", [[]])[0]
@@ -75,7 +82,7 @@ class ChromaKB:
         ]
 
 
-def get_kb():
+def get_kb() -> KnowledgeBase:
     """Renvoie le backend Chroma si configuré et disponible, sinon le backend local."""
     chroma_url = os.getenv("CHROMA_URL")
     if not chroma_url:
@@ -91,7 +98,9 @@ def get_kb():
         host = parsed.hostname or "localhost"
         port = parsed.port or 8000
         client = chromadb.HttpClient(host=host, port=port)
-        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
+        # SentenceTransformerEmbeddingFunction est injecté dynamiquement dans le
+        # module par chromadb au runtime (globals()[...] = attr) : invisible à mypy.
+        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(  # type: ignore[attr-defined]
             model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
         )
         collection = client.get_or_create_collection("velmo_faq", embedding_function=embedder)

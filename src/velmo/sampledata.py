@@ -8,6 +8,9 @@ les tests (SQLite en mémoire).
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
+
+from sqlalchemy.orm import Session
 
 from .db import (
     Customer,
@@ -177,7 +180,7 @@ def _variants() -> list[ProductVariant]:
     ]
 
 
-def _addr(city: str, zip_: str) -> dict:
+def _addr(city: str, zip_: str) -> dict[str, Any]:
     return {"line1": "12 rue du Stade", "city": city, "zip": zip_, "country": "France"}
 
 
@@ -288,7 +291,7 @@ def _escalations() -> list[Escalation]:
     ]
 
 
-def seed(session) -> None:
+def seed(session: Session) -> None:
     """Insère le jeu de données de référence dans la session fournie."""
     for batch in (
         _customers(),

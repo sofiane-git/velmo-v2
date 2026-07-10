@@ -9,9 +9,13 @@ sont câblés via des composants par défaut (no-op).
 from __future__ import annotations
 
 import re
+from typing import Any, Callable
+
+from sqlalchemy.orm import Session
 
 from . import tools
 from .guardrails import GuardrailEngine
+from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
 from .memory import MemoryManager
 
@@ -71,8 +75,8 @@ class Agent:
         llm: LLM,
         memory: MemoryManager,
         guardrails: GuardrailEngine,
-        session=None,
-        kb=None,
+        session: Session,
+        kb: KnowledgeBase,
     ) -> None:
         self.llm = llm
         self.memory = memory
@@ -166,7 +170,9 @@ class Agent:
 
         return self.llm.invoke(SYSTEM_PROMPT, "", message)
 
-    def _confirm_or_act(self, confirmed: bool, label: str, order_id: str, action) -> str:
+    def _confirm_or_act(
+        self, confirmed: bool, label: str, order_id: str, action: Callable[[], dict[str, Any]]
+    ) -> str:
         if not confirmed:
             return (
                 f"Pour {label} la commande {order_id}, pouvez-vous confirmer ? "
@@ -203,18 +209,19 @@ class Agent:
             from .tools._common import select
 
             for (ref,) in self.session.execute(select(Product.ref)).all():
+                ref = str(ref)
                 if ref.lower() in low:
                     return ref
         return None
 
     @staticmethod
-    def _format_order(result: dict) -> str:
+    def _format_order(result: dict[str, Any]) -> str:
         if result.get("error"):
             return "Je ne trouve pas cette commande à votre nom."
         return f"Votre commande {result['order_id']} est au statut « {result['status']} »."
 
     @staticmethod
-    def _format_tracking(result: dict) -> str:
+    def _format_tracking(result: dict[str, Any]) -> str:
         if result.get("error"):
             return "Je ne trouve pas cette commande à votre nom."
         if not result.get("tracking_number"):
@@ -225,14 +232,14 @@ class Agent:
         )
 
     @staticmethod
-    def _format_kb(result: dict) -> str:
+    def _format_kb(result: dict[str, Any]) -> str:
         if not result.get("found"):
             return "Je n'ai pas trouvé cette information dans notre FAQ."
         top = result["results"][0]
         return f"D'après notre FAQ ({top['source']}) : {top['snippet']}"
 
 
-def build_default_agent(session=None, kb=None) -> Agent:
+def build_default_agent(session: Session | None = None, kb: KnowledgeBase | None = None) -> Agent:
     """Assemble un agent avec composants par défaut, base et FAQ."""
     from .db import session_factory
     from .kb_store import get_kb

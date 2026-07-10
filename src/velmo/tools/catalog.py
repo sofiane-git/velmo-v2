@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from sqlalchemy.orm import Session
+
 from ..db import Product, ProductVariant
 from ._common import select
 
 
-def check_stock(session, product_ref: str, size: str) -> dict:
+def check_stock(session: Session, product_ref: str, size: str) -> dict[str, Any]:
     """Indique si une référence est disponible dans une taille donnée (stock souvent 1)."""
     product = session.get(Product, product_ref)
     if product is None:

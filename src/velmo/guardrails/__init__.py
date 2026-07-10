@@ -7,6 +7,7 @@ Les méthodes de détection (modération, PII, injection, périmètre) sont à c
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 # Catégories de contenus contrôlés.
 CATEGORIES = (
@@ -35,7 +36,7 @@ class Decision:
 class GuardrailEngine:
     """Applique les garde-fous d'entrée et de sortie et journalise les décisions."""
 
-    events: list[dict] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     def check_input(self, message: str) -> Decision:
         """Contrôle un message entrant (modération, injection, périmètre)."""

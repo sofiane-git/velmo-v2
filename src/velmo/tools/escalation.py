@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from sqlalchemy.orm import Session
+
 from ..db import Escalation
 from ._common import new_id
 
 
-def escalate_to_human(session, customer_id: str, reason: str, order_id: str | None = None) -> dict:
+def escalate_to_human(
+    session: Session, customer_id: str, reason: str, order_id: str | None = None
+) -> dict[str, Any]:
     """Passe la main à un humain (litige, montant élevé, commande expédiée)."""
     escalation_id = new_id("esc")
     session.add(
