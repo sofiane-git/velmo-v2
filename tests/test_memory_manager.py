@@ -95,6 +95,20 @@ def test_compression_uses_llm_summary():
     assert ctx.facts.get("order_number") == "O-2024-0101"  # fait critique préservé
 
 
+def test_compression_does_not_corrupt_dispute_fact_from_concatenated_block():
+    mm = _mm(token_budget=20, keep_last_n_turns=1)
+    dispute_msg = "Le maillot recu est un faux, je conteste."
+    mm.write("cdispute", dispute_msg, "Nous traitons ce litige avec attention, je transmets.")
+    mm.write(
+        "cdispute",
+        "Question de suivi numero 1 sur un maillot tres demande.",
+        "Reponse 1.",
+    )
+
+    inspected = mm.inspect("cdispute")
+    assert inspected["facts"]["dispute"] == dispute_msg
+
+
 def test_write_persists_procedures_from_extractor():
     from velmo.memory.extractor import ExtractedProcedure, ExtractionResult
 

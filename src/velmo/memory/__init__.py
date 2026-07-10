@@ -163,6 +163,11 @@ class MemoryManager:
         for ef in extracted.facts:
             if ef.confidence < self.confidence_threshold:
                 continue
+            # La capture "dispute" est tour-par-tour (message unique), pas bloc :
+            # la ré-extraire sur `block` (concaténation multi-tours) corromprait la
+            # valeur déjà capturée correctement à l'écriture.
+            if ef.type == "dispute":
+                continue
             _, changed = upsert_fact(
                 session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id
             )
