@@ -79,6 +79,22 @@ def test_inspect_shape():
     assert result["procedures"] == []
 
 
+def test_compression_uses_llm_summary():
+    class _TagLLM:
+        def invoke(self, system, context, message):
+            return "RESUME_LLM"
+
+    mm = _mm(token_budget=20, keep_last_n_turns=1, llm=_TagLLM())
+    mm.write("csum", "Ma commande prioritaire est O-2024-0101.", "Noté.")
+    for i in range(10):
+        mm.write("csum", f"Question {i} sur un maillot tres demande.", f"Reponse {i}.")
+
+    ctx = mm.read("csum", "Rappel ?")
+    rendered = ctx.render()
+    assert "RESUME_LLM" in rendered  # le résumé provient bien du LLM
+    assert ctx.facts.get("order_number") == "O-2024-0101"  # fait critique préservé
+
+
 def test_write_persists_procedures_from_extractor():
     from velmo.memory.extractor import ExtractedProcedure, ExtractionResult
 

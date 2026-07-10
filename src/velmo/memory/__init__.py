@@ -38,6 +38,12 @@ from .extractor import FactExtractor, RuleBasedExtractor
 
 Turn = tuple[str, str]
 
+SUMMARY_SYSTEM = (
+    "Résume l'historique de conversation en 2-3 phrases maximum. "
+    "Préserve tous les chiffres, numéros de commande, litiges et engagements. "
+    "Ne résume pas les entités nommées."
+)
+
 
 @dataclass
 class MemoryContext:
@@ -150,13 +156,35 @@ class MemoryManager:
         )
         if not older:
             return
-        block = "; ".join(f"{m.role}: {m.content[:80]}" for m in older)
-        thread.summary = (thread.summary + " " if thread.summary else "") + (
-            f"[Résumé tours {older[0].turn}-{older[-1].turn}] {block}"
-        )
+        block = "\n".join(f"{m.role}: {m.content}" for m in older)
+
+        # 1. Extraction préalable : l'info critique quitte le texte volatil avant résumé.
+        extracted = self.extractor.extract(block, "")
+        for ef in extracted.facts:
+            if ef.confidence < self.confidence_threshold:
+                continue
+            _, changed = upsert_fact(
+                session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id
+            )
+            if changed:
+                write_audit(session, user_id, "write", f"fact:{ef.key}")
+        for ep in extracted.procedures:
+            if ep.confidence < self.confidence_threshold:
+                continue
+            _, changed = upsert_procedure(
+                session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
+            )
+            if changed:
+                write_audit(session, user_id, "write", f"procedure:{ep.trigger}")
+
+        # 2. Résumé LLM (remplace la concaténation brute).
+        summary = self.llm.invoke(SUMMARY_SYSTEM, "", block).strip()
+
+        # 3. Persistance.
+        thread.summary = (thread.summary + " " if thread.summary else "") + summary
         thread.summarized_up_to_turn = older[-1].turn
-        episode = add_episode(session, user_id, thread.summary, thread.thread_id)
-        episode.chroma_id = self.episodic_store.add(user_id, block, thread.thread_id)
+        episode = add_episode(session, user_id, summary, thread.thread_id)
+        episode.chroma_id = self.episodic_store.add(user_id, summary, thread.thread_id)
         session.commit()
 
     def remember_fact(self, user_id: str, key: str, value: str) -> None:
