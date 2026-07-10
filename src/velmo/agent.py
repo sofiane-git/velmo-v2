@@ -44,9 +44,22 @@ _ALIASES = {
 }
 
 _FAQ_KEYWORDS = (
-    "frais de port", "frais de livraison", "délai", "delai", "politique de retour",
-    "authenticit", "certificat", "paiement", "réassort", "reassort", "rétractation",
-    "retractation", "entretien", "garantie", "remboursement sous", "conditions d'échange",
+    "frais de port",
+    "frais de livraison",
+    "délai",
+    "delai",
+    "politique de retour",
+    "authenticit",
+    "certificat",
+    "paiement",
+    "réassort",
+    "reassort",
+    "rétractation",
+    "retractation",
+    "entretien",
+    "garantie",
+    "remboursement sous",
+    "conditions d'échange",
 )
 
 
@@ -94,34 +107,50 @@ class Agent:
 
         if order_id and "annul" in low:
             return self._confirm_or_act(
-                confirmed, "annuler", order_id,
+                confirmed,
+                "annuler",
+                order_id,
                 lambda: tools.cancel_order(self.session, order_id, user_id),
             )
         if order_id and "adresse" in low:
             return self._confirm_or_act(
-                confirmed, "modifier l'adresse de", order_id,
+                confirmed,
+                "modifier l'adresse de",
+                order_id,
                 lambda: tools.update_shipping_address(
                     self.session, order_id, user_id, {"line1": "(à préciser)"}
                 ),
             )
-        if order_id and "taille" in low and any(w in low for w in ("chang", "modif", "tromp", "erreur")):
+        if (
+            order_id
+            and "taille" in low
+            and any(w in low for w in ("chang", "modif", "tromp", "erreur"))
+        ):
             size = SIZE_RE.search(message)
             new_size = size.group(1) if size else "M"
             return self._confirm_or_act(
-                confirmed, f"changer la taille (vers {new_size}) de", order_id,
+                confirmed,
+                f"changer la taille (vers {new_size}) de",
+                order_id,
                 lambda: tools.update_order_item(self.session, order_id, user_id, new_size),
             )
         if order_id and any(w in low for w in ("retour", "échange", "echange", "renvoyer")):
             return self._confirm_or_act(
-                confirmed, "ouvrir un retour pour", order_id,
+                confirmed,
+                "ouvrir un retour pour",
+                order_id,
                 lambda: tools.create_return(self.session, order_id, user_id, "Demande client"),
             )
         if order_id and "rembours" in low:
             amount_match = AMOUNT_RE.search(message)
             amount = float(amount_match.group(1).replace(",", ".")) if amount_match else 0.0
             return self._confirm_or_act(
-                confirmed, f"rembourser {amount:.0f}€ sur", order_id,
-                lambda: tools.trigger_refund(self.session, order_id, user_id, amount, "Demande client"),
+                confirmed,
+                f"rembourser {amount:.0f}€ sur",
+                order_id,
+                lambda: tools.trigger_refund(
+                    self.session, order_id, user_id, amount, "Demande client"
+                ),
             )
 
         if order_id and any(w in low for w in ("suivi", "colis", "livr", "transport", "track")):

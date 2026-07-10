@@ -35,7 +35,9 @@ def trigger_refund(session, order_id: str, user_id: str, amount: float, reason: 
 
     refund_id = new_id("rf")
     session.add(
-        Refund(id=refund_id, order_id=order_id, amount=amount, reason=reason, status=RefundStatus.auto)
+        Refund(
+            id=refund_id, order_id=order_id, amount=amount, reason=reason, status=RefundStatus.auto
+        )
     )
     session.commit()
     return {"action": "refunded", "refund_id": refund_id, "amount": amount}

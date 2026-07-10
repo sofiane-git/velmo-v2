@@ -32,7 +32,10 @@ def order_to_dict(order: Order) -> dict:
         "status": order.status.value,
         "total": float(order.total),
         "shipping_address": order.shipping_address,
-        "items": [{"item_id": it.id, "variant_id": it.variant_id, "size": it.size.value} for it in order.items],
+        "items": [
+            {"item_id": it.id, "variant_id": it.variant_id, "size": it.size.value}
+            for it in order.items
+        ],
     }
 
 

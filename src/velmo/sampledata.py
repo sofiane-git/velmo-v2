@@ -48,20 +48,100 @@ def _customers() -> list[Customer]:
 
 def _products() -> list[Product]:
     rows = [
-        ("mu-1999-treble", "Manchester United 1999 — Treble", "Manchester United", "1998-1999", "Treble", C.mint, 220),
-        ("om-1993", "Marseille 1993 — Finale C1", "Olympique de Marseille", "1992-1993", "Finale", C.mint, 180),
+        (
+            "mu-1999-treble",
+            "Manchester United 1999 — Treble",
+            "Manchester United",
+            "1998-1999",
+            "Treble",
+            C.mint,
+            220,
+        ),
+        (
+            "om-1993",
+            "Marseille 1993 — Finale C1",
+            "Olympique de Marseille",
+            "1992-1993",
+            "Finale",
+            C.mint,
+            180,
+        ),
         ("brazil-1970", "Brésil 1970 — Pelé", "Brésil", "1970", "Mondial", C.mint, 300),
         ("france-1998", "France 1998 — Zidane", "France", "1998", "Mondial", C.mint, 250),
-        ("boca-1981", "Boca Juniors 1981 — Maradona", "Boca Juniors", "1981", "Maradona", C.occasion, 280),
+        (
+            "boca-1981",
+            "Boca Juniors 1981 — Maradona",
+            "Boca Juniors",
+            "1981",
+            "Maradona",
+            C.occasion,
+            280,
+        ),
         ("arsenal-1989", "Arsenal 1989 — Adams", "Arsenal", "1988-1989", "Anfield 89", C.neuf, 150),
-        ("ajax-1995", "Ajax 1995 — Kluivert", "Ajax", "1994-1995", "Ligue des Champions", C.neuf, 160),
+        (
+            "ajax-1995",
+            "Ajax 1995 — Kluivert",
+            "Ajax",
+            "1994-1995",
+            "Ligue des Champions",
+            C.neuf,
+            160,
+        ),
         ("italia-90", "Italie 1990 — Azzurri", "Italie", "1990", "Mondial", C.neuf, 140),
-        ("liverpool-2005", "Liverpool 2005 — Istanbul", "Liverpool", "2004-2005", "Istanbul", C.neuf, 130),
-        ("inter-1998", "Inter 1998 — Ronaldo", "Inter Milan", "1997-1998", "Ronaldo", C.occasion, 200),
-        ("psg-1993", "PSG 1993 — Ginola", "Paris Saint-Germain", "1992-1993", "Ginola", C.occasion, 170),
-        ("milan-1989", "Milan 1989 — Van Basten", "AC Milan", "1988-1989", "Van Basten", C.mint, 210),
-        ("barca-1992", "Barcelone 1992 — Wembley", "FC Barcelone", "1991-1992", "Wembley", C.neuf, 175),
-        ("germany-1990", "Allemagne 1990 — Weltmeister", "Allemagne", "1990", "Mondial", C.neuf, 145),
+        (
+            "liverpool-2005",
+            "Liverpool 2005 — Istanbul",
+            "Liverpool",
+            "2004-2005",
+            "Istanbul",
+            C.neuf,
+            130,
+        ),
+        (
+            "inter-1998",
+            "Inter 1998 — Ronaldo",
+            "Inter Milan",
+            "1997-1998",
+            "Ronaldo",
+            C.occasion,
+            200,
+        ),
+        (
+            "psg-1993",
+            "PSG 1993 — Ginola",
+            "Paris Saint-Germain",
+            "1992-1993",
+            "Ginola",
+            C.occasion,
+            170,
+        ),
+        (
+            "milan-1989",
+            "Milan 1989 — Van Basten",
+            "AC Milan",
+            "1988-1989",
+            "Van Basten",
+            C.mint,
+            210,
+        ),
+        (
+            "barca-1992",
+            "Barcelone 1992 — Wembley",
+            "FC Barcelone",
+            "1991-1992",
+            "Wembley",
+            C.neuf,
+            175,
+        ),
+        (
+            "germany-1990",
+            "Allemagne 1990 — Weltmeister",
+            "Allemagne",
+            "1990",
+            "Mondial",
+            C.neuf,
+            145,
+        ),
     ]
     return [
         Product(ref=r, title=t, club=cl, season=se, edition=ed, condition=co, base_price=p)
@@ -160,7 +240,12 @@ def _shipments() -> list[Shipment]:
     ]
     return [
         Shipment(
-            id=i, order_id=o, carrier=ca, tracking_number=tn, estimated_delivery=ed, actual_delivery=ad
+            id=i,
+            order_id=o,
+            carrier=ca,
+            tracking_number=tn,
+            estimated_delivery=ed,
+            actual_delivery=ad,
         )
         for i, o, ca, tn, ed, ad in rows
     ]
@@ -184,7 +269,10 @@ def _refunds() -> list[Refund]:
         ("rf-0112", "O-2024-0112", 40, "Geste commercial flocage", RS.auto),
         ("rf-0110", "O-2024-0110", 250, "Litige montant élevé", RS.escalated),
     ]
-    return [Refund(id=i, order_id=o, amount=a, reason=r, status=s, requested_at=_DT) for i, o, a, r, s in rows]
+    return [
+        Refund(id=i, order_id=o, amount=a, reason=r, status=s, requested_at=_DT)
+        for i, o, a, r, s in rows
+    ]
 
 
 def _escalations() -> list[Escalation]:
