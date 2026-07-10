@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from .db import (
@@ -90,9 +91,22 @@ class MemoryManager:
         self.episodic_store = episodic_store or get_episodic_backend()
         self.llm = llm or get_llm()
 
+    def _bind_user(self, session: Session, user_id: str) -> None:
+        """Positionne le GUC PostgreSQL consommé par les policies RLS.
+
+        `set_config(..., is_local=true)` reste limité à la transaction courante.
+        No-op hors Postgres (SQLite de test) : les policies RLS n'existent pas.
+        """
+        if session.get_bind().dialect.name != "postgresql":
+            return
+        session.execute(
+            text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id}
+        )
+
     def read(self, user_id: str, message: str) -> MemoryContext:
         session = self._Session()
         try:
+            self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
             thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
             history: list[Turn] = []
@@ -110,6 +124,7 @@ class MemoryManager:
     def write(self, user_id: str, user_message: str, assistant_message: str) -> None:
         session = self._Session()
         try:
+            self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
             thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
             append_message(session, thread.thread_id, user_id, "user", user_message)
@@ -196,6 +211,7 @@ class MemoryManager:
     def remember_fact(self, user_id: str, key: str, value: str) -> None:
         session = self._Session()
         try:
+            self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
             upsert_fact(session, user_id, key, value, "identity", 1.0, None)
             write_audit(session, user_id, "write", f"fact:{key}")
@@ -206,6 +222,7 @@ class MemoryManager:
     def forget(self, user_id: str, target: str) -> int:
         session = self._Session()
         try:
+            self._bind_user(session, user_id)
             removed_facts = delete_facts_matching(session, user_id, target)
             count = len(removed_facts)
             for fact in removed_facts:
@@ -226,6 +243,7 @@ class MemoryManager:
     def inspect(self, user_id: str) -> dict[str, object]:
         session = self._Session()
         try:
+            self._bind_user(session, user_id)
             return {
                 "facts": [
                     {

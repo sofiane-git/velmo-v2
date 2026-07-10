@@ -134,6 +134,16 @@ def test_write_persists_procedures_from_extractor():
     assert any(p["trigger"] == "refund_offer" for p in procs)
 
 
+def test_bind_user_is_noop_on_sqlite():
+    # Sur SQLite, _bind_user ne doit rien exécuter et ne pas lever.
+    mm = _mm()
+    session = mm._Session()
+    try:
+        mm._bind_user(session, "any-user")  # ne doit pas lever
+    finally:
+        session.close()
+
+
 def test_forget_removes_matching_procedure():
     from velmo.memory.extractor import ExtractedProcedure, ExtractionResult
 
