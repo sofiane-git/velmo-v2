@@ -4,7 +4,7 @@ install:
 	uv sync
 
 up:
-	docker compose up -d
+	docker compose up
 
 down:
 	docker compose down
