@@ -68,13 +68,22 @@ def test_r3_isolation_user():
 
 
 def test_r4_compression_sans_perte():
-    # R4 : après compression, le fait critique survit dans ctx.facts.
-    mm = MemoryManager(db_url="sqlite:///:memory:", token_budget=20, keep_last_n_turns=1)
+    # R4 : la compression s'exécute réellement (résumé LLM présent dans le
+    # contexte rendu) ET le fait critique survit dans ctx.facts.
+    class _TagLLM:
+        def invoke(self, system, context, message):
+            return "RESUME_R4"
+
+    mm = MemoryManager(
+        db_url="sqlite:///:memory:", token_budget=20, keep_last_n_turns=1, llm=_TagLLM()
+    )
     mm.write("r4", "Ma commande prioritaire est O-2024-0101.", "Noté.")
     for i in range(10):
         mm.write("r4", f"Question {i} sur un maillot très demandé.", f"Réponse {i}.")
 
     ctx = mm.read("r4", "Ma commande ?")
+    rendered = ctx.render()
+    assert "RESUME_R4" in rendered  # preuve que la compression a bien produit un résumé
     assert ctx.facts.get("order_number") == "O-2024-0101"
 
 
