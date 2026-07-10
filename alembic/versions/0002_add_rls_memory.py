@@ -38,9 +38,13 @@ def upgrade() -> None:
         return
     for table in _TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        # FORCE : applique la policy même au rôle propriétaire de la table (sinon RLS
+        # est silencieusement ignorée pour ce rôle, y compris celui utilisé par l'appli).
+        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
         op.execute(
             f"CREATE POLICY mem_user_isolation ON {table} "
-            "USING (user_id = current_setting('app.current_user_id', true))"
+            "USING (user_id = current_setting('app.current_user_id', true)) "
+            "WITH CHECK (user_id = current_setting('app.current_user_id', true))"
         )
 
 
