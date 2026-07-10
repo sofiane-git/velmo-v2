@@ -43,7 +43,7 @@ def test_dispute_fact_creates_episode():
     mm.write("u4", "Le maillot recu est un faux, je conteste.", "C'est note, je transmets.")
     inspected = mm.inspect("u4")
     assert inspected["episodic"]  # au moins un episode cree
-    assert inspected["facts"]["dispute"]
+    assert any(f["type"] == "dispute" for f in inspected["facts"])
 
 
 def test_remember_fact_bypasses_extractor():
@@ -75,7 +75,11 @@ def test_inspect_shape():
     mm.remember_fact("u9", "shoe_size", "L")
     result = mm.inspect("u9")
     assert set(result.keys()) == {"facts", "procedures", "episodic"}
-    assert result["facts"]["shoe_size"] == "L"
+    assert isinstance(result["facts"], list)
+    fact = next(f for f in result["facts"] if f["key"] == "shoe_size")
+    assert fact["value"] == "L"
+    assert "created_at" in fact and "T" in fact["created_at"]  # ISO 8601
+    assert "source_thread_id" in fact
     assert result["procedures"] == []
 
 
@@ -106,7 +110,9 @@ def test_compression_does_not_corrupt_dispute_fact_from_concatenated_block():
     )
 
     inspected = mm.inspect("cdispute")
-    assert inspected["facts"]["dispute"] == dispute_msg
+    assert any(
+        f["type"] == "dispute" and f["value"] == dispute_msg for f in inspected["facts"]
+    )
 
 
 def test_write_persists_procedures_from_extractor():
@@ -126,3 +132,24 @@ def test_write_persists_procedures_from_extractor():
     mm.write("up", "Peu importe.", "Ok.")
     procs = mm.inspect("up")["procedures"]
     assert any(p["trigger"] == "refund_offer" for p in procs)
+
+
+def test_forget_removes_matching_procedure():
+    from velmo.memory.extractor import ExtractedProcedure, ExtractionResult
+
+    class _ProcExtractor:
+        def extract(self, user_message, assistant_message):
+            return ExtractionResult(
+                procedures=[
+                    ExtractedProcedure(
+                        trigger="refund_offer", rule="Proposer un bon de 10%.", confidence=0.9
+                    )
+                ]
+            )
+
+    mm = _mm(extractor=_ProcExtractor())
+    mm.write("fp", "Peu importe.", "Ok.")
+    assert mm.inspect("fp")["procedures"]
+    removed = mm.forget("fp", "refund")
+    assert removed >= 1
+    assert mm.inspect("fp")["procedures"] == []

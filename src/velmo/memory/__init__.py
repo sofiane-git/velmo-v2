@@ -18,6 +18,7 @@ from .db import (
     append_message,
     delete_episodes_matching,
     delete_facts_matching,
+    delete_procedure_matching,
     get_or_create_active_thread,
     get_or_create_user,
     list_episodes,
@@ -214,6 +215,8 @@ class MemoryManager:
                 for episode in removed_episodes:
                     if episode.chroma_id:
                         self.episodic_store.delete(episode.chroma_id)
+            removed_procs = delete_procedure_matching(session, user_id, target)
+            count += len(removed_procs)
             write_audit(session, user_id, "delete", target)
             session.commit()
             return count
@@ -224,12 +227,38 @@ class MemoryManager:
         session = self._Session()
         try:
             return {
-                "facts": {f.key: f.value for f in list_facts(session, user_id)},
+                "facts": [
+                    {
+                        "key": f.key,
+                        "value": f.value,
+                        "type": f.type,
+                        "confidence": f.confidence,
+                        "source_thread_id": f.source_thread_id,
+                        "created_at": f.created_at.isoformat(),
+                        "updated_at": f.updated_at.isoformat(),
+                    }
+                    for f in list_facts(session, user_id)
+                ],
                 "procedures": [
-                    {"trigger": p.trigger, "rule": p.rule, "active": p.active}
+                    {
+                        "trigger": p.trigger,
+                        "rule": p.rule,
+                        "active": p.active,
+                        "confidence": p.confidence,
+                        "source_thread_id": p.source_thread_id,
+                        "created_at": p.created_at.isoformat(),
+                        "updated_at": p.updated_at.isoformat(),
+                    }
                     for p in list_procedures(session, user_id)
                 ],
-                "episodic": [e.summary for e in list_episodes(session, user_id)],
+                "episodic": [
+                    {
+                        "summary": e.summary,
+                        "source_thread_id": e.source_thread_id,
+                        "occurred_at": e.occurred_at.isoformat(),
+                    }
+                    for e in list_episodes(session, user_id)
+                ],
             }
         finally:
             session.close()
