@@ -11,7 +11,7 @@ import sqlite3
 import unicodedata
 import uuid
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import (
@@ -36,6 +36,10 @@ class Base(DeclarativeBase):
     pass
 
 
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
@@ -44,7 +48,7 @@ class MemoryUser(Base):
     __tablename__ = "memory_user"
     user_id: Mapped[str] = mapped_column(String, primary_key=True)
     locale: Mapped[str] = mapped_column(String, default="fr")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Conversation(Base):
@@ -54,8 +58,8 @@ class Conversation(Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     token_count: Mapped[int] = mapped_column(Integer, default=0)
     summarized_up_to_turn: Mapped[int] = mapped_column(Integer, default=0)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_message_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Message(Base):
@@ -66,7 +70,7 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String)
     content: Mapped[str] = mapped_column(Text)
     turn: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Fact(Base):
@@ -78,8 +82,8 @@ class Fact(Base):
     type: Mapped[str] = mapped_column(String)
     confidence: Mapped[float] = mapped_column(Float)
     source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     __table_args__ = (UniqueConstraint("user_id", "key", name="uq_fact_user_key"),)
 
 
@@ -92,8 +96,8 @@ class Procedure(Base):
     confidence: Mapped[float] = mapped_column(Float)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     __table_args__ = (UniqueConstraint("user_id", "trigger", name="uq_procedure_user_trigger"),)
 
 
@@ -104,7 +108,7 @@ class Episode(Base):
     summary: Mapped[str] = mapped_column(Text)
     chroma_id: Mapped[str | None] = mapped_column(String, nullable=True)
     source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class MemoryAudit(Base):
@@ -113,7 +117,7 @@ class MemoryAudit(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
     action: Mapped[str] = mapped_column(String)
     target: Mapped[str] = mapped_column(String)
-    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 def _default_sqlite_path() -> Path:
@@ -183,7 +187,9 @@ def make_memory_engine(url: str | None = None) -> Engine:
 
 
 def _norm(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", s.lower()) if unicodedata.category(c) != "Mn")
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s.lower()) if unicodedata.category(c) != "Mn"
+    )
 
 
 def _escape_like(value: str) -> str:
@@ -193,7 +199,7 @@ def _escape_like(value: str) -> str:
 def get_or_create_user(session: Session, user_id: str) -> MemoryUser:
     user = session.get(MemoryUser, user_id)
     if user is None:
-        user = MemoryUser(user_id=user_id, created_at=datetime.utcnow())
+        user = MemoryUser(user_id=user_id, created_at=utcnow())
         session.add(user)
         session.commit()
     return user
@@ -202,10 +208,12 @@ def get_or_create_user(session: Session, user_id: str) -> MemoryUser:
 def get_or_create_active_thread(
     session: Session, user_id: str, session_gap_hours: float, now: datetime | None = None
 ) -> Conversation:
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     gap = timedelta(hours=session_gap_hours)
     latest = session.scalars(
-        select(Conversation).where(Conversation.user_id == user_id).order_by(Conversation.last_message_at.desc())
+        select(Conversation)
+        .where(Conversation.user_id == user_id)
+        .order_by(Conversation.last_message_at.desc())
     ).first()
     if latest is not None and (now - latest.last_message_at) <= gap:
         return latest
@@ -241,10 +249,17 @@ def append_message(
     conv = session.get(Conversation, thread_id)
     assert conv is not None
     turn = _next_turn(session, thread_id)
-    msg = Message(id=new_id("msg"), thread_id=thread_id, user_id=user_id, role=role, content=content, turn=turn)
+    msg = Message(
+        id=new_id("msg"),
+        thread_id=thread_id,
+        user_id=user_id,
+        role=role,
+        content=content,
+        turn=turn,
+    )
     session.add(msg)
     conv.token_count += max(1, len(content) // 4)
-    conv.last_message_at = now or datetime.utcnow()
+    conv.last_message_at = now or utcnow()
     return msg
 
 
@@ -290,7 +305,7 @@ def upsert_fact(
     source_thread_id: str | None,
 ) -> tuple[Fact, bool]:
     existing = session.scalars(select(Fact).where(Fact.user_id == user_id, Fact.key == key)).first()
-    now = datetime.utcnow()
+    now = utcnow()
     if existing is None:
         fact = Fact(
             id=new_id("fact"),
@@ -332,7 +347,9 @@ FACT_KEY_ALIASES = {
 def delete_facts_matching(session: Session, user_id: str, target: str) -> list[Fact]:
     key = FACT_KEY_ALIASES.get(_norm(target))
     if key:
-        matches = session.scalars(select(Fact).where(Fact.user_id == user_id, Fact.key == key)).all()
+        matches = session.scalars(
+            select(Fact).where(Fact.user_id == user_id, Fact.key == key)
+        ).all()
     else:
         pattern = f"%{_escape_like(target)}%"
         matches = session.scalars(
@@ -346,7 +363,9 @@ def delete_facts_matching(session: Session, user_id: str, target: str) -> list[F
 def redact_messages(session: Session, user_id: str, value: str) -> int:
     pattern = f"%{_escape_like(value)}%"
     rows = session.scalars(
-        select(Message).where(Message.user_id == user_id, Message.content.ilike(pattern, escape="\\"))
+        select(Message).where(
+            Message.user_id == user_id, Message.content.ilike(pattern, escape="\\")
+        )
     ).all()
     for msg in rows:
         msg.content = msg.content.replace(value, "[information supprimée]")
@@ -354,7 +373,11 @@ def redact_messages(session: Session, user_id: str, value: str) -> int:
 
 
 def add_episode(
-    session: Session, user_id: str, summary: str, source_thread_id: str | None, chroma_id: str | None = None
+    session: Session,
+    user_id: str,
+    summary: str,
+    source_thread_id: str | None,
+    chroma_id: str | None = None,
 ) -> Episode:
     episode = Episode(
         id=new_id("epi"),
@@ -362,7 +385,7 @@ def add_episode(
         summary=summary,
         chroma_id=chroma_id,
         source_thread_id=source_thread_id,
-        occurred_at=datetime.utcnow(),
+        occurred_at=utcnow(),
     )
     session.add(episode)
     return episode
@@ -371,7 +394,9 @@ def add_episode(
 def delete_episodes_matching(session: Session, user_id: str, value: str) -> list[Episode]:
     pattern = f"%{_escape_like(value)}%"
     matches = session.scalars(
-        select(Episode).where(Episode.user_id == user_id, Episode.summary.ilike(pattern, escape="\\"))
+        select(Episode).where(
+            Episode.user_id == user_id, Episode.summary.ilike(pattern, escape="\\")
+        )
     ).all()
     for episode in matches:
         session.delete(episode)
@@ -379,7 +404,9 @@ def delete_episodes_matching(session: Session, user_id: str, value: str) -> list
 
 
 def write_audit(session: Session, user_id: str, action: str, target: str) -> None:
-    session.add(MemoryAudit(id=new_id("aud"), user_id=user_id, action=action, target=target, at=datetime.utcnow()))
+    session.add(
+        MemoryAudit(id=new_id("aud"), user_id=user_id, action=action, target=target, at=utcnow())
+    )
 
 
 def list_facts(session: Session, user_id: str) -> list[Fact]:
@@ -397,6 +424,9 @@ def list_episodes(session: Session, user_id: str) -> list[Episode]:
 def list_recent_audit(session: Session, user_id: str, limit: int = 50) -> list[MemoryAudit]:
     return list(
         session.scalars(
-            select(MemoryAudit).where(MemoryAudit.user_id == user_id).order_by(MemoryAudit.at.desc()).limit(limit)
+            select(MemoryAudit)
+            .where(MemoryAudit.user_id == user_id)
+            .order_by(MemoryAudit.at.desc())
+            .limit(limit)
         ).all()
     )

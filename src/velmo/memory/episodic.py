@@ -68,7 +68,9 @@ class ChromaEpisodic:
         return episode_id
 
     def search(self, user_id: str, query: str, k: int = 3) -> list[str]:
-        result = self._collection.query(query_texts=[query], n_results=k, where={"user_id": user_id})
+        result = self._collection.query(
+            query_texts=[query], n_results=k, where={"user_id": user_id}
+        )
         return list(result.get("documents", [[]])[0])
 
     def delete(self, episode_id: str) -> None:

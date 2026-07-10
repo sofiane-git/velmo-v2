@@ -8,7 +8,9 @@ def _keys(facts):
 
 
 def test_shoe_size_extracted():
-    facts = RuleBasedExtractor().extract("Je porte toujours la taille L pour les maillots.", "Note : taille L.")
+    facts = RuleBasedExtractor().extract(
+        "Je porte toujours la taille L pour les maillots.", "Note : taille L."
+    )
     assert "shoe_size" in _keys(facts)
     fact = next(f for f in facts if f.key == "shoe_size")
     assert fact.value == "L"
@@ -23,7 +25,9 @@ def test_clubs_extracted():
 
 
 def test_segment_revendeur_extracted():
-    facts = RuleBasedExtractor().extract("Je suis revendeur, je commande souvent en volume.", "Note.")
+    facts = RuleBasedExtractor().extract(
+        "Je suis revendeur, je commande souvent en volume.", "Note."
+    )
     fact = next(f for f in facts if f.key == "segment")
     assert fact.value == "revendeur"
 

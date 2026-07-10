@@ -55,9 +55,27 @@ def test_tables_created_and_fact_unique_per_user_key():
     session = Session()
     session.add(MemoryUser(user_id="u1"))
     session.commit()
-    session.add(Fact(id=new_id("fact"), user_id="u1", key="shoe_size", value="L", type="preference", confidence=0.9))
+    session.add(
+        Fact(
+            id=new_id("fact"),
+            user_id="u1",
+            key="shoe_size",
+            value="L",
+            type="preference",
+            confidence=0.9,
+        )
+    )
     session.commit()
-    session.add(Fact(id=new_id("fact"), user_id="u1", key="shoe_size", value="M", type="preference", confidence=0.9))
+    session.add(
+        Fact(
+            id=new_id("fact"),
+            user_id="u1",
+            key="shoe_size",
+            value="M",
+            type="preference",
+            confidence=0.9,
+        )
+    )
     with pytest.raises(IntegrityError):
         session.commit()
     session.rollback()
@@ -71,9 +89,19 @@ def test_cascade_delete_removes_children_on_sqlite():
     session.add(MemoryUser(user_id="u2"))
     session.commit()
     thread_id = new_id("th")
-    session.add(Conversation(thread_id=thread_id, user_id="u2", summary="", token_count=0, summarized_up_to_turn=0))
-    session.add(Message(id=new_id("msg"), thread_id=thread_id, user_id="u2", role="user", content="hi", turn=1))
-    session.add(Fact(id=new_id("fact"), user_id="u2", key="k", value="v", type="preference", confidence=0.9))
+    session.add(
+        Conversation(
+            thread_id=thread_id, user_id="u2", summary="", token_count=0, summarized_up_to_turn=0
+        )
+    )
+    session.add(
+        Message(
+            id=new_id("msg"), thread_id=thread_id, user_id="u2", role="user", content="hi", turn=1
+        )
+    )
+    session.add(
+        Fact(id=new_id("fact"), user_id="u2", key="k", value="v", type="preference", confidence=0.9)
+    )
     session.add(MemoryAudit(id=new_id("aud"), user_id="u2", action="write", target="k"))
     session.commit()
 
@@ -100,14 +128,18 @@ def test_thread_reused_within_session_gap_and_rotated_after():
     append_message(session, thread1.thread_id, "u3", "user", "hello", now=t0)
     session.commit()
 
-    thread_same = get_or_create_active_thread(session, "u3", session_gap_hours=4, now=t0 + timedelta(hours=1))
+    thread_same = get_or_create_active_thread(
+        session, "u3", session_gap_hours=4, now=t0 + timedelta(hours=1)
+    )
     assert thread_same.thread_id == thread1.thread_id
 
     # Activity at t0+1h must refresh last_message_at (last-activity semantics,
     # not thread-creation-time semantics): a check at t0+4h30 is only 3h30
     # after that activity, so the thread must still be considered fresh even
     # though it is 4h30 after the thread was first opened.
-    append_message(session, thread_same.thread_id, "u3", "user", "still here", now=t0 + timedelta(hours=1))
+    append_message(
+        session, thread_same.thread_id, "u3", "user", "still here", now=t0 + timedelta(hours=1)
+    )
     session.commit()
     thread_still_same = get_or_create_active_thread(
         session, "u3", session_gap_hours=4, now=t0 + timedelta(hours=4, minutes=30)
@@ -154,9 +186,13 @@ def test_older_messages_respects_summarized_cursor():
     for i in range(6):
         append_message(session, thread.thread_id, "u6", "user", f"msg{i}")
     session.commit()
-    older = older_messages(session, thread.thread_id, keep_last_n_messages=2, summarized_up_to_turn=0)
+    older = older_messages(
+        session, thread.thread_id, keep_last_n_messages=2, summarized_up_to_turn=0
+    )
     assert [m.turn for m in older] == [1, 2, 3, 4]
-    older_again = older_messages(session, thread.thread_id, keep_last_n_messages=2, summarized_up_to_turn=4)
+    older_again = older_messages(
+        session, thread.thread_id, keep_last_n_messages=2, summarized_up_to_turn=4
+    )
     assert older_again == []
     session.close()
 
@@ -183,7 +219,9 @@ def test_delete_facts_matching_by_alias_and_redact_messages():
     session = _session()
     get_or_create_user(session, "u8")
     thread = get_or_create_active_thread(session, "u8", session_gap_hours=4)
-    append_message(session, thread.thread_id, "u8", "user", "Mon adresse de livraison est 12 rue des Lilas.")
+    append_message(
+        session, thread.thread_id, "u8", "user", "Mon adresse de livraison est 12 rue des Lilas."
+    )
     session.commit()
     upsert_fact(session, "u8", "address", "12 rue des Lilas", "identity", 0.85, thread.thread_id)
     session.commit()

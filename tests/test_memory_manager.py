@@ -27,7 +27,11 @@ def test_compression_triggers_past_budget_and_facts_still_surface():
     mm = _mm(token_budget=20, keep_last_n_turns=1)
     mm.write("u3", "Ma commande prioritaire est O-2024-0101.", "Note.")
     for i in range(10):
-        mm.write("u3", f"Question de suivi numero {i} sur un maillot tres demande.", f"Reponse detaillee {i}.")
+        mm.write(
+            "u3",
+            f"Question de suivi numero {i} sur un maillot tres demande.",
+            f"Reponse detaillee {i}.",
+        )
     ctx = mm.read("u3", "Quelle etait ma commande ?")
     rendered = ctx.render()
     assert "O-2024-0101" in rendered  # survit via FACT, meme hors fenetre brute

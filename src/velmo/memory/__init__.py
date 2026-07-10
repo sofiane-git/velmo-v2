@@ -109,7 +109,9 @@ class MemoryManager:
             for ef in extracted:
                 if ef.confidence < self.confidence_threshold:
                     continue
-                _, changed = upsert_fact(session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id)
+                _, changed = upsert_fact(
+                    session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id
+                )
                 if changed:
                     write_audit(session, user_id, "write", f"fact:{ef.key}")
                 if ef.type == "dispute":
@@ -129,7 +131,9 @@ class MemoryManager:
     def _maybe_compress(self, session: Session, user_id: str, thread: Conversation) -> None:
         if thread.token_count <= self.token_budget:
             return
-        older = older_messages(session, thread.thread_id, self.keep_last_n_turns * 2, thread.summarized_up_to_turn)
+        older = older_messages(
+            session, thread.thread_id, self.keep_last_n_turns * 2, thread.summarized_up_to_turn
+        )
         if not older:
             return
         block = "; ".join(f"{m.role}: {m.content[:80]}" for m in older)
