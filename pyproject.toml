@@ -72,3 +72,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "yaml"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "azure.ai.textanalytics.*"
+ignore_missing_imports = true
