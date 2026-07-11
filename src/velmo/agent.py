@@ -88,6 +88,10 @@ class Agent:
         gate_in = self.guardrails.check_input(message, user_id=user_id)
         if not gate_in.allowed:
             refusal = gate_in.refusal or DEFAULT_REFUSAL
+            if gate_in.escalate:
+                tools.escalate_to_human(
+                    self.session, user_id, f"garde-fou {gate_in.category} (entrée)"
+                )
             self.memory.write(user_id, message, refusal)
             return refusal
 
@@ -96,6 +100,10 @@ class Agent:
 
         gate_out = self.guardrails.check_output(answer, user_id=user_id)
         if not gate_out.allowed:
+            if gate_out.escalate:
+                tools.escalate_to_human(
+                    self.session, user_id, f"garde-fou {gate_out.category} (sortie)"
+                )
             answer = gate_out.refusal or DEFAULT_REFUSAL
 
         self.memory.write(user_id, message, answer)
