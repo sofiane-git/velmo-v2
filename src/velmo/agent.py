@@ -85,7 +85,7 @@ class Agent:
         self.kb = kb
 
     def respond(self, user_id: str, message: str) -> str:
-        gate_in = self.guardrails.check_input(message)
+        gate_in = self.guardrails.check_input(message, user_id=user_id)
         if not gate_in.allowed:
             refusal = gate_in.refusal or DEFAULT_REFUSAL
             self.memory.write(user_id, message, refusal)
@@ -94,7 +94,7 @@ class Agent:
         self.memory.read(user_id, message)
         answer = self._handle(user_id, message)
 
-        gate_out = self.guardrails.check_output(answer)
+        gate_out = self.guardrails.check_output(answer, user_id=user_id)
         if not gate_out.allowed:
             answer = gate_out.refusal or DEFAULT_REFUSAL
 
