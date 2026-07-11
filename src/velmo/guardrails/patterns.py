@@ -10,8 +10,9 @@ sans connaissance du sens entrée/sortie.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
+
+from ._text import any_phrase, tokens
 
 
 @dataclass
@@ -20,22 +21,6 @@ class Hit:
     method: str
     action: str  # "block" | "flag"
     score: float | None = None
-
-
-def _strip_accents(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
-
-
-def _tokens(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", _strip_accents(text.lower())))
-
-
-def _phrase_hit(tokens: set[str], phrase: tuple[str, ...]) -> bool:
-    return all(any(tok.startswith(root) for tok in tokens) for root in phrase)
-
-
-def _any_phrase(tokens: set[str], phrases: list[tuple[str, ...]]) -> bool:
-    return any(_phrase_hit(tokens, phrase) for phrase in phrases)
 
 
 INJECTION_PHRASES: list[tuple[str, ...]] = [
@@ -80,14 +65,14 @@ def luhn_valid(number: str) -> bool:
 
 def scan_injection(text: str) -> Hit | None:
     """G6 — motifs d'injection connus. Court-circuite le pipeline (`block`)."""
-    if _any_phrase(_tokens(text), INJECTION_PHRASES):
+    if any_phrase(tokens(text), INJECTION_PHRASES):
         return Hit(category="prompt_injection", method="regex", action="block")
     return None
 
 
 def scan_secret_leak(text: str) -> Hit | None:
     """G7 — motifs de fuite/extraction de secret connus."""
-    if _any_phrase(_tokens(text), SECRET_PHRASES) or SECRET_KEY_RE.search(text):
+    if any_phrase(tokens(text), SECRET_PHRASES) or SECRET_KEY_RE.search(text):
         return Hit(category="secret_leak", method="regex", action="block")
     return None
 

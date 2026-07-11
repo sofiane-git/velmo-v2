@@ -14,7 +14,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from . import tools
-from .guardrails import GuardrailEngine
+from .guardrails import GENERIC_REFUSAL, GuardrailEngine
 from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
 from .memory import MemoryManager
@@ -24,10 +24,7 @@ SYSTEM_PROMPT = (
     "Tu traites la gestion de commandes de niveau 1 avec courtoisie et précision."
 )
 
-DEFAULT_REFUSAL = (
-    "Désolé, je ne peux pas traiter cette demande. Je reste à votre disposition "
-    "pour vos commandes, livraisons, retours et la FAQ Velmo."
-)
+DEFAULT_REFUSAL = GENERIC_REFUSAL
 
 ORDER_RE = re.compile(r"O-\d{4}-\d{4}")
 SIZE_RE = re.compile(r"\b(XXL|XL|S|M|L)\b")

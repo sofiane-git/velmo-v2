@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import unicodedata
 from pathlib import Path
 from typing import Protocol
 
 import yaml
+
+from ._text import phrase_hit, tokens
 
 SCOPE_POLICY_PATH = Path(__file__).resolve().parent / "scope_policy.yaml"
 
@@ -34,18 +34,6 @@ class Judge(Protocol):
     def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float]: ...
 
 
-def _strip_accents(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
-
-
-def _tokens(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", _strip_accents(text.lower())))
-
-
-def _phrase_hit(tokens: set[str], phrase: tuple[str, ...]) -> bool:
-    return all(any(tok.startswith(root) for tok in tokens) for root in phrase)
-
-
 def load_scope_keywords(path: Path | None = None) -> list[tuple[str, ...]]:
     data = yaml.safe_load((path or SCOPE_POLICY_PATH).read_text(encoding="utf-8"))
     return [tuple(words) for words in data.get("keyword_phrases", [])]
@@ -61,8 +49,8 @@ class RuleBasedJudge:
         self._scope_phrases = scope_phrases or load_scope_keywords()
 
     def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float]:
-        tokens = _tokens(text)
-        hors_role = 1.0 if any(_phrase_hit(tokens, p) for p in self._scope_phrases) else 0.0
+        toks = tokens(text)
+        hors_role = 1.0 if any(phrase_hit(toks, p) for p in self._scope_phrases) else 0.0
         return {"manipulation": 0.0, "secret_interne": 0.0, "hors_role": hors_role}
 
 
