@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterator
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -13,6 +14,16 @@ app = FastAPI(
     title="Velmo 2.0 API",
     description="API pour l'agent de support Velmo 2.0 (boutique de maillots de foot collector).",
     version="2.0.0",
+)
+
+# Outil de démo interne sans authentification (cf. spec) : le frontend Nuxt
+# tourne sur une origine distincte (port 3000/3001) et appelle /chat/stream
+# en fetch cross-origin — sans CORS le navigateur bloque la requête SSE.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # On instancie l'agent par défaut au démarrage
