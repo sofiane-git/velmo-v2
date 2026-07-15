@@ -10,6 +10,7 @@ import re
 import unicodedata
 import uuid
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 
 def _strip_accents(s: str) -> str:
@@ -82,7 +83,8 @@ def get_episodic_backend() -> EpisodicStore:
     sinon `LocalEpisodic`. Ne lève jamais — toute erreur de connexion/import
     retombe sur le repli local (même contrat que `kb_store.get_kb()`).
     """
-    if not os.getenv("CHROMA_URL"):
+    chroma_url = os.getenv("CHROMA_URL")
+    if not chroma_url:
         return LocalEpisodic()
     try:
         import chromadb
@@ -91,13 +93,19 @@ def get_episodic_backend() -> EpisodicStore:
         return LocalEpisodic()
 
     try:
-        client = chromadb.HttpClient(host="chroma", port=8000)
-        # SentenceTransformerEmbeddingFunction est injecté dynamiquement dans le
-        # module par chromadb au runtime (globals()[...] = attr) : invisible à mypy.
-        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(  # type: ignore[attr-defined]
+        parsed = urlparse(chroma_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 8000
+        client = chromadb.HttpClient(host=host, port=port)
+        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
         )
-        collection = client.get_or_create_collection("velmo_episodes", embedding_function=embedder)
+        # Le stub chromadb type SentenceTransformerEmbeddingFunction plus étroitement
+        # (float32) que EmbeddingFunction générique attendu ici (float64) : incompatibilité
+        # de stub, pas d'erreur runtime.
+        collection = client.get_or_create_collection(
+            "velmo_episodes", embedding_function=embedder  # type: ignore[arg-type]
+        )
         return ChromaEpisodic(collection)
     except Exception:
         return LocalEpisodic()

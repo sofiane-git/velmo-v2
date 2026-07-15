@@ -1,9 +1,8 @@
 """Agent Velmo 2.0 : garde-fou d'entrée → mémoire → routage outils → garde-fou
 de sortie → écriture mémoire.
 
-Le routage et les outils sont fonctionnels (accès réel à la base). La mémoire,
-les garde-fous de contenu et le MLOps sont les chantiers à construire ; ici ils
-sont câblés via des composants par défaut (no-op).
+Le routage, les outils, la mémoire et les garde-fous de contenu sont
+opérationnels. Seul le MLOps (chantier 3) reste à construire.
 """
 
 from __future__ import annotations
@@ -406,14 +405,16 @@ def build_default_agent(session: Session | None = None, kb: KnowledgeBase | None
     """Assemble un agent avec composants par défaut, base et FAQ."""
     from .db import session_factory
     from .kb_store import get_kb
+    from .memory.extractor import LLMExtractor
 
     if session is None:
         session = session_factory()()
     if kb is None:
         kb = get_kb()
+    llm = get_llm()
     return Agent(
-        llm=get_llm(),
-        memory=MemoryManager(),
+        llm=llm,
+        memory=MemoryManager(extractor=LLMExtractor(llm)),
         guardrails=GuardrailEngine(),
         session=session,
         kb=kb,
