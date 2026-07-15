@@ -8,6 +8,7 @@ sont câblés via des composants par défaut (no-op).
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import Iterator
@@ -22,6 +23,8 @@ from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
 from .memory import MemoryContext, MemoryManager, WriteReport
 from .memory.db import FACT_KEY_ALIASES
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "Tu es l'assistant de support de Velmo, boutique de maillots de foot collector. "
@@ -165,6 +168,7 @@ class Agent:
             # Un échec en aval (ex. le LLM principal refuse la requête) ne doit
             # pas interrompre le flux SSE au milieu — le client verrait une
             # connexion coupée sans event "final" exploitable.
+            logger.exception("respond_traced: échec en aval pour user_id=%s", user_id)
             yield "final", {
                 "answer": DEFAULT_REFUSAL,
                 "status": "error",
