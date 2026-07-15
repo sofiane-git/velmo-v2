@@ -36,7 +36,7 @@ from .db import (
 from velmo.llm import LLM, get_llm
 
 from .episodic import EpisodicStore, get_episodic_backend
-from .extractor import FactExtractor, RuleBasedExtractor
+from .extractor import ExtractedFact, ExtractedProcedure, FactExtractor, RuleBasedExtractor
 
 Turn = tuple[str, str]
 
@@ -48,12 +48,20 @@ SUMMARY_SYSTEM = (
 
 
 @dataclass
+class FactRecord:
+    key: str
+    value: str
+    confidence: float
+
+
+@dataclass
 class MemoryContext:
     """Contexte mémoire restitué pour une requête utilisateur."""
 
     history: list[Turn] = field(default_factory=list)
     facts: dict[str, str] = field(default_factory=dict)
     episodic: list[str] = field(default_factory=list)
+    facts_detailed: list[FactRecord] = field(default_factory=list)
 
     def render(self) -> str:
         """Sérialise le contexte en texte (injectable dans un prompt)."""
@@ -64,6 +72,15 @@ class MemoryContext:
             parts.append(f"fact:{key}={value}")
         parts.extend(self.episodic)
         return "\n".join(parts)
+
+
+@dataclass
+class WriteReport:
+    """Ce qui a été classé en mémoire long terme lors d'un `MemoryManager.write()`."""
+
+    facts_written: list[ExtractedFact] = field(default_factory=list)
+    procedures_written: list[ExtractedProcedure] = field(default_factory=list)
+    episode_created: bool = False
 
 
 class MemoryManager:
@@ -115,13 +132,19 @@ class MemoryManager:
             limit = None if thread.token_count <= self.token_budget else self.keep_last_n_turns * 2
             for msg in recent_messages(session, thread.thread_id, limit):
                 history.append((msg.role, msg.content))
-            facts = {f.key: f.value for f in list_facts(session, user_id)}
+            fact_rows = list_facts(session, user_id)
+            facts = {f.key: f.value for f in fact_rows}
+            facts_detailed = [
+                FactRecord(key=f.key, value=f.value, confidence=f.confidence) for f in fact_rows
+            ]
             episodic = self.episodic_store.search(user_id, message, k=3)
-            return MemoryContext(history=history, facts=facts, episodic=episodic)
+            return MemoryContext(
+                history=history, facts=facts, episodic=episodic, facts_detailed=facts_detailed
+            )
         finally:
             session.close()
 
-    def write(self, user_id: str, user_message: str, assistant_message: str) -> None:
+    def write(self, user_id: str, user_message: str, assistant_message: str) -> WriteReport:
         session = self._Session()
         try:
             self._bind_user(session, user_id)
@@ -132,6 +155,7 @@ class MemoryManager:
             session.commit()
 
             extracted = self.extractor.extract(user_message, assistant_message)
+            report = WriteReport()
             has_dispute = False
             for ef in extracted.facts:
                 if ef.confidence < self.confidence_threshold:
@@ -141,6 +165,7 @@ class MemoryManager:
                 )
                 if changed:
                     write_audit(session, user_id, "write", f"fact:{ef.key}")
+                report.facts_written.append(ef)
                 if ef.type == "dispute":
                     has_dispute = True
 
@@ -152,6 +177,7 @@ class MemoryManager:
                 )
                 if changed:
                     write_audit(session, user_id, "write", f"procedure:{ep.trigger}")
+                report.procedures_written.append(ep)
             session.commit()
 
             if has_dispute:
@@ -159,8 +185,13 @@ class MemoryManager:
                 episode = add_episode(session, user_id, summary, thread.thread_id)
                 episode.chroma_id = self.episodic_store.add(user_id, summary, thread.thread_id)
                 session.commit()
+                report.episode_created = True
 
+            # Note de portée : une éventuelle création d'épisode/fact déclenchée par
+            # `_maybe_compress` (résumé de compression, rare en session courte) n'est
+            # pas reflétée dans ce rapport — il documente uniquement ce tour-ci.
             self._maybe_compress(session, user_id, thread)
+            return report
         finally:
             session.close()
 

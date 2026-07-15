@@ -163,3 +163,24 @@ def test_forget_removes_matching_procedure():
     removed = mm.forget("fp", "refund")
     assert removed >= 1
     assert mm.inspect("fp")["procedures"] == []
+
+
+def test_read_exposes_facts_detailed_with_confidence():
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    mm.write("fd1", "Ma taille est L, tu peux le noter ?", "Note.")
+    ctx = mm.read("fd1", "Rappelle-moi ma taille.")
+    assert any(f.key == "shoe_size" and f.value == "L" and f.confidence >= 0.7
+               for f in ctx.facts_detailed)
+
+
+def test_write_returns_report_with_facts_written():
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    report = mm.write("wr1", "Ma taille est L, tu peux le noter ?", "Note.")
+    assert any(f.key == "shoe_size" and f.value == "L" for f in report.facts_written)
+    assert report.episode_created is False
+
+
+def test_write_reports_episode_created_on_dispute():
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    report = mm.write("wr2", "Le maillot recu est un faux, je conteste.", "Note, je transmets.")
+    assert report.episode_created is True
