@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import builtins
 
-from velmo.guardrails.classifier import LexicalClassifier, get_classifier
+from velmo.guardrails.classifier import LexicalClassifier, _parse_llama_guard_response, get_classifier
 
 
 def test_lexical_classifier_detects_hate():
@@ -25,13 +25,48 @@ def test_lexical_classifier_zero_on_legitimate_message():
     assert all(v < 0.4 for v in scores.values())
 
 
-def test_get_classifier_falls_back_without_detoxify(monkeypatch):
+def test_get_classifier_falls_back_without_transformers(monkeypatch):
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "detoxify":
-            raise ImportError("no detoxify")
+        if name.startswith("transformers") or name.startswith("optimum"):
+            raise ImportError(f"no {name}")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     assert isinstance(get_classifier(), LexicalClassifier)
+
+
+def test_parse_llama_guard_safe_is_all_zero():
+    scores = _parse_llama_guard_response("safe")
+    assert scores == {"hate": 0.0, "violence": 0.0, "sexual": 0.0}
+
+
+def test_parse_llama_guard_hate():
+    scores = _parse_llama_guard_response("unsafe\nS10")
+    assert scores == {"hate": 1.0, "violence": 0.0, "sexual": 0.0}
+
+
+def test_parse_llama_guard_violence_from_violent_crimes():
+    scores = _parse_llama_guard_response("unsafe\nS1")
+    assert scores == {"hate": 0.0, "violence": 1.0, "sexual": 0.0}
+
+
+def test_parse_llama_guard_violence_from_self_harm():
+    scores = _parse_llama_guard_response("unsafe\nS11")
+    assert scores == {"hate": 0.0, "violence": 1.0, "sexual": 0.0}
+
+
+def test_parse_llama_guard_sexual_multiple_codes():
+    scores = _parse_llama_guard_response("unsafe\nS3,S12")
+    assert scores == {"hate": 0.0, "violence": 0.0, "sexual": 1.0}
+
+
+def test_parse_llama_guard_ignores_unmapped_codes():
+    scores = _parse_llama_guard_response("unsafe\nS5,S7")
+    assert scores == {"hate": 0.0, "violence": 0.0, "sexual": 0.0}
+
+
+def test_parse_llama_guard_multi_category():
+    scores = _parse_llama_guard_response("unsafe\nS1,S10")
+    assert scores == {"hate": 1.0, "violence": 1.0, "sexual": 0.0}

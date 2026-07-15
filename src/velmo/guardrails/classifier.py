@@ -47,25 +47,64 @@ class LexicalClassifier:
         }
 
 
-class DetoxifyClassifier:
-    """Backend réel : Detoxify (HuggingFace, modèle `original`, local)."""
+LLAMA_GUARD_CATEGORY_MAP: dict[str, str] = {
+    "S1": "violence",  # Violent Crimes
+    "S3": "sexual",  # Sex-Related Crimes
+    "S4": "sexual",  # Child Sexual Exploitation
+    "S10": "hate",  # Hate
+    "S11": "violence",  # Suicide & Self-Harm — même convention que
+    # `LexicalClassifier.VIOLENCE_PHRASES` (("faire", "mal")) : pas de
+    # catégorie séparée pour l'auto-agression dans ce pipeline.
+    "S12": "sexual",  # Sexual Content
+}
 
-    def __init__(self) -> None:
-        from detoxify import Detoxify  # import différé : dépendance optionnelle
 
-        self._model = Detoxify("original")
+def _parse_llama_guard_response(content: str) -> dict[str, float]:
+    """Parse la réponse Llama Guard 3 (`"safe"` ou `"unsafe\\nS10,S11"`) vers
+    nos 3 catégories. Codes MLCommons non mappés (S2, S5-S9, S13...) ignorés.
+    """
+    scores = {"hate": 0.0, "violence": 0.0, "sexual": 0.0}
+    lines = content.strip().splitlines()
+    if not lines or lines[0].strip().lower() != "unsafe":
+        return scores
+    codes = lines[1].split(",") if len(lines) > 1 else []
+    for code in codes:
+        category = LLAMA_GUARD_CATEGORY_MAP.get(code.strip())
+        if category:
+            scores[category] = 1.0
+    return scores
+
+
+class LlamaGuardClassifier:
+    """Backend réel : Llama Guard 3 (Meta), servi localement via Ollama —
+    modèle multilingue (FR inclus), taxonomie MLCommons S1-S13 mappée sur
+    nos 3 catégories (`LLAMA_GUARD_CATEGORY_MAP`)."""
+
+    def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
+        import os
+
+        self._base_url = (base_url or os.environ["OLLAMA_URL"]).rstrip("/")
+        self._model = model or os.getenv("LLAMA_GUARD_MODEL", "llama-guard3:1b")
 
     def score(self, text: str) -> dict[str, float]:
-        raw = self._model.predict(text)
-        return {
-            "hate": max(float(raw.get("identity_attack", 0.0)), float(raw.get("insult", 0.0))),
-            "violence": max(float(raw.get("threat", 0.0)), float(raw.get("severe_toxicity", 0.0))),
-            "sexual": float(raw.get("obscene", 0.0)),
-        }
+        import requests
+
+        response = requests.post(
+            f"{self._base_url}/api/chat",
+            json={
+                "model": self._model,
+                "messages": [{"role": "user", "content": text}],
+                "stream": False,
+            },
+            timeout=8,
+        )
+        response.raise_for_status()
+        content = response.json().get("message", {}).get("content", "")
+        return _parse_llama_guard_response(content)
 
 
 def get_classifier() -> ModerationClassifier:
-    """Detoxify si les poids/torch sont disponibles, sinon le repli lexical."""
+    """Detoxify ONNX si les dépendances sont disponibles, sinon le repli lexical."""
     try:
         return DetoxifyClassifier()
     except Exception:
