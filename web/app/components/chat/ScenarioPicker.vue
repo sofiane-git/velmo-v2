@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { scenarios } from '~/data/scenarios'
 
+const open = ref(false)
+
 const grouped = computed(() => {
   const groups = new Map<string, typeof scenarios>()
   for (const scenario of scenarios) {
@@ -20,12 +22,26 @@ async function run(scenario: (typeof scenarios)[number], times = 1) {
 </script>
 
 <template>
-  <UCard>
+  <UCard :ui="{ body: 'p-0 sm:p-0' }">
     <template #header>
-      <span class="font-semibold">Jeu de scénarios</span>
+      <button
+        type="button"
+        class="flex w-full items-center justify-between"
+        @click="open = !open"
+      >
+        <span class="font-semibold">Jeu de scénarios</span>
+        <UIcon
+          name="i-lucide-chevron-down"
+          class="size-4 transition-transform"
+          :class="{ 'rotate-180': open }"
+        />
+      </button>
     </template>
 
-    <div class="space-y-3">
+    <div
+      v-if="open"
+      class="max-h-64 space-y-3 overflow-y-auto p-4"
+    >
       <div
         v-for="(group, gi) in grouped"
         :key="gi"

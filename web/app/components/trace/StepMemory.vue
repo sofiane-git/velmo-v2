@@ -1,5 +1,6 @@
 <script setup lang="ts">
 defineProps<{
+  step: number
   read?: MemoryReadPayload
   write?: MemoryWritePayload
 }>()
@@ -8,7 +9,20 @@ defineProps<{
 <template>
   <UCard>
     <template #header>
-      <span class="font-semibold">Mémoire</span>
+      <div class="flex items-center gap-2">
+        <UBadge
+          variant="subtle"
+          color="neutral"
+        >
+          {{ step }}
+        </UBadge>
+        <span class="font-semibold">Mémoire</span>
+      </div>
+      <p class="mt-1 text-xs text-muted">
+        {{ read
+          ? "Lecture : historique récent + faits/épisodes appris sur cet utilisateur, injectés dans le prompt."
+          : "Écriture : extraction des faits et procédures à retenir pour les prochains échanges." }}
+      </p>
     </template>
 
     <div
