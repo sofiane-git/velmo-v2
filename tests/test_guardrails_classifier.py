@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import builtins
 
-from velmo.guardrails.classifier import LexicalClassifier, _parse_llama_guard_response, get_classifier
+from velmo.guardrails.classifier import (
+    LexicalClassifier,
+    _parse_llama_guard_response,
+    get_classifier,
+)
 
 
 def test_lexical_classifier_detects_hate():
