@@ -50,6 +50,11 @@ def get_llm() -> LLM:
     model = AzureAIOpenAIApiChatModel(
         endpoint=os.environ["AZURE_AI_INFERENCE_ENDPOINT"],
         credential=os.environ["AZURE_AI_INFERENCE_API_KEY"],
-        model=os.environ.get("AZURE_AI_INFERENCE_MODEL", "Kimi-K2.6"),
+        model=os.environ.get("AZURE_AI_INFERENCE_MODEL", "Mistral-Large-3"),
+        # Sans timeout explicite, un appel réseau resté sans réponse (endpoint
+        # lent/indisponible) bloque indéfiniment — observé en pratique lors
+        # des tests de bout en bout de l'interface pédagogique (chat/stream).
+        request_timeout=45.0,
+        max_retries=1,
     )
     return AzureLLM(model)
