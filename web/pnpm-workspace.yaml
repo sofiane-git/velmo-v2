@@ -1,0 +1,9 @@
+allowBuilds:
+  '@parcel/watcher': false
+  '@tailwindcss/oxide': false
+  esbuild: false
+  unrs-resolver: false
+  vue-demi: false
+minimumReleaseAgeExclude:
+  - '@pinia/nuxt@1.0.0'
+  - pinia@4.0.0
