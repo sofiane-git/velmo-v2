@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ._text import any_phrase, tokens
+from ._text import phrase_hit, tokens
 
 
 @dataclass
@@ -21,6 +21,7 @@ class Hit:
     method: str
     action: str  # "block" | "flag"
     score: float | None = None
+    reasoning: str | None = None
 
 
 INJECTION_PHRASES: list[tuple[str, ...]] = [
@@ -63,17 +64,43 @@ def luhn_valid(number: str) -> bool:
     return checksum % 10 == 0
 
 
+def _matched_phrase(toks: set[str], phrases: list[tuple[str, ...]]) -> tuple[str, ...] | None:
+    for phrase in phrases:
+        if phrase_hit(toks, phrase):
+            return phrase
+    return None
+
+
 def scan_injection(text: str) -> Hit | None:
     """G6 — motifs d'injection connus. Court-circuite le pipeline (`block`)."""
-    if any_phrase(tokens(text), INJECTION_PHRASES):
-        return Hit(category="prompt_injection", method="regex", action="block")
+    phrase = _matched_phrase(tokens(text), INJECTION_PHRASES)
+    if phrase:
+        return Hit(
+            category="prompt_injection",
+            method="regex",
+            action="block",
+            reasoning=f"Expression détectée : « {' '.join(phrase)} »",
+        )
     return None
 
 
 def scan_secret_leak(text: str) -> Hit | None:
     """G7 — motifs de fuite/extraction de secret connus."""
-    if any_phrase(tokens(text), SECRET_PHRASES) or SECRET_KEY_RE.search(text):
-        return Hit(category="secret_leak", method="regex", action="block")
+    phrase = _matched_phrase(tokens(text), SECRET_PHRASES)
+    if phrase:
+        return Hit(
+            category="secret_leak",
+            method="regex",
+            action="block",
+            reasoning=f"Expression détectée : « {' '.join(phrase)} »",
+        )
+    if SECRET_KEY_RE.search(text):
+        return Hit(
+            category="secret_leak",
+            method="regex",
+            action="block",
+            reasoning="Motif de clé secrète détecté (format sk-/xox.../ghp_.../AKIA...)",
+        )
     return None
 
 
@@ -81,9 +108,19 @@ def scan_pii(text: str) -> Hit | None:
     """G4 — PII structurée (carte + Luhn, mot de passe, IBAN). Sortie uniquement."""
     card = CARD_RE.search(text)
     if card and luhn_valid(card.group(0)):
-        return Hit(category="pii", method="regex", action="block")
+        return Hit(
+            category="pii",
+            method="regex",
+            action="block",
+            reasoning="Numéro de carte bancaire détecté (Luhn valide)",
+        )
     if PASSWORD_RE.search(text):
-        return Hit(category="pii", method="regex", action="block")
+        return Hit(
+            category="pii",
+            method="regex",
+            action="block",
+            reasoning="Mention d'un mot de passe détectée",
+        )
     if IBAN_RE.search(text):
-        return Hit(category="pii", method="regex", action="block")
+        return Hit(category="pii", method="regex", action="block", reasoning="IBAN détecté")
     return None
