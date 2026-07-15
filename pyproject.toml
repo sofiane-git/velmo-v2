@@ -9,12 +9,14 @@ dependencies = [
     "sqlalchemy>=2.0,<2.1",
     "psycopg[binary]>=3.1,<3.3",
     "alembic>=1.13,<2",
+    "fastapi>=0.110.0,<1",
+    "uvicorn>=0.27.0,<1",
 ]
 
 [project.optional-dependencies]
 # Mémoire long terme épisodique + RAG FAQ (Chroma + embeddings e5).
 vector = [
-    "chromadb>=0.5,<0.6",
+    "chromadb>=1.4,<2",
     "sentence-transformers>=3,<4",
 ]
 # LLM via Azure AI Inference (Kimi-K2.6).
@@ -31,7 +33,6 @@ guardrails = [
     "openai>=1.50,<3",
     "azure-ai-contentsafety>=1.0,<2",
     "azure-ai-textanalytics>=5.3,<6",
-    "detoxify>=0.5,<0.6",
 ]
 
 [dependency-groups]
@@ -62,5 +63,16 @@ python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["langchain_azure_ai.*", "detoxify", "yaml", "azure.ai.textanalytics.*"]
+module = ["langchain_azure_ai.*", "yaml", "azure.ai.textanalytics.*"]
 ignore_missing_imports = true
+
+# Torch CPU-only : évite libtorch_cuda.so (~2GB, inutile en inférence ONNX/sentence-transformers).
+# uv résout `torch` depuis cet index lors de `uv lock` → le wheel CPU est fixé dans uv.lock.
+# Aucun changement Dockerfile requis : `uv sync` lira simplement le lockfile.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
