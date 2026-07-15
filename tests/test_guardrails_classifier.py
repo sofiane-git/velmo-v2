@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from velmo.guardrails.classifier import (
+    ClassifierResult,
     CombinedClassifier,
     LexicalClassifier,
     _parse_llama_guard_response,
@@ -44,6 +45,9 @@ class _StubClassifier:
 
     def score(self, text: str) -> dict[str, float]:
         return self._scores
+
+    def score_detailed(self, text: str) -> ClassifierResult:
+        return ClassifierResult(scores=self._scores, reasoning={})
 
 
 def test_combined_classifier_takes_max_per_category():
@@ -100,3 +104,33 @@ def test_parse_llama_guard_ignores_unmapped_codes():
 def test_parse_llama_guard_multi_category():
     scores = _parse_llama_guard_response("unsafe\nS1,S10")
     assert scores == {"hate": 1.0, "violence": 1.0, "sexual": 0.0}
+
+
+def test_lexical_classifier_score_detailed_gives_matched_phrase():
+    result = LexicalClassifier().score_detailed("Si mon maillot n'arrive pas je vais te frapper.")
+    assert result.scores["violence"] >= 0.7
+    assert result.reasoning["violence"] == "Expression détectée : « frapper »"
+
+
+def test_lexical_classifier_score_detailed_no_reasoning_when_clean():
+    result = LexicalClassifier().score_detailed("Comment retourner un maillot qui ne me va pas ?")
+    assert result.reasoning == {}
+
+
+def test_lexical_classifier_score_matches_score_detailed_scores():
+    text = "Ces clients sont des sous-humains qui devraient disparaitre."
+    classifier = LexicalClassifier()
+    assert classifier.score(text) == classifier.score_detailed(text).scores
+
+
+def test_combined_classifier_score_detailed_prefers_primary_reasoning_on_tie():
+    primary = _StubClassifier({"hate": 0.0, "violence": 1.0, "sexual": 0.0})
+    primary_detailed = ClassifierResult(
+        scores={"hate": 0.0, "violence": 1.0, "sexual": 0.0},
+        reasoning={"violence": "Llama Guard 3 : unsafe (S1)"},
+    )
+    primary.score_detailed = lambda text: primary_detailed  # type: ignore[method-assign]
+    combined = CombinedClassifier(primary, LexicalClassifier())  # type: ignore[arg-type]
+    result = combined.score_detailed("je vais te frapper")
+    assert result.scores["violence"] == 1.0
+    assert result.reasoning["violence"] == "Llama Guard 3 : unsafe (S1)"

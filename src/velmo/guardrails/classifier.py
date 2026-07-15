@@ -1,21 +1,29 @@
 """Étage 2 du pipeline garde-fous : classifieur de modération (G1/G2/G3).
 
-`DetoxifyClassifier` est le backend réel (HuggingFace, local, ~90MB) ; en son
-absence (poids/torch non installés — cas par défaut hors-ligne/CI),
-`LexicalClassifier` sert de repli déterministe sur un lexique français ciblé
-(pas un classifieur de modération exhaustif — cf. `docs/job/conceptions/
-conception_chantier2_guardrails.md`, angles morts documentés).
+`LlamaGuardClassifier` (via Ollama) est le backend réel, combiné en OR avec
+`LexicalClassifier` (repli déterministe, toujours disponible) dans
+`CombinedClassifier`. `score()` reste l'API historique (scores seuls) ;
+`score_detailed()` ajoute un raisonnement par catégorie sans dupliquer la
+logique de détection (`score()` délègue à `score_detailed()`).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from ._text import phrase_hit, tokens
 
 
+@dataclass
+class ClassifierResult:
+    scores: dict[str, float]
+    reasoning: dict[str, str]  # uniquement les catégories avec un score > 0
+
+
 class ModerationClassifier(Protocol):
     def score(self, text: str) -> dict[str, float]: ...
+    def score_detailed(self, text: str) -> ClassifierResult: ...
 
 
 HATE_PHRASES: list[tuple[str, ...]] = [
@@ -35,16 +43,33 @@ SEXUAL_PHRASES: list[tuple[str, ...]] = [
 ]
 
 
+def _first_match(toks: set[str], phrases: list[tuple[str, ...]]) -> tuple[str, ...] | None:
+    for phrase in phrases:
+        if phrase_hit(toks, phrase):
+            return phrase
+    return None
+
+
 class LexicalClassifier:
     """Repli déterministe (lexique FR), hors-ligne, aucune dépendance externe."""
 
     def score(self, text: str) -> dict[str, float]:
+        return self.score_detailed(text).scores
+
+    def score_detailed(self, text: str) -> ClassifierResult:
         toks = tokens(text)
-        return {
-            "hate": 1.0 if any(phrase_hit(toks, p) for p in HATE_PHRASES) else 0.0,
-            "violence": 1.0 if any(phrase_hit(toks, p) for p in VIOLENCE_PHRASES) else 0.0,
-            "sexual": 1.0 if any(phrase_hit(toks, p) for p in SEXUAL_PHRASES) else 0.0,
-        }
+        scores: dict[str, float] = {}
+        reasoning: dict[str, str] = {}
+        for category, phrases in (
+            ("hate", HATE_PHRASES),
+            ("violence", VIOLENCE_PHRASES),
+            ("sexual", SEXUAL_PHRASES),
+        ):
+            match = _first_match(toks, phrases)
+            scores[category] = 1.0 if match else 0.0
+            if match:
+                reasoning[category] = f"Expression détectée : « {' '.join(match)} »"
+        return ClassifierResult(scores=scores, reasoning=reasoning)
 
 
 LLAMA_GUARD_CATEGORY_MAP: dict[str, str] = {
@@ -75,6 +100,20 @@ def _parse_llama_guard_response(content: str) -> dict[str, float]:
     return scores
 
 
+def _llama_guard_reasoning(content: str, scores: dict[str, float]) -> dict[str, str]:
+    lines = content.strip().splitlines()
+    if not lines or lines[0].strip().lower() != "unsafe":
+        return {}
+    codes = [c.strip() for c in (lines[1].split(",") if len(lines) > 1 else [])]
+    reasoning: dict[str, str] = {}
+    for category, score in scores.items():
+        if score <= 0:
+            continue
+        matched = [c for c in codes if LLAMA_GUARD_CATEGORY_MAP.get(c) == category]
+        reasoning[category] = f"Llama Guard 3 : unsafe ({', '.join(matched)})"
+    return reasoning
+
+
 class LlamaGuardClassifier:
     """Backend réel : Llama Guard 3 (Meta), servi localement via Ollama —
     modèle multilingue (FR inclus), taxonomie MLCommons S1-S13 mappée sur
@@ -87,6 +126,9 @@ class LlamaGuardClassifier:
         self._model = model or os.getenv("LLAMA_GUARD_MODEL", "llama-guard3:8b")
 
     def score(self, text: str) -> dict[str, float]:
+        return self.score_detailed(text).scores
+
+    def score_detailed(self, text: str) -> ClassifierResult:
         import requests
 
         response = requests.post(
@@ -100,7 +142,9 @@ class LlamaGuardClassifier:
         )
         response.raise_for_status()
         content = response.json().get("message", {}).get("content", "")
-        return _parse_llama_guard_response(content)
+        scores = _parse_llama_guard_response(content)
+        reasoning = _llama_guard_reasoning(content, scores)
+        return ClassifierResult(scores=scores, reasoning=reasoning)
 
 
 class CombinedClassifier:
@@ -111,17 +155,31 @@ class CombinedClassifier:
     attrape trivialement ; le lexique comble cet angle mort, Llama Guard
     généralise au-delà du lexique fixe."""
 
-    def __init__(self, primary: ModerationClassifier, lexical: LexicalClassifier | None = None) -> None:
+    def __init__(
+        self, primary: ModerationClassifier, lexical: LexicalClassifier | None = None
+    ) -> None:
         self._primary = primary
         self._lexical = lexical or LexicalClassifier()
 
     def score(self, text: str) -> dict[str, float]:
-        primary_scores = self._primary.score(text)
-        lexical_scores = self._lexical.score(text)
-        return {
-            category: max(primary_scores.get(category, 0.0), lexical_scores.get(category, 0.0))
-            for category in ("hate", "violence", "sexual")
-        }
+        return self.score_detailed(text).scores
+
+    def score_detailed(self, text: str) -> ClassifierResult:
+        primary_result = self._primary.score_detailed(text)
+        lexical_result = self._lexical.score_detailed(text)
+        scores: dict[str, float] = {}
+        reasoning: dict[str, str] = {}
+        for category in ("hate", "violence", "sexual"):
+            p_score = primary_result.scores.get(category, 0.0)
+            l_score = lexical_result.scores.get(category, 0.0)
+            scores[category] = max(p_score, l_score)
+            if scores[category] <= 0:
+                continue
+            if p_score >= l_score and category in primary_result.reasoning:
+                reasoning[category] = primary_result.reasoning[category]
+            elif category in lexical_result.reasoning:
+                reasoning[category] = lexical_result.reasoning[category]
+        return ClassifierResult(scores=scores, reasoning=reasoning)
 
 
 def get_classifier() -> ModerationClassifier:
