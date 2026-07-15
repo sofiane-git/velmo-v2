@@ -18,8 +18,8 @@ __all__ = ["Hit", "run"]
 
 BLOCK_THRESHOLD = 0.7
 FLAG_THRESHOLD = 0.4
-# 8s (pas 3s) : un classifieur LLM (Llama Guard 3, même le variant 1B, CPU,
-# cold start) ne rentre pas de façon fiable dans un budget de 3s — et
+# 8s (pas 3s) : un classifieur LLM (Llama Guard 3 8B, CPU, cold start) ne
+# rentre pas de façon fiable dans un budget de 3s — et
 # Future.result(timeout=...) abandonne silencieusement le résultat sans
 # lever d'exception que le classifieur pourrait gérer.
 CALL_TIMEOUT_S = 8.0
