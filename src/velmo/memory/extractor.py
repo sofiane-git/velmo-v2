@@ -9,6 +9,7 @@ Deux implémentations du Protocol `FactExtractor` :
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from typing import Protocol
@@ -16,6 +17,8 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 
 from velmo.llm import LLM
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractedFact(BaseModel):
@@ -181,7 +184,14 @@ class LLMExtractor:
 
     def extract(self, user_message: str, assistant_message: str) -> ExtractionResult:
         message = f"UTILISATEUR: {user_message}\nASSISTANT: {assistant_message}"
-        raw = self._llm.invoke(EXTRACTION_SYSTEM, "", message) or ""
+        try:
+            raw = self._llm.invoke(EXTRACTION_SYSTEM, "", message) or ""
+        except Exception:
+            # Panne réseau/timeout du LLM d'extraction : ne doit jamais casser
+            # le flux d'écriture mémoire (cf. docstring de la classe). Loggé
+            # pour rester visible côté ops plutôt qu'avalé en silence.
+            logger.exception("LLMExtractor.extract: échec de l'appel LLM")
+            return ExtractionResult()
         match = _JSON_RE.search(raw)
         if match is None:
             return ExtractionResult()
