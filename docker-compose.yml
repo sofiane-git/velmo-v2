@@ -66,5 +66,6 @@ services:
       NUXT_PUBLIC_API_BASE: http://localhost:8000
     ports:
       - "3000:3000"
+    command: pnpm dev
     depends_on:
       - app
