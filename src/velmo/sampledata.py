@@ -305,4 +305,5 @@ def seed(session: Session) -> None:
         _escalations(),
     ):
         session.add_all(batch)
+        session.flush()
     session.commit()
