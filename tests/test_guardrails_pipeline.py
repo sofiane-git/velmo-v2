@@ -37,3 +37,23 @@ def test_run_detects_pii_only_on_output():
 def test_run_allows_legitimate_message():
     hits = _run("Comment retourner un maillot qui ne me va pas ?", "input")
     assert not any(h.action == "block" and h.category in BLOCKABLE for h in hits)
+
+
+def test_hate_hit_carries_classifier_reasoning():
+    hits = _run("Ces clients sont des sous-humains qui devraient disparaitre.", "input")
+    hate_hit = next(h for h in hits if h.category == "hate")
+    assert hate_hit.reasoning is not None
+    assert "sous" in hate_hit.reasoning.lower() or "humain" in hate_hit.reasoning.lower()
+
+
+def test_out_of_scope_hit_carries_judge_reasoning():
+    hits = _run("Combien vaut mon maillot Maradona 86 aujourd'hui ?", "input")
+    scope_hit = next(h for h in hits if h.category == "out_of_scope")
+    assert scope_hit.reasoning == "Mot-clé de périmètre détecté : « combien vaut »"
+
+
+def test_pii_hit_carries_reasoning():
+    text = "Le paiement est passe avec la carte 4111 1111 1111 1111."
+    hits = _run(text, "output")
+    pii_hit = next(h for h in hits if h.category == "pii")
+    assert pii_hit.reasoning is not None

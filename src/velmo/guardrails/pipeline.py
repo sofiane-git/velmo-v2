@@ -10,7 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from . import pii_redaction, prompt_shields
-from .classifier import ModerationClassifier
+from .classifier import ClassifierResult, ModerationClassifier
 from .judge import Judge
 from .patterns import Hit, scan_injection, scan_pii, scan_secret_leak
 
@@ -70,14 +70,14 @@ def run(
             hits.append(pii_hit)  # "filter" au sens conception : le reste continue
 
     futures: dict[str, Future[Any]] = {
-        "classifier": _EXECUTOR.submit(classifier.score, text),
+        "classifier": _EXECUTOR.submit(classifier.score_detailed, text),
         "judge": _EXECUTOR.submit(judge.evaluate, text, agent_response),
         "prompt_shields": _EXECUTOR.submit(prompt_shields.check, text),
     }
     if location == "output":
         futures["pii_redaction"] = _EXECUTOR.submit(pii_redaction.scan, text)
 
-    results: dict[str, dict[str, float] | float | list[tuple[int, int]] | None] = {}
+    results: dict[str, Any] = {}
     for name, future in futures.items():
         try:
             results[name] = future.result(timeout=CALL_TIMEOUT_S)
@@ -86,29 +86,38 @@ def run(
 
     any_stage_2_3_responded = False
 
-    classifier_scores = results.get("classifier")
-    if isinstance(classifier_scores, dict):
+    classifier_result = results.get("classifier")
+    if isinstance(classifier_result, ClassifierResult):
         any_stage_2_3_responded = True
         for category in ("hate", "violence", "sexual"):
-            level = _level(classifier_scores.get(category))
+            level = _level(classifier_result.scores.get(category))
             if level:
                 hits.append(
                     Hit(
                         category=category,
                         method="classifier",
                         action=level,
-                        score=classifier_scores[category],
+                        score=classifier_result.scores[category],
+                        reasoning=classifier_result.reasoning.get(category),
                     )
                 )
 
     judge_scores = results.get("judge")
     if isinstance(judge_scores, dict):
         any_stage_2_3_responded = True
+        judge_reasoning = judge_scores.get("reasoning")
+        reasoning_text = judge_reasoning if judge_reasoning else None
         for key, category in JUDGE_KEY_TO_CATEGORY.items():
             level = _level(judge_scores.get(key))
             if level:
                 hits.append(
-                    Hit(category=category, method="llm_judge", action=level, score=judge_scores[key])
+                    Hit(
+                        category=category,
+                        method="llm_judge",
+                        action=level,
+                        score=judge_scores[key],
+                        reasoning=reasoning_text,
+                    )
                 )
 
     shields_score = results.get("prompt_shields")
@@ -118,15 +127,28 @@ def run(
         level = _level(shields_score)
         if level:
             hits.append(
-                Hit(category="prompt_injection", method="prompt_shields", action=level,
-                    score=shields_score)
+                Hit(
+                    category="prompt_injection",
+                    method="prompt_shields",
+                    action=level,
+                    score=shields_score,
+                    reasoning="Azure Prompt Shields a détecté une tentative d'injection.",
+                )
             )
 
     if location == "output":
         pii_spans = results.get("pii_redaction")
         if isinstance(pii_spans, list) and pii_spans:
             any_stage_2_3_responded = True
-            hits.append(Hit(category="pii", method="pii_redaction", action="block", score=None))
+            hits.append(
+                Hit(
+                    category="pii",
+                    method="pii_redaction",
+                    action="block",
+                    score=None,
+                    reasoning=f"{len(pii_spans)} entité(s) PII détectée(s) par Azure AI Language.",
+                )
+            )
 
     if not hits and not any_stage_2_3_responded:
         # Tous les étages 2/3 ont échoué/timeout et l'étage 1 n'a rien
