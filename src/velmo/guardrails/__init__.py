@@ -37,8 +37,13 @@ GENERIC_REFUSAL = (
 )
 
 ESCALATE_CATEGORIES = ("violence", "secret_leak")
-INJECTION_REPEAT_THRESHOLD = 3
-INJECTION_REPEAT_WINDOW = timedelta(hours=24)
+# Un coup isolé de ces catégories ne remonte pas (refus poli + log suffit,
+# cf. seuils d'escalade métier : remboursement > 50 €, litige d'authenticité).
+# Une répétition du même user_id devient un signal d'attaque/harcèlement
+# actif — même logique que l'injection de prompt répétée.
+REPEAT_ESCALATE_CATEGORIES = ("prompt_injection", "hate", "sexual")
+REPEAT_THRESHOLD = 3
+REPEAT_WINDOW = timedelta(hours=24)
 
 
 @dataclass
@@ -126,11 +131,9 @@ class GuardrailEngine:
                 return Decision(allowed=True, action="allow")
 
             escalate = blocking.category in ESCALATE_CATEGORIES
-            if blocking.category == "prompt_injection" and user_id is not None:
-                count = count_recent_audit(
-                    session, user_id, "prompt_injection", INJECTION_REPEAT_WINDOW
-                )
-                escalate = escalate or count >= INJECTION_REPEAT_THRESHOLD
+            if blocking.category in REPEAT_ESCALATE_CATEGORIES and user_id is not None:
+                count = count_recent_audit(session, user_id, blocking.category, REPEAT_WINDOW)
+                escalate = escalate or count >= REPEAT_THRESHOLD
 
             return Decision(
                 allowed=False,
