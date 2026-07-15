@@ -159,7 +159,18 @@ class Agent:
         context = self.memory.read(user_id, message)
         yield "memory_read", _memory_read_payload(context)
 
-        answer, routing = self._handle(user_id, message, context)
+        try:
+            answer, routing = self._handle(user_id, message, context)
+        except Exception:
+            # Un échec en aval (ex. le LLM principal refuse la requête) ne doit
+            # pas interrompre le flux SSE au milieu — le client verrait une
+            # connexion coupée sans event "final" exploitable.
+            yield "final", {
+                "answer": DEFAULT_REFUSAL,
+                "status": "error",
+                "latency_ms": _elapsed_ms(start),
+            }
+            return
         yield "routing", _routing_payload(routing)
         if routing.tool_result is not None:
             yield "tool_result", {"name": routing.tool_name, "result": routing.tool_result}

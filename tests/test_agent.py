@@ -23,6 +23,13 @@ class _RecordingLLM:
         return f"[recording] {message}"
 
 
+class _CrashingLLM:
+    """Simule un échec du LLM principal (ex. content filter Azure)."""
+
+    def invoke(self, system: str, context: str, message: str) -> str:
+        raise RuntimeError("LLM refusal")
+
+
 def _hermetic_agent(llm: LLM) -> Agent:
     return Agent(
         llm=llm,
@@ -106,6 +113,14 @@ def test_respond_traced_short_circuits_on_blocked_input():
     assert event_types == ["input_guardrail", "final"]
     assert events[0][1]["allowed"] is False
     assert events[-1][1]["status"] == "blocked_input"
+
+
+def test_respond_traced_yields_error_final_when_downstream_raises():
+    agent = _hermetic_agent(_CrashingLLM())
+    events = list(agent.respond_traced("trace-crash", "Bonjour, comment vas-tu ?"))
+    event_types = [e for e, _ in events]
+    assert event_types == ["input_guardrail", "memory_read", "final"]
+    assert events[-1][1]["status"] == "error"
 
 
 def test_respond_delegates_to_respond_traced_and_returns_final_answer():
