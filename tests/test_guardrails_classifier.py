@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import builtins
-
 from velmo.guardrails.classifier import (
     LexicalClassifier,
+    LlamaGuardClassifier,
     _parse_llama_guard_response,
     get_classifier,
 )
@@ -29,16 +28,14 @@ def test_lexical_classifier_zero_on_legitimate_message():
     assert all(v < 0.4 for v in scores.values())
 
 
-def test_get_classifier_falls_back_without_transformers(monkeypatch):
-    real_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name.startswith("transformers") or name.startswith("optimum"):
-            raise ImportError(f"no {name}")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+def test_get_classifier_falls_back_without_ollama_url(monkeypatch):
+    monkeypatch.delenv("OLLAMA_URL", raising=False)
     assert isinstance(get_classifier(), LexicalClassifier)
+
+
+def test_get_classifier_uses_llama_guard_when_configured(monkeypatch):
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    assert isinstance(get_classifier(), LlamaGuardClassifier)
 
 
 def test_parse_llama_guard_safe_is_all_zero():

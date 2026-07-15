@@ -104,8 +104,12 @@ class LlamaGuardClassifier:
 
 
 def get_classifier() -> ModerationClassifier:
-    """Detoxify ONNX si les dépendances sont disponibles, sinon le repli lexical."""
+    """Llama Guard 3 (Ollama) si `OLLAMA_URL` est configuré, sinon repli lexical."""
+    import os
+
+    if not os.getenv("OLLAMA_URL"):
+        return LexicalClassifier()
     try:
-        return DetoxifyClassifier()
+        return LlamaGuardClassifier()
     except Exception:
         return LexicalClassifier()
