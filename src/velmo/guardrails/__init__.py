@@ -9,7 +9,7 @@ Orchestre `patterns.py` (étage 1, regex), `classifier.py`/`judge.py`/
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
@@ -56,6 +56,7 @@ class Decision:
     reason: str = ""
     refusal: str | None = None
     escalate: bool = False
+    hits: list[pipeline.Hit] = field(default_factory=list)
 
 
 class GuardrailEngine:
@@ -127,8 +128,9 @@ class GuardrailEngine:
             blocking = next(
                 (h for h in hits if h.action == "block" and h.category in CATEGORIES), None
             )
+            relevant_hits = [h for h in hits if h.category in CATEGORIES]
             if blocking is None:
-                return Decision(allowed=True, action="allow")
+                return Decision(allowed=True, action="allow", hits=relevant_hits)
 
             escalate = blocking.category in ESCALATE_CATEGORIES
             if blocking.category in REPEAT_ESCALATE_CATEGORIES and user_id is not None:
@@ -141,6 +143,7 @@ class GuardrailEngine:
                 category=blocking.category,
                 refusal=GENERIC_REFUSAL,
                 escalate=escalate,
+                hits=relevant_hits,
             )
         finally:
             session.close()
