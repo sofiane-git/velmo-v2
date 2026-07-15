@@ -66,7 +66,7 @@ strict = true
 module = ["langchain_azure_ai.*", "yaml", "azure.ai.textanalytics.*"]
 ignore_missing_imports = true
 
-# Torch CPU-only : évite libtorch_cuda.so (~2GB, inutile en inférence ONNX/sentence-transformers).
+# Torch CPU-only : évite libtorch_cuda.so (~2GB, inutile en inférence sentence-transformers).
 # uv résout `torch` depuis cet index lors de `uv lock` → le wheel CPU est fixé dans uv.lock.
 # Aucun changement Dockerfile requis : `uv sync` lira simplement le lockfile.
 [tool.uv.sources]
