@@ -62,17 +62,5 @@ python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-module = "langchain_azure_ai.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "detoxify"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "yaml"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "azure.ai.textanalytics.*"
+module = ["langchain_azure_ai.*", "detoxify", "yaml", "azure.ai.textanalytics.*"]
 ignore_missing_imports = true

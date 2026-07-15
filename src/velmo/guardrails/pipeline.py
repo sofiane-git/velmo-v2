@@ -7,7 +7,7 @@ tous les SDK sous-jacents (detoxify, openai, azure-ai-*) sont synchrones.
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Union
+from typing import Any
 
 from . import pii_redaction, prompt_shields
 from .classifier import ModerationClassifier
@@ -19,6 +19,18 @@ __all__ = ["Hit", "run"]
 BLOCK_THRESHOLD = 0.7
 FLAG_THRESHOLD = 0.4
 CALL_TIMEOUT_S = 3.0
+
+# Clé du dict renvoyé par Judge.evaluate() -> catégorie G1-G7 correspondante.
+JUDGE_KEY_TO_CATEGORY = {
+    "hors_role": "out_of_scope",
+    "manipulation": "prompt_injection",
+    "secret_interne": "secret_leak",
+}
+
+# Pool partagé, créé une fois : `check_input`/`check_output` sont sur le
+# chemin critique de chaque tour agent — recréer/détruire 4 threads à chaque
+# appel serait un coût inutile sur le chemin le plus chaud du pipeline.
+_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 
 def _level(score: float | None) -> str | None:
@@ -53,21 +65,20 @@ def run(
         if pii_hit:
             hits.append(pii_hit)  # "filter" au sens conception : le reste continue
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures: dict[str, Future[Any]] = {
-            "classifier": pool.submit(classifier.score, text),
-            "judge": pool.submit(judge.evaluate, text, agent_response),
-            "prompt_shields": pool.submit(prompt_shields.check, text),
-        }
-        if location == "output":
-            futures["pii_redaction"] = pool.submit(pii_redaction.scan, text)
+    futures: dict[str, Future[Any]] = {
+        "classifier": _EXECUTOR.submit(classifier.score, text),
+        "judge": _EXECUTOR.submit(judge.evaluate, text, agent_response),
+        "prompt_shields": _EXECUTOR.submit(prompt_shields.check, text),
+    }
+    if location == "output":
+        futures["pii_redaction"] = _EXECUTOR.submit(pii_redaction.scan, text)
 
-        results: dict[str, Union[dict[str, float], float, list[tuple[int, int]], None]] = {}
-        for name, future in futures.items():
-            try:
-                results[name] = future.result(timeout=CALL_TIMEOUT_S)
-            except Exception:
-                results[name] = None
+    results: dict[str, dict[str, float] | float | list[tuple[int, int]] | None] = {}
+    for name, future in futures.items():
+        try:
+            results[name] = future.result(timeout=CALL_TIMEOUT_S)
+        except Exception:
+            results[name] = None
 
     any_stage_2_3_responded = False
 
@@ -89,33 +100,22 @@ def run(
     judge_scores = results.get("judge")
     if isinstance(judge_scores, dict):
         any_stage_2_3_responded = True
-        level = _level(judge_scores.get("hors_role"))
-        if level:
-            hits.append(
-                Hit(category="out_of_scope", method="llm_judge", action=level,
-                    score=judge_scores["hors_role"])
-            )
-        level = _level(judge_scores.get("manipulation"))
-        if level:
-            hits.append(
-                Hit(category="prompt_injection", method="llm_judge", action=level,
-                    score=judge_scores["manipulation"])
-            )
-        level = _level(judge_scores.get("secret_interne"))
-        if level:
-            hits.append(
-                Hit(category="secret_leak", method="llm_judge", action=level,
-                    score=judge_scores["secret_interne"])
-            )
+        for key, category in JUDGE_KEY_TO_CATEGORY.items():
+            level = _level(judge_scores.get(key))
+            if level:
+                hits.append(
+                    Hit(category=category, method="llm_judge", action=level, score=judge_scores[key])
+                )
 
     shields_score = results.get("prompt_shields")
     if isinstance(shields_score, (int, float)):
         any_stage_2_3_responded = True
-        level = _level(float(shields_score))
+        shields_score = float(shields_score)
+        level = _level(shields_score)
         if level:
             hits.append(
                 Hit(category="prompt_injection", method="prompt_shields", action=level,
-                    score=float(shields_score))
+                    score=shields_score)
             )
 
     if location == "output":
