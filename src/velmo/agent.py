@@ -9,15 +9,19 @@ sont câblés via des composants par défaut (no-op).
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
 from . import tools
-from .guardrails import GENERIC_REFUSAL, GuardrailEngine
+from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine
 from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
-from .memory import MemoryManager
+from .memory import MemoryContext, MemoryManager, WriteReport
+from .memory.db import FACT_KEY_ALIASES
 
 SYSTEM_PROMPT = (
     "Tu es l'assistant de support de Velmo, boutique de maillots de foot collector. "
@@ -63,6 +67,57 @@ _FAQ_KEYWORDS = (
     "conditions d'échange",
 )
 
+_FORGET_TRIGGERS = ("oublie", "efface", "supprime")
+
+
+@dataclass
+class RoutingInfo:
+    handler: str  # "tool" | "faq_rag" | "llm_libre"
+    tool_name: str | None = None
+    order_id: str | None = None
+    query: str | None = None
+    tool_result: dict[str, Any] | None = None
+
+
+def _guardrail_payload(decision: Decision) -> dict[str, Any]:
+    return {
+        "hits": [asdict(h) for h in decision.hits],
+        "allowed": decision.allowed,
+        "escalate": decision.escalate,
+    }
+
+
+def _memory_read_payload(context: MemoryContext) -> dict[str, Any]:
+    return {
+        "history_turns": len(context.history),
+        "summary_used": any(role == "résumé" for role, _ in context.history),
+        "facts_matched": [asdict(f) for f in context.facts_detailed],
+        "episodic_matched": list(context.episodic),
+    }
+
+
+def _routing_payload(routing: RoutingInfo) -> dict[str, Any]:
+    return {
+        "handler": routing.handler,
+        "detail": {
+            "tool_name": routing.tool_name,
+            "order_id": routing.order_id,
+            "query": routing.query,
+        },
+    }
+
+
+def _write_report_payload(report: WriteReport) -> dict[str, Any]:
+    return {
+        "facts_written": [f.model_dump() for f in report.facts_written],
+        "procedures_written": [p.model_dump() for p in report.procedures_written],
+        "episode_created": report.episode_created,
+    }
+
+
+def _elapsed_ms(start: float) -> int:
+    return int((time.monotonic() - start) * 1000)
+
 
 class Agent:
     """Assistant de support adossé aux outils métier et à la FAQ."""
@@ -81,8 +136,12 @@ class Agent:
         self.session = session
         self.kb = kb
 
-    def respond(self, user_id: str, message: str) -> str:
+    def respond_traced(
+        self, user_id: str, message: str
+    ) -> Iterator[tuple[str, dict[str, Any]]]:
+        start = time.monotonic()
         gate_in = self.guardrails.check_input(message, user_id=user_id)
+        yield "input_guardrail", _guardrail_payload(gate_in)
         if not gate_in.allowed:
             refusal = gate_in.refusal or DEFAULT_REFUSAL
             if gate_in.escalate:
@@ -90,45 +149,80 @@ class Agent:
                     self.session, user_id, f"garde-fou {gate_in.category} (entrée)"
                 )
             self.memory.write(user_id, message, refusal)
-            return refusal
+            yield "final", {
+                "answer": refusal,
+                "status": "blocked_input",
+                "latency_ms": _elapsed_ms(start),
+            }
+            return
 
-        self.memory.read(user_id, message)
-        answer = self._handle(user_id, message)
+        context = self.memory.read(user_id, message)
+        yield "memory_read", _memory_read_payload(context)
+
+        answer, routing = self._handle(user_id, message, context)
+        yield "routing", _routing_payload(routing)
+        if routing.tool_result is not None:
+            yield "tool_result", {"name": routing.tool_name, "result": routing.tool_result}
 
         gate_out = self.guardrails.check_output(answer, user_id=user_id)
+        yield "output_guardrail", _guardrail_payload(gate_out)
+        status = "ok"
         if not gate_out.allowed:
             if gate_out.escalate:
                 tools.escalate_to_human(
                     self.session, user_id, f"garde-fou {gate_out.category} (sortie)"
                 )
             answer = gate_out.refusal or DEFAULT_REFUSAL
+            status = "blocked_output"
 
-        self.memory.write(user_id, message, answer)
+        write_report = self.memory.write(user_id, message, answer)
+        yield "memory_write", _write_report_payload(write_report)
+        yield "final", {"answer": answer, "status": status, "latency_ms": _elapsed_ms(start)}
+
+    def respond(self, user_id: str, message: str) -> str:
+        answer = ""
+        for event_type, payload in self.respond_traced(user_id, message):
+            if event_type == "final":
+                answer = payload["answer"]
         return answer
 
     # --- routage déterministe ------------------------------------------------
 
-    def _handle(self, user_id: str, message: str) -> str:
+    def _handle(
+        self, user_id: str, message: str, context: MemoryContext
+    ) -> tuple[str, RoutingInfo]:
         low = message.lower()
         order = ORDER_RE.search(message)
         order_id = order.group(0) if order else None
         confirmed = any(c in low for c in _CONFIRM)
 
+        if any(t in low for t in _FORGET_TRIGGERS):
+            return self._handle_forget(user_id, low)
+
         if order_id and "annul" in low:
-            return self._confirm_or_act(
+            answer, result = self._confirm_or_act(
                 confirmed,
                 "annuler",
                 order_id,
                 lambda: tools.cancel_order(self.session, order_id, user_id),
             )
+            return answer, RoutingInfo(
+                handler="tool", tool_name="cancel_order", order_id=order_id, tool_result=result
+            )
         if order_id and "adresse" in low:
-            return self._confirm_or_act(
+            answer, result = self._confirm_or_act(
                 confirmed,
                 "modifier l'adresse de",
                 order_id,
                 lambda: tools.update_shipping_address(
                     self.session, order_id, user_id, {"line1": "(à préciser)"}
                 ),
+            )
+            return answer, RoutingInfo(
+                handler="tool",
+                tool_name="update_shipping_address",
+                order_id=order_id,
+                tool_result=result,
             )
         if (
             order_id
@@ -137,23 +231,29 @@ class Agent:
         ):
             size = SIZE_RE.search(message)
             new_size = size.group(1) if size else "M"
-            return self._confirm_or_act(
+            answer, result = self._confirm_or_act(
                 confirmed,
                 f"changer la taille (vers {new_size}) de",
                 order_id,
                 lambda: tools.update_order_item(self.session, order_id, user_id, new_size),
             )
+            return answer, RoutingInfo(
+                handler="tool", tool_name="update_order_item", order_id=order_id, tool_result=result
+            )
         if order_id and any(w in low for w in ("retour", "échange", "echange", "renvoyer")):
-            return self._confirm_or_act(
+            answer, result = self._confirm_or_act(
                 confirmed,
                 "ouvrir un retour pour",
                 order_id,
                 lambda: tools.create_return(self.session, order_id, user_id, "Demande client"),
             )
+            return answer, RoutingInfo(
+                handler="tool", tool_name="create_return", order_id=order_id, tool_result=result
+            )
         if order_id and "rembours" in low:
             amount_match = AMOUNT_RE.search(message)
             amount = float(amount_match.group(1).replace(",", ".")) if amount_match else 0.0
-            return self._confirm_or_act(
+            answer, result = self._confirm_or_act(
                 confirmed,
                 f"rembourser {amount:.0f}€ sur",
                 order_id,
@@ -161,49 +261,92 @@ class Agent:
                     self.session, order_id, user_id, amount, "Demande client"
                 ),
             )
+            return answer, RoutingInfo(
+                handler="tool", tool_name="trigger_refund", order_id=order_id, tool_result=result
+            )
 
         if order_id and any(w in low for w in ("suivi", "colis", "livr", "transport", "track")):
-            return self._format_tracking(tools.track_shipment(self.session, order_id, user_id))
+            result = tools.track_shipment(self.session, order_id, user_id)
+            return self._format_tracking(result), RoutingInfo(
+                handler="tool", tool_name="track_shipment", order_id=order_id, tool_result=result
+            )
         if order_id:
-            return self._format_order(tools.get_order(self.session, order_id, user_id))
+            result = tools.get_order(self.session, order_id, user_id)
+            return self._format_order(result), RoutingInfo(
+                handler="tool", tool_name="get_order", order_id=order_id, tool_result=result
+            )
 
         if any(w in low for w in ("dispo", "stock", "reste", "en taille")):
             return self._handle_stock(message, low)
 
         if any(k in low for k in _FAQ_KEYWORDS):
-            return self._format_kb(tools.search_kb(self.kb, message))
+            result = tools.search_kb(self.kb, message)
+            return self._format_kb(result), RoutingInfo(
+                handler="faq_rag", tool_name="search_kb", query=message, tool_result=result
+            )
 
-        return self.llm.invoke(SYSTEM_PROMPT, "", message)
+        answer = self.llm.invoke(SYSTEM_PROMPT, context.render(), message)
+        return answer, RoutingInfo(handler="llm_libre", query=message)
 
     def _confirm_or_act(
         self, confirmed: bool, label: str, order_id: str, action: Callable[[], dict[str, Any]]
-    ) -> str:
+    ) -> tuple[str, dict[str, Any] | None]:
         if not confirmed:
             return (
                 f"Pour {label} la commande {order_id}, pouvez-vous confirmer ? "
-                "Répondez « je confirme »."
+                "Répondez « je confirme ».",
+                None,
             )
         result = action()
         if result.get("error"):
-            return f"Je ne trouve pas la commande {order_id} à votre nom."
+            return f"Je ne trouve pas la commande {order_id} à votre nom.", result
         if result.get("action") == "escalate":
             return (
                 f"Cette demande sur la commande {order_id} dépasse ce que je peux faire seul "
-                "(commande déjà partie ou montant trop élevé). Je transmets à un conseiller."
+                "(commande déjà partie ou montant trop élevé). Je transmets à un conseiller.",
+                result,
             )
-        return f"C'est fait pour la commande {order_id} ({result.get('action')})."
+        return f"C'est fait pour la commande {order_id} ({result.get('action')}).", result
 
-    def _handle_stock(self, message: str, low: str) -> str:
+    def _handle_forget(self, user_id: str, low: str) -> tuple[str, RoutingInfo]:
+        target = next((alias for alias in FACT_KEY_ALIASES if alias in low), None)
+        if target is None:
+            return (
+                "Que voulez-vous que j'oublie exactement (adresse, taille, club préféré, "
+                "contrat...) ?",
+                RoutingInfo(handler="tool", tool_name="memory_forget"),
+            )
+        count = self.memory.forget(user_id, target)
+        result = {"target": target, "removed": count}
+        if count == 0:
+            return (
+                "Je n'ai rien trouvé à oublier à ce sujet.",
+                RoutingInfo(handler="tool", tool_name="memory_forget", tool_result=result),
+            )
+        return (
+            f"C'est fait, j'ai oublié cette information ({count} élément(s) supprimé(s)).",
+            RoutingInfo(handler="tool", tool_name="memory_forget", tool_result=result),
+        )
+
+    def _handle_stock(self, message: str, low: str) -> tuple[str, RoutingInfo]:
         ref = self._find_ref(low)
         size = SIZE_RE.search(message)
         if not ref or not size:
-            return "Pouvez-vous préciser la référence du maillot et la taille souhaitée ?"
+            return (
+                "Pouvez-vous préciser la référence du maillot et la taille souhaitée ?",
+                RoutingInfo(handler="tool", tool_name="check_stock"),
+            )
         result = tools.check_stock(self.session, ref, size.group(1))
         if result.get("error"):
-            return "Je ne connais pas cette référence dans notre catalogue."
+            return (
+                "Je ne connais pas cette référence dans notre catalogue.",
+                RoutingInfo(handler="tool", tool_name="check_stock", tool_result=result),
+            )
         if result["available"]:
-            return f"Le maillot {result['title']} en taille {result['size']} est disponible."
-        return f"Le maillot {ref} en taille {result['size']} est indisponible (épuisé)."
+            answer = f"Le maillot {result['title']} en taille {result['size']} est disponible."
+        else:
+            answer = f"Le maillot {ref} en taille {result['size']} est indisponible (épuisé)."
+        return answer, RoutingInfo(handler="tool", tool_name="check_stock", tool_result=result)
 
     def _find_ref(self, low: str) -> str | None:
         for alias, ref in _ALIASES.items():
