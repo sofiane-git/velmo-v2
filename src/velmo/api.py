@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -17,13 +18,16 @@ app = FastAPI(
 )
 
 # Outil de démo interne sans authentification (cf. spec) : le frontend Nuxt
-# tourne sur une origine distincte (port 3000/3001) et appelle /chat/stream
-# en fetch cross-origin — sans CORS le navigateur bloque la requête SSE.
+# tourne sur une origine distincte (port 3000 par défaut) et appelle
+# /chat/stream en fetch cross-origin — sans CORS le navigateur bloque la
+# requête SSE. Allowlist explicite (pas de wildcard) même si le service reste
+# non authentifié.
+_default_web_origins = "http://localhost:3000,http://127.0.0.1:3000"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=os.getenv("VELMO_WEB_ORIGINS", _default_web_origins).split(","),
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 # On instancie l'agent par défaut au démarrage
