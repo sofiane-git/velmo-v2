@@ -84,7 +84,7 @@ class LlamaGuardClassifier:
         import os
 
         self._base_url = (base_url or os.environ["OLLAMA_URL"]).rstrip("/")
-        self._model = model or os.getenv("LLAMA_GUARD_MODEL", "llama-guard3:1b")
+        self._model = model or os.getenv("LLAMA_GUARD_MODEL", "llama-guard3:8b")
 
     def score(self, text: str) -> dict[str, float]:
         import requests
@@ -103,13 +103,35 @@ class LlamaGuardClassifier:
         return _parse_llama_guard_response(content)
 
 
+class CombinedClassifier:
+    """OR logique entre un backend sémantique (`LlamaGuardClassifier`) et
+    `LexicalClassifier` — score = max par catégorie. Mesuré sur
+    `eval/guardrail_cases.jsonl` : Llama Guard 3 8B seul rate encore 2 cas
+    limpides (« sale race », « je vais te frapper ») que le lexique FR
+    attrape trivialement ; le lexique comble cet angle mort, Llama Guard
+    généralise au-delà du lexique fixe."""
+
+    def __init__(self, primary: ModerationClassifier, lexical: LexicalClassifier | None = None) -> None:
+        self._primary = primary
+        self._lexical = lexical or LexicalClassifier()
+
+    def score(self, text: str) -> dict[str, float]:
+        primary_scores = self._primary.score(text)
+        lexical_scores = self._lexical.score(text)
+        return {
+            category: max(primary_scores.get(category, 0.0), lexical_scores.get(category, 0.0))
+            for category in ("hate", "violence", "sexual")
+        }
+
+
 def get_classifier() -> ModerationClassifier:
-    """Llama Guard 3 (Ollama) si `OLLAMA_URL` est configuré, sinon repli lexical."""
+    """Llama Guard 3 (Ollama) combiné au repli lexical si `OLLAMA_URL` est
+    configuré, sinon repli lexical seul."""
     import os
 
     if not os.getenv("OLLAMA_URL"):
         return LexicalClassifier()
     try:
-        return LlamaGuardClassifier()
+        return CombinedClassifier(LlamaGuardClassifier())
     except Exception:
         return LexicalClassifier()

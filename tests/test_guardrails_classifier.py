@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from velmo.guardrails.classifier import (
+    CombinedClassifier,
     LexicalClassifier,
-    LlamaGuardClassifier,
     _parse_llama_guard_response,
     get_classifier,
 )
@@ -33,9 +33,38 @@ def test_get_classifier_falls_back_without_ollama_url(monkeypatch):
     assert isinstance(get_classifier(), LexicalClassifier)
 
 
-def test_get_classifier_uses_llama_guard_when_configured(monkeypatch):
+def test_get_classifier_uses_combined_when_configured(monkeypatch):
     monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
-    assert isinstance(get_classifier(), LlamaGuardClassifier)
+    assert isinstance(get_classifier(), CombinedClassifier)
+
+
+class _StubClassifier:
+    def __init__(self, scores: dict[str, float]) -> None:
+        self._scores = scores
+
+    def score(self, text: str) -> dict[str, float]:
+        return self._scores
+
+
+def test_combined_classifier_takes_max_per_category():
+    primary = _StubClassifier({"hate": 0.0, "violence": 1.0, "sexual": 0.0})
+    lexical = _StubClassifier({"hate": 1.0, "violence": 0.0, "sexual": 0.0})
+    combined = CombinedClassifier(primary, lexical)  # type: ignore[arg-type]
+    assert combined.score("peu importe") == {"hate": 1.0, "violence": 1.0, "sexual": 0.0}
+
+
+def test_combined_classifier_zero_when_both_zero():
+    primary = _StubClassifier({"hate": 0.0, "violence": 0.0, "sexual": 0.0})
+    lexical = _StubClassifier({"hate": 0.0, "violence": 0.0, "sexual": 0.0})
+    combined = CombinedClassifier(primary, lexical)  # type: ignore[arg-type]
+    assert combined.score("peu importe") == {"hate": 0.0, "violence": 0.0, "sexual": 0.0}
+
+
+def test_combined_classifier_defaults_lexical_when_not_provided():
+    primary = _StubClassifier({"hate": 0.0, "violence": 0.0, "sexual": 0.0})
+    combined = CombinedClassifier(primary)  # type: ignore[arg-type]
+    scores = combined.score("Si mon maillot n'arrive pas je vais te frapper.")
+    assert scores["violence"] >= 0.7
 
 
 def test_parse_llama_guard_safe_is_all_zero():
