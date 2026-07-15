@@ -98,12 +98,15 @@ def get_kb() -> KnowledgeBase:
         host = parsed.hostname or "localhost"
         port = parsed.port or 8000
         client = chromadb.HttpClient(host=host, port=port)
-        # SentenceTransformerEmbeddingFunction est injecté dynamiquement dans le
-        # module par chromadb au runtime (globals()[...] = attr) : invisible à mypy.
-        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(  # type: ignore[attr-defined]
+        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
         )
-        collection = client.get_or_create_collection("velmo_faq", embedding_function=embedder)
+        # Le stub chromadb type SentenceTransformerEmbeddingFunction plus étroitement
+        # (float32) que EmbeddingFunction générique attendu ici (float64) : incompatibilité
+        # de stub, pas d'erreur runtime.
+        collection = client.get_or_create_collection(
+            "velmo_faq", embedding_function=embedder  # type: ignore[arg-type]
+        )
         return ChromaKB(collection)
     except Exception as exc:
         logging.warning("[kb] Chroma indisponible (%s) — fallback sur LocalKB.", exc)
