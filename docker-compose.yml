@@ -6,14 +6,21 @@ services:
       - .env
     environment:
       CHROMA_URL: http://chroma:8000
+      OLLAMA_URL: http://ollama:11434
+      DB_URL: postgresql+psycopg://app:app@postgres:5432/velmo
     depends_on:
       postgres:
         condition: service_healthy
       chroma:
         condition: service_started
+      ollama:
+        condition: service_started
+    ports:
+      - "8000:8000"
     # Conteneur maintenu actif ; ouvrir le chat avec :
     #   docker compose exec app uv run python -m velmo.cli
-    command: [ "tail", "-f", "/dev/null" ]
+    # command: [ "tail", "-f", "/dev/null" ]
+    command: ["uv", "run", "uvicorn", "velmo.api:app", "--host", "0.0.0.0", "--port", "8000"]
 
   postgres:
     image: postgres:16-alpine
@@ -37,3 +44,17 @@ services:
       - "8001:8000"
     volumes:
       - .docker-data/chroma:/chroma/chroma
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - .docker-data/ollama:/root/.ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        ollama serve &
+        sleep 3 &&
+        ollama pull llama-guard3:1b &&
+        wait
