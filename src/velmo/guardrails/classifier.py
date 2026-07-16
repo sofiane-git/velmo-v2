@@ -9,8 +9,9 @@ logique de détection (`score()` délègue à `score_detailed()`).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from ._scoring import FALLBACK_MAX_SCORE
 from ._text import phrase_hit, tokens
@@ -86,9 +87,38 @@ LLAMA_GUARD_CATEGORY_MAP: dict[str, str] = {
 }
 
 
-def _parse_llama_guard_response(content: str) -> dict[str, float]:
+def _extract_p_unsafe(logprobs: list[dict[str, Any]] | None) -> float | None:
+    """Probabilité que Llama Guard 3 ait choisi `unsafe` plutôt que `safe`
+    comme premier token généré, par softmax entre les deux logprobs. `None`
+    si l'un des deux tokens n'apparaît pas dans le top-`top_logprobs` (pas de
+    masse de probabilité exploitable pour normaliser) — l'appelant retombe
+    alors sur le comportement binaire existant.
+    """
+    if not logprobs:
+        return None
+    first = logprobs[0]
+    candidates: list[dict[str, Any]] = [first]
+    top = first.get("top_logprobs")
+    if isinstance(top, list):
+        candidates.extend(top)
+    by_token: dict[str, float] = {}
+    for entry in candidates:
+        token = str(entry.get("token", "")).strip().lower()
+        if token and token not in by_token:
+            by_token[token] = float(entry.get("logprob", float("-inf")))
+    if "safe" not in by_token or "unsafe" not in by_token:
+        return None
+    logprob_safe = by_token["safe"]
+    logprob_unsafe = by_token["unsafe"]
+    return math.exp(logprob_unsafe) / (math.exp(logprob_unsafe) + math.exp(logprob_safe))
+
+
+def _parse_llama_guard_response(content: str, p_unsafe: float = 1.0) -> dict[str, float]:
     """Parse la réponse Llama Guard 3 (`"safe"` ou `"unsafe\\nS10,S11"`) vers
     nos 3 catégories. Codes MLCommons non mappés (S2, S5-S9, S13...) ignorés.
+    `p_unsafe` (calculé par `_extract_p_unsafe` quand les logprobs sont
+    disponibles) remplace le `1.0` implicite d'origine — permet une vraie
+    gradation au lieu d'un verdict tout-ou-rien.
     """
     scores = {"hate": 0.0, "violence": 0.0, "sexual": 0.0}
     lines = content.strip().splitlines()
@@ -98,7 +128,7 @@ def _parse_llama_guard_response(content: str) -> dict[str, float]:
     for code in codes:
         category = LLAMA_GUARD_CATEGORY_MAP.get(code.strip())
         if category:
-            scores[category] = 1.0
+            scores[category] = p_unsafe
     return scores
 
 
@@ -139,6 +169,12 @@ class LlamaGuardClassifier:
                 "model": self._model,
                 "messages": [{"role": "user", "content": text}],
                 "stream": False,
+                # Ollama calcule déjà ces logprobs en interne — les demander
+                # ne coûte rien de plus qu'un champ dans la réponse (cf.
+                # docs.ollama.com/api/chat, testé en juillet 2026). Sert à
+                # extraire un p_unsafe calibré au lieu du 1.0/0.0 binaire.
+                "logprobs": True,
+                "top_logprobs": 5,
             },
             # Le premier appel après démarrage/inactivité d'Ollama charge le
             # modèle en mémoire (mesuré ~21-27s) — un timeout de 8s ici
@@ -150,8 +186,12 @@ class LlamaGuardClassifier:
             timeout=CLIENT_TIMEOUT_S,
         )
         response.raise_for_status()
-        content = response.json().get("message", {}).get("content", "")
-        scores = _parse_llama_guard_response(content)
+        body = response.json()
+        content = body.get("message", {}).get("content", "")
+        p_unsafe = _extract_p_unsafe(body.get("logprobs"))
+        scores = _parse_llama_guard_response(
+            content, p_unsafe if p_unsafe is not None else FALLBACK_MAX_SCORE
+        )
         reasoning = _llama_guard_reasoning(content, scores)
         return ClassifierResult(scores=scores, reasoning=reasoning)
 

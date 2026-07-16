@@ -8,20 +8,25 @@ from velmo.guardrails.classifier import (
     CombinedClassifier,
     LexicalClassifier,
     LlamaGuardClassifier,
+    _extract_p_unsafe,
     _parse_llama_guard_response,
     get_classifier,
 )
 
 
 class _FakeResponse:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, logprobs: list[dict] | None = None) -> None:
         self._content = content
+        self._logprobs = logprobs
 
     def raise_for_status(self) -> None:
         pass
 
     def json(self) -> dict:
-        return {"message": {"content": self._content}}
+        body: dict = {"message": {"content": self._content}}
+        if self._logprobs is not None:
+            body["logprobs"] = self._logprobs
+        return body
 
 
 def test_llama_guard_classifier_uses_timeout_below_pipeline_call_timeout(monkeypatch):
@@ -173,3 +178,68 @@ def test_combined_classifier_score_detailed_prefers_primary_reasoning_on_tie():
     result = combined.score_detailed("je vais te frapper")
     assert result.scores["violence"] == 1.0
     assert result.reasoning["violence"] == "Llama Guard 3 : unsafe (S1)"
+
+
+def _logprobs_for(token: str, alt_token: str, token_logprob: float, alt_logprob: float) -> list[dict]:
+    return [
+        {
+            "token": token,
+            "logprob": token_logprob,
+            "top_logprobs": [
+                {"token": token, "logprob": token_logprob},
+                {"token": alt_token, "logprob": alt_logprob},
+            ],
+        }
+    ]
+
+
+def test_extract_p_unsafe_computes_softmax_between_safe_and_unsafe():
+    logprobs = _logprobs_for("unsafe", "safe", -0.05, -4.0)
+    p = _extract_p_unsafe(logprobs)
+    assert p is not None
+    assert 0.95 < p < 1.0
+
+
+def test_extract_p_unsafe_favors_safe_when_more_likely():
+    logprobs = _logprobs_for("safe", "unsafe", -0.02, -5.0)
+    p = _extract_p_unsafe(logprobs)
+    assert p is not None
+    assert p < 0.05
+
+
+def test_extract_p_unsafe_returns_none_when_safe_missing_from_top_logprobs():
+    logprobs = [
+        {"token": "unsafe", "logprob": -0.01, "top_logprobs": [{"token": "unsafe", "logprob": -0.01}]}
+    ]
+    assert _extract_p_unsafe(logprobs) is None
+
+
+def test_extract_p_unsafe_returns_none_without_logprobs():
+    assert _extract_p_unsafe(None) is None
+    assert _extract_p_unsafe([]) is None
+
+
+def test_score_detailed_uses_computed_p_unsafe_from_logprobs(monkeypatch):
+    calls: list[dict] = []
+    logprobs = _logprobs_for("unsafe", "safe", -0.05, -4.0)
+
+    def fake_post(url: str, **kwargs: object) -> _FakeResponse:
+        calls.append(kwargs)
+        return _FakeResponse("unsafe\nS10", logprobs=logprobs)
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    result = LlamaGuardClassifier(base_url="http://localhost:11434").score_detailed("texte")
+
+    assert 0.95 < result.scores["hate"] < 1.0
+    assert calls[0]["json"]["logprobs"] is True
+    assert calls[0]["json"]["top_logprobs"] == 5
+
+
+def test_score_detailed_falls_back_to_capped_score_when_logprobs_missing(monkeypatch):
+    def fake_post(url: str, **kwargs: object) -> _FakeResponse:
+        return _FakeResponse("unsafe\nS10")  # pas de clé "logprobs" dans la réponse
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    result = LlamaGuardClassifier(base_url="http://localhost:11434").score_detailed("texte")
+
+    assert result.scores["hate"] == FALLBACK_MAX_SCORE
