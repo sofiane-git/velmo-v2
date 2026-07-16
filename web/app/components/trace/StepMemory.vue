@@ -1,9 +1,32 @@
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   step: number
   read?: MemoryReadPayload
   write?: MemoryWritePayload
 }>()
+
+interface MemoryTag {
+  label: string
+  touched: boolean
+}
+
+const tags = computed<MemoryTag[]>(() => {
+  if (props.read) {
+    return [
+      { label: 'Court terme', touched: props.read.history_turns > 0 || props.read.summary_used },
+      { label: 'Faits', touched: props.read.facts_matched.length > 0 },
+      { label: 'Épisodique', touched: props.read.episodic_matched.length > 0 }
+    ]
+  }
+  if (props.write) {
+    return [
+      { label: 'Faits', touched: props.write.facts_written.length > 0 },
+      { label: 'Procédures', touched: props.write.procedures_written.length > 0 },
+      { label: 'Épisodique', touched: props.write.episode_created }
+    ]
+  }
+  return []
+})
 </script>
 
 <template>
@@ -16,13 +39,25 @@ defineProps<{
         >
           {{ step }}
         </UBadge>
-        <span class="font-semibold">Mémoire</span>
+        <span class="font-semibold">{{ read ? 'Mémoire (lecture)' : 'Mémoire (écriture)' }}</span>
       </div>
       <p class="mt-1 text-xs text-muted">
         {{ read
           ? "Lecture : historique récent + faits/épisodes appris sur cet utilisateur, injectés dans le prompt."
           : "Écriture : extraction des faits et procédures à retenir pour les prochains échanges." }}
       </p>
+      <div class="flex gap-1 mt-2">
+        <UBadge
+          v-for="t in tags"
+          :key="t.label"
+          size="xs"
+          :variant="t.touched ? 'solid' : 'subtle'"
+          :color="t.touched ? 'primary' : 'neutral'"
+          :class="{ 'opacity-40': !t.touched }"
+        >
+          {{ t.label }}
+        </UBadge>
+      </div>
     </template>
 
     <div

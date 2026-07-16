@@ -24,8 +24,10 @@ const final = computed(() => store.currentTrace.find((e: TraceEvent) => e.type =
 
 <template>
   <div class="h-full overflow-y-auto space-y-3 p-2">
+    <PipelineFlowAnimation v-if="store.isStreaming && store.currentTrace.length === 0" />
+
     <div
-      v-if="store.currentTrace.length === 0"
+      v-else-if="store.currentTrace.length === 0"
       class="text-sm text-muted space-y-2"
     >
       <p>Envoyez un message pour voir son cheminement complet ici.</p>
@@ -86,7 +88,12 @@ const final = computed(() => store.currentTrace.find((e: TraceEvent) => e.type =
         Statut : <UBadge :color="final.payload.status === 'ok' ? 'success' : 'error'">
           {{ final.payload.status }}
         </UBadge>
-        — {{ final.payload.latency_ms }} ms
+        — {{ formatDuration(final.payload.latency_ms) }}
+      </p>
+      <p class="mt-1 text-xs text-muted">
+        Ce délai couvre le tour complet, du clic sur « Envoyer » à la réponse
+        finale : garde-fou d'entrée, lecture mémoire, routage, génération de
+        la réponse, garde-fou de sortie et écriture mémoire.
       </p>
       <p
         v-if="final.payload.status !== 'ok'"

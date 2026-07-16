@@ -39,6 +39,24 @@ export interface ToolResultPayload {
   result: Record<string, unknown>
 }
 
+export interface RemovedFact {
+  key: string
+  value: string
+}
+
+export interface RemovedProcedure {
+  trigger: string
+  rule: string
+}
+
+export interface ForgetResult {
+  target: string
+  removed: number
+  facts: RemovedFact[]
+  procedures: RemovedProcedure[]
+  episodes: string[]
+}
+
 export interface WrittenFact {
   key: string
   value: string
@@ -90,11 +108,13 @@ export const useChatSessionStore = defineStore('chatSession', () => {
   const currentTrace = ref<TraceEvent[]>([])
   const sessionLog = ref<SessionEntry[]>([])
   const isStreaming = ref(false)
+  const exchangeStartedAt = ref<number | null>(null)
 
   function startExchange(userId: string, message: string) {
     messages.value.push({ role: 'user', content: message })
     currentTrace.value = []
     isStreaming.value = true
+    exchangeStartedAt.value = Date.now()
     sessionLog.value.push({ userId, message, events: [] })
   }
 
@@ -108,5 +128,5 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     }
   }
 
-  return { messages, currentTrace, sessionLog, isStreaming, startExchange, pushEvent }
+  return { messages, currentTrace, sessionLog, isStreaming, exchangeStartedAt, startExchange, pushEvent }
 })

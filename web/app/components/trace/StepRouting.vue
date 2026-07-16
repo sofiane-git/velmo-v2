@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   step: number
   routing: RoutingPayload
   toolResult?: ToolResultPayload
@@ -16,6 +16,12 @@ const handlerExplain: Record<string, string> = {
   faq_rag: 'La demande ressemble à une question générale → recherche dans la base de connaissances (RAG).',
   llm_libre: 'Aucun outil ni FAQ ne correspond → réponse générée librement par le LLM.'
 }
+
+const forgetResult = computed<ForgetResult | null>(() => {
+  const name = props.toolResult?.name
+  if (name !== 'memory_forget' && name !== 'memory_forget_all') return null
+  return props.toolResult?.result as unknown as ForgetResult
+})
 </script>
 
 <template>
@@ -50,8 +56,45 @@ const handlerExplain: Record<string, string> = {
       </li>
     </ul>
 
+    <div
+      v-if="forgetResult"
+      class="mt-2 text-sm"
+    >
+      <p
+        v-if="forgetResult.removed === 0"
+        class="text-muted"
+      >
+        Rien trouvé à supprimer.
+      </p>
+      <ul
+        v-else
+        class="space-y-1"
+      >
+        <li
+          v-for="f in forgetResult.facts"
+          :key="`fact-${f.key}`"
+        >
+          Fait oublié : <UBadge variant="subtle">
+            {{ f.key }}
+          </UBadge> = {{ f.value }}
+        </li>
+        <li
+          v-for="p in forgetResult.procedures"
+          :key="`proc-${p.trigger}`"
+        >
+          Procédure oubliée : {{ p.trigger }} → {{ p.rule }}
+        </li>
+        <li
+          v-for="(e, i) in forgetResult.episodes"
+          :key="`epi-${i}`"
+        >
+          Épisode oublié : {{ e }}
+        </li>
+      </ul>
+    </div>
+
     <pre
-      v-if="toolResult"
+      v-else-if="toolResult"
       class="mt-2 text-xs bg-muted/10 rounded p-2 overflow-x-auto"
     >{{
       JSON.stringify(toolResult.result, null, 2)
