@@ -56,6 +56,7 @@ export interface MemoryWritePayload {
   facts_written: WrittenFact[]
   procedures_written: WrittenProcedure[]
   episode_created: boolean
+  pending: boolean
 }
 
 export interface FinalPayload {

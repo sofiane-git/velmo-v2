@@ -114,6 +114,7 @@ def _write_report_payload(report: WriteReport) -> dict[str, Any]:
         "facts_written": [f.model_dump() for f in report.facts_written],
         "procedures_written": [p.model_dump() for p in report.procedures_written],
         "episode_created": report.episode_created,
+        "pending": report.pending,
     }
 
 
@@ -150,7 +151,7 @@ class Agent:
                 tools.escalate_to_human(
                     self.session, user_id, f"garde-fou {gate_in.category} (entrée)"
                 )
-            self.memory.write(user_id, message, refusal)
+            self.memory.write(user_id, message, refusal, background=True)
             yield "final", {
                 "answer": refusal,
                 "status": "blocked_input",
@@ -189,7 +190,12 @@ class Agent:
             answer = gate_out.refusal or DEFAULT_REFUSAL
             status = "blocked_output"
 
-        write_report = self.memory.write(user_id, message, answer)
+        # `background=True` : l'extraction long terme appelle le même LLM que
+        # la génération de réponse (`self.llm`) — un endpoint lent/indisponible
+        # ne doit jamais retarder une réponse déjà validée par les garde-fous
+        # (cf. MemoryManager.write). La persistance du tour (history) reste
+        # synchrone à l'intérieur de `write`.
+        write_report = self.memory.write(user_id, message, answer, background=True)
         yield "memory_write", _write_report_payload(write_report)
         yield "final", {"answer": answer, "status": status, "latency_ms": _elapsed_ms(start)}
 

@@ -63,7 +63,14 @@ defineProps<{
 
     <div v-if="write">
       <p
-        v-if="write.facts_written.length === 0 && write.procedures_written.length === 0"
+        v-if="write.pending"
+        class="text-sm text-muted"
+      >
+        Extraction en cours en arrière-plan (n'attend pas la réponse) — le
+        résultat de ce tour n'apparaît pas encore ici.
+      </p>
+      <p
+        v-else-if="write.facts_written.length === 0 && write.procedures_written.length === 0"
         class="text-sm text-muted"
       >
         Rien classé en mémoire long terme pour ce tour.

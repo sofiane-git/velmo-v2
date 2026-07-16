@@ -8,6 +8,8 @@ n'est jamais exposée comme outil au LLM — elle encadre l'appel LLM côté
 
 from __future__ import annotations
 
+import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 
 from sqlalchemy import text
@@ -38,7 +40,27 @@ from velmo.llm import LLM, get_llm
 from .episodic import EpisodicStore, get_episodic_backend
 from .extractor import ExtractedFact, ExtractedProcedure, FactExtractor, RuleBasedExtractor
 
+logger = logging.getLogger(__name__)
+
 Turn = tuple[str, str]
+
+# Extraction long terme (`write(..., background=True)`) et résumé de
+# compression (`_maybe_compress`) appellent le même LLM que la génération de
+# réponse de l'agent (`velmo.llm.AzureLLM`) — un endpoint lent/indisponible ne
+# doit jamais retarder une réponse déjà validée par les garde-fous. Pool dédié
+# et petit : ce travail est best-effort (cf. `LLMExtractor.extract`, déjà
+# tolérant aux pannes réseau), pas prioritaire face au pool des garde-fous.
+# `write(background=False)` (défaut) attend aussi sur ce pool (cf. `write`) :
+# 4 workers pour éviter qu'un appel synchrone et un différé ne se disputent
+# les 2 seuls threads sous charge concurrente.
+_BACKGROUND_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+
+# Attente bornée avant de basculer en `pending` : couvre le cas normal (LLM
+# sain, extraction en quelques secondes) sans jamais imposer aux appelants
+# l'attente complète du timeout LLM (jusqu'à 45-90s, cf. AzureLLM) — un tour
+# suivant qui dépend de ce tour-ci (ex. "oublie ma taille" juste après "ma
+# taille est L") reste cohérent tant que l'extraction répond sous ce délai.
+_EXTRACTION_WAIT_S = 8.0
 
 SUMMARY_SYSTEM = (
     "Résume l'historique de conversation en 2-3 phrases maximum. "
@@ -81,6 +103,10 @@ class WriteReport:
     facts_written: list[ExtractedFact] = field(default_factory=list)
     procedures_written: list[ExtractedProcedure] = field(default_factory=list)
     episode_created: bool = False
+    # True quand `write(..., background=True)` a différé l'extraction LLM :
+    # les listes ci-dessus sont vides parce que pas encore calculées, pas
+    # parce que rien n'a été trouvé — cf. `write`.
+    pending: bool = False
 
 
 class MemoryManager:
@@ -144,7 +170,29 @@ class MemoryManager:
         finally:
             session.close()
 
-    def write(self, user_id: str, user_message: str, assistant_message: str) -> WriteReport:
+    def write(
+        self,
+        user_id: str,
+        user_message: str,
+        assistant_message: str,
+        *,
+        background: bool = False,
+    ) -> WriteReport:
+        """Persiste le tour et classe l'extraction long terme.
+
+        `background=True` : la persistance du tour (rapide, local) reste
+        synchrone — un tour suivant doit voir cet historique immédiatement
+        (cf. `read`). L'extraction (`self.extractor.extract`, potentiellement
+        un appel LLM) et tout ce qui en dépend tournent sur
+        `_BACKGROUND_EXECUTOR` ; on attend jusqu'à `_EXTRACTION_WAIT_S` avant
+        de rendre la main. Cas normal (LLM sain) : le `WriteReport` retourné
+        est complet, aucun changement de comportement observable. Cas dégradé
+        (LLM lent/indisponible) : au-delà du délai, on rend la main avec
+        `pending=True` (listes vides — pas encore calculées, pas "rien
+        trouvé") et l'extraction continue en arrière-plan sans jamais bloquer
+        la réponse. Callers synchrones existants (tests, usage direct de
+        `MemoryManager`) gardent le comportement par défaut inchangé.
+        """
         session = self._Session()
         try:
             self._bind_user(session, user_id)
@@ -153,6 +201,24 @@ class MemoryManager:
             append_message(session, thread.thread_id, user_id, "user", user_message)
             append_message(session, thread.thread_id, user_id, "assistant", assistant_message)
             session.commit()
+        finally:
+            session.close()
+
+        future = _BACKGROUND_EXECUTOR.submit(
+            self._extract_and_persist, user_id, user_message, assistant_message
+        )
+        try:
+            return future.result(timeout=_EXTRACTION_WAIT_S if background else None)
+        except FutureTimeoutError:
+            return WriteReport(pending=True)
+
+    def _extract_and_persist(
+        self, user_id: str, user_message: str, assistant_message: str
+    ) -> WriteReport:
+        session = self._Session()
+        try:
+            self._bind_user(session, user_id)
+            thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
 
             extracted = self.extractor.extract(user_message, assistant_message)
             report = WriteReport()
@@ -192,6 +258,15 @@ class MemoryManager:
             # pas reflétée dans ce rapport — il documente uniquement ce tour-ci.
             self._maybe_compress(session, user_id, thread)
             return report
+        except Exception:
+            # Ce chemin peut tourner en arrière-plan (`write(..., background=
+            # True)`), sans appelant synchrone pour observer/relancer l'échec —
+            # doit rester visible côté ops plutôt qu'avalé en silence (cf.
+            # `LLMExtractor.extract`, même logique).
+            logger.exception(
+                "MemoryManager._extract_and_persist: échec pour user_id=%s", user_id
+            )
+            return WriteReport()
         finally:
             session.close()
 

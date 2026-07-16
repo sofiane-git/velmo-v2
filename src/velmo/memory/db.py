@@ -31,6 +31,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.pool import StaticPool
 
 
 class Base(DeclarativeBase):
@@ -160,6 +161,17 @@ def make_memory_engine(url: str | None = None) -> Engine:
             path = _default_sqlite_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             engine = create_engine(f"sqlite:///{path}", future=True)
+        elif ":memory:" in url:
+            # `write(background=True)` fait tourner l'extraction sur un thread
+            # du pool (cf. memory/__init__.py) : sans StaticPool, chaque thread
+            # obtiendrait sa propre base `:memory:` isolée (comportement par
+            # défaut de SQLAlchemy pour ce DSN) — les écritures de fond
+            # deviendraient invisibles au thread appelant. Sans objet pour
+            # Postgres/SQLite fichier (une vraie base partagée, pas un artefact
+            # par connexion).
+            engine = create_engine(
+                url, future=True, poolclass=StaticPool, connect_args={"check_same_thread": False}
+            )
         else:
             engine = create_engine(url, future=True)
     else:
