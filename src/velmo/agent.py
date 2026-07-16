@@ -109,6 +109,22 @@ def _routing_payload(routing: RoutingInfo) -> dict[str, Any]:
     }
 
 
+def _is_repeat_question(context: MemoryContext, message: str) -> bool:
+    """Le même message (mot pour mot) apparaît déjà côté "user" dans l'historique.
+
+    Les routes "tool"/"faq_rag" sont déterministes et re-vérifient toujours la
+    donnée live (statut de commande, stock...) plutôt que de répondre depuis
+    la mémoire — ce qui est correct pour de la donnée qui peut changer, mais
+    laisse l'agent répondre à l'identique sans jamais signaler la répétition
+    (contrairement à la route `llm_libre`, qui voit `context` nativement).
+    """
+    normalized = message.strip().lower()
+    return any(
+        role == "user" and content.strip().lower() == normalized
+        for role, content in context.history
+    )
+
+
 def _write_report_payload(report: WriteReport) -> dict[str, Any]:
     return {
         "facts_written": [f.model_dump() for f in report.facts_written],
@@ -164,6 +180,8 @@ class Agent:
 
         try:
             answer, routing = self._handle(user_id, message, context)
+            if routing.handler in ("tool", "faq_rag") and _is_repeat_question(context, message):
+                answer = f"Vous me l'avez déjà demandé — je reviens de vérifier. {answer}"
         except Exception:
             # Un échec en aval (ex. le LLM principal refuse la requête) ne doit
             # pas interrompre le flux SSE au milieu — le client verrait une

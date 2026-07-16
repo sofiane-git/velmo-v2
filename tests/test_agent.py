@@ -84,6 +84,25 @@ def test_routing_tool_name_for_order_lookup():
     assert routing.tool_result is not None
 
 
+def test_repeated_tool_question_signals_repeat_in_answer():
+    agent = _hermetic_agent(_RecordingLLM())
+    message = "Où en est ma commande O-2024-0101 ?"
+
+    first = agent.respond("dup-1", message)
+    assert "déjà demandé" not in first
+
+    second = agent.respond("dup-1", message)
+    assert second.startswith("Vous me l'avez déjà demandé")
+
+
+def test_non_repeated_tool_question_has_no_repeat_prefix():
+    agent = _hermetic_agent(_RecordingLLM())
+    agent.respond("dup-2", "Où en est ma commande O-2024-0101 ?")
+
+    answer = agent.respond("dup-2", "Quels sont les frais de port pour la France ?")
+    assert "déjà demandé" not in answer
+
+
 def test_respond_traced_emits_ok_sequence():
     agent = _hermetic_agent(_RecordingLLM())
     events = list(
