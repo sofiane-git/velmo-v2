@@ -1,7 +1,12 @@
 <script setup lang="ts">
 const store = useChatSessionStore()
+const { data: customers } = useCustomers()
 const userId = ref('C-marc-dubois')
 const draft = ref('')
+
+const customerItems = computed(() =>
+  customers.value.map(c => ({ label: `${c.full_name} (${c.id})`, value: c.id }))
+)
 
 async function submit() {
   if (!draft.value.trim() || store.isStreaming) return
@@ -20,9 +25,16 @@ async function submit() {
         class="max-w-[80%] rounded-lg px-3 py-2 text-sm"
         :class="m.role === 'user'
           ? 'ml-auto bg-primary text-inverted'
-          : 'mr-auto bg-muted/10'"
+          : 'mr-auto bg-muted/10 space-y-1'"
       >
-        {{ m.content }}
+        <span v-if="m.role === 'user'">{{ m.content }}</span>
+        <!-- renderMarkdown() échappe tout le texte avant d'y insérer des balises fixes : aucun contenu brut n'est injecté -->
+        <!-- eslint-disable vue/no-v-html -->
+        <div
+          v-else
+          v-html="renderMarkdown(m.content)"
+        />
+        <!-- eslint-enable vue/no-v-html -->
       </div>
       <p
         v-if="store.isStreaming"
@@ -38,10 +50,11 @@ async function submit() {
       class="flex gap-2 p-2 border-t border-default"
       @submit.prevent="submit"
     >
-      <UInput
+      <USelect
         v-model="userId"
-        class="w-40"
-        placeholder="user_id"
+        :items="customerItems"
+        class="w-56"
+        placeholder="Sélectionner un client"
       />
       <UInput
         v-model="draft"
