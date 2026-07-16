@@ -1,3 +1,10 @@
+export async function clearConversation(userId: string): Promise<void> {
+  const store = useChatSessionStore()
+  const config = useRuntimeConfig()
+  await fetch(`${config.public.apiBase}/memory/${userId}/clear-session`, { method: 'POST' })
+  store.clear()
+}
+
 export async function sendChatMessage(userId: string, message: string): Promise<void> {
   const store = useChatSessionStore()
   const config = useRuntimeConfig()

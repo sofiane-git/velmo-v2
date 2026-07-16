@@ -14,10 +14,15 @@ async function submit() {
   draft.value = ''
   await sendChatMessage(userId.value, message)
 }
+
+async function clear() {
+  if (store.isStreaming) return
+  await clearConversation(userId.value)
+}
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="relative flex flex-col h-full">
     <div class="flex-1 overflow-y-auto space-y-2 p-2">
       <div
         v-for="(m, i) in store.messages"
@@ -68,5 +73,17 @@ async function submit() {
         Envoyer
       </UButton>
     </form>
+
+    <UButton
+      type="button"
+      class="absolute top-2 right-2"
+      color="neutral"
+      variant="ghost"
+      size="xs"
+      icon="i-lucide-eraser"
+      :disabled="store.isStreaming"
+      title="Effacer la conversation"
+      @click="clear"
+    />
   </div>
 </template>

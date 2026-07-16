@@ -128,5 +128,22 @@ export const useChatSessionStore = defineStore('chatSession', () => {
     }
   }
 
-  return { messages, currentTrace, sessionLog, isStreaming, exchangeStartedAt, startExchange, pushEvent }
+  function clear() {
+    messages.value = []
+    currentTrace.value = []
+    sessionLog.value = []
+    isStreaming.value = false
+    exchangeStartedAt.value = null
+  }
+
+  return {
+    messages,
+    currentTrace,
+    sessionLog,
+    isStreaming,
+    exchangeStartedAt,
+    startExchange,
+    pushEvent,
+    clear
+  }
 })
