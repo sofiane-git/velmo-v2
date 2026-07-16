@@ -166,7 +166,25 @@ EXTRACTION_SYSTEM = (
     "Garde le durable (préférences, identité, commandes, litiges, règles métier "
     "récurrentes), jette l'éphémère (salutations, small talk). "
     "La confidence (0..1) doit refléter honnêtement ta certitude. "
-    "Si rien n'est durable, rends des listes vides."
+    "Si rien n'est durable, rends des listes vides.\n\n"
+    "Exemples :\n"
+    'UTILISATEUR: Bonjour !\nASSISTANT: Bonjour, comment puis-je vous aider ?\n'
+    '→ {"facts": [], "procedures": []}\n\n'
+    'UTILISATEUR: Je fais toujours du 44, notez-le pour mes prochaines commandes.\n'
+    'ASSISTANT: Noté, taille 44 enregistrée.\n'
+    '→ {"facts": [{"key": "taille", "value": "44", "type": "preference", '
+    '"confidence": 0.95}], "procedures": []}\n\n'
+    'UTILISATEUR: Je m\'appelle Karim Belhadj, commande #4471.\n'
+    'ASSISTANT: Merci Karim, je retrouve votre commande #4471.\n'
+    '→ {"facts": [{"key": "nom", "value": "Karim Belhadj", "type": "identity", '
+    '"confidence": 0.9}, {"key": "commande", "value": "#4471", "type": "order", '
+    '"confidence": 0.9}], "procedures": []}\n\n'
+    'UTILISATEUR: La dernière fois le maillot sentait le renfermé, vérifiez avant '
+    'expédition la prochaine fois.\nASSISTANT: Compris, on vérifiera systématiquement.\n'
+    '→ {"facts": [{"key": "litige_odeur", "value": "maillot sentait le renfermé à '
+    'réception", "type": "dispute", "confidence": 0.7}], '
+    '"procedures": [{"trigger": "avant expédition", "rule": "vérifier absence '
+    'd\'odeur", "confidence": 0.6}]}'
 )
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)

@@ -81,7 +81,15 @@ _EXTRACTION_WAIT_S = 8.0
 SUMMARY_SYSTEM = (
     "Résume l'historique de conversation en 2-3 phrases maximum. "
     "Préserve tous les chiffres, numéros de commande, litiges et engagements. "
-    "Ne résume pas les entités nommées."
+    "Ne résume pas les entités nommées.\n\n"
+    "Exemple :\n"
+    "Historique : client demande le statut de la commande #4471 (maillot Milan AC "
+    "1994), agent confirme expédition prévue le 12/03, client précise taille 44 et "
+    "signale qu'un précédent colis (commande #4108) est arrivé déchiré, agent "
+    "propose un avoir de 15€.\n"
+    "→ \"Le client (taille 44) suit la commande #4471, expédition prévue le 12/03. "
+    "Litige ouvert sur la commande #4108 (colis déchiré), avoir de 15€ proposé par "
+    "l'agent.\""
 )
 
 
