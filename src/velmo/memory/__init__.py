@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from datetime import timedelta
+
 from .db import (
     Conversation,
     MemoryUser,
@@ -34,6 +36,7 @@ from .db import (
     redact_messages,
     upsert_fact,
     upsert_procedure,
+    utcnow,
     write_audit,
 )
 from velmo.llm import LLM, get_llm
@@ -441,6 +444,26 @@ class MemoryManager:
             write_audit(session, user_id, "delete", "all")
             session.commit()
             return report
+        finally:
+            session.close()
+
+    def clear_session(self, user_id: str) -> None:
+        """Termine la conversation active sans toucher à la mémoire long terme.
+
+        Équivalent d'un `/clear` : le thread courant (historique + résumé)
+        sort de la fenêtre `session_gap_hours`, donc le prochain tour en
+        recrée un vierge (cf. `get_or_create_active_thread`). Faits,
+        procédures et épisodes ne sont pas touchés — contrairement à
+        `forget_all` (droit à l'oubli, R5), ceci ne relève pas de la
+        traçabilité RGPD et n'a donc pas besoin d'un `ForgetReport`.
+        """
+        session = self._Session()
+        try:
+            self._bind_user(session, user_id)
+            thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
+            thread.last_message_at = utcnow() - timedelta(hours=self.session_gap_hours, seconds=1)
+            write_audit(session, user_id, "clear_session", thread.thread_id)
+            session.commit()
         finally:
             session.close()
 

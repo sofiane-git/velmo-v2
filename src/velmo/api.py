@@ -90,6 +90,17 @@ def chat_stream_endpoint(
     )
 
 
+@app.post("/memory/{user_id}/clear-session")
+def clear_session_endpoint(user_id: str, agent: Agent = Depends(get_agent)) -> dict[str, bool]:
+    """
+    Termine la conversation en cours d'un utilisateur (équivalent `/clear`) :
+    l'historique et le résumé du thread actif sont abandonnés, la mémoire
+    long terme (faits, procédures, épisodes) n'est pas affectée.
+    """
+    agent.memory.clear_session(user_id)
+    return {"cleared": True}
+
+
 @app.get("/customers", response_model=list[CustomerOut])
 def list_customers(agent: Agent = Depends(get_agent)) -> list[CustomerOut]:
     """

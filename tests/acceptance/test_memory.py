@@ -53,3 +53,25 @@ def test_right_to_be_forgotten():
     removed = mm.forget(user, "adresse")
     assert removed.count >= 1
     assert "rue des Lilas" not in mm.read(user, "Mon adresse ?").render()
+
+
+def test_clear_session_resets_history_but_keeps_facts():
+    # `clear_session` (équivalent `/clear`) : l'historique de conversation
+    # disparaît, la mémoire long terme (faits) reste intacte — à la
+    # différence de `forget_all` (droit à l'oubli total).
+    mm = MemoryManager()
+    user = "acc-clear-session"
+    mm.remember_fact(user, "shoe_size", "L")
+    # Message générique, sans entité extractible (numéro de commande, etc.) :
+    # ne doit peupler que l'historique de conversation, pas un fait long terme.
+    mm.write(user, "Les maillots vintage sont-ils garantis ?", "Oui, un an sur les défauts.")
+
+    before = mm.read(user, "Rappel ?").render()
+    assert "garantis" in before
+    assert "L" in before
+
+    mm.clear_session(user)
+
+    after = mm.read(user, "Rappel ?").render()
+    assert "garantis" not in after
+    assert "L" in after
