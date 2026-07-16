@@ -46,6 +46,29 @@ GENERIC_REFUSAL = (
     "disposition pour vos commandes, livraisons, retours et la FAQ Velmo."
 )
 
+# Messages par catégorie pour les cas majoritairement déclenchés par des
+# demandes légitimes (périmètre, données sensibles) — un refus plus explicite
+# aide l'utilisateur à reformuler. Les catégories adverses (hate, violence,
+# sexual, prompt_injection) gardent GENERIC_REFUSAL à dessein : un message
+# uniforme évite de renseigner un attaquant sur le motif exact du blocage.
+REFUSAL_MESSAGES: dict[str, str] = {
+    "out_of_scope": (
+        "Cette question sort de mon périmètre : je peux vous aider pour vos "
+        "commandes, livraisons, retours et la FAQ Velmo (maillots vintage, "
+        "tailles, authenticité...). N'hésitez pas à me la reposer sous cet angle !"
+    ),
+    "pii": (
+        "Je ne peux pas traiter cette demande telle quelle car elle contient des "
+        "informations sensibles (carte bancaire, mot de passe, IBAN...). "
+        "Reformulez sans cette donnée et je vous aide volontiers."
+    ),
+    "secret_leak": (
+        "Je ne peux pas partager ce type d'information technique interne. Je "
+        "reste à votre disposition pour vos commandes, livraisons, retours et "
+        "la FAQ Velmo."
+    ),
+}
+
 ESCALATE_CATEGORIES = ("violence", "secret_leak")
 # Un coup isolé de ces catégories ne remonte pas (refus poli + log suffit,
 # cf. seuils d'escalade métier : remboursement > 50 €, litige d'authenticité).
@@ -151,7 +174,7 @@ class GuardrailEngine:
                 allowed=False,
                 action="block",
                 category=blocking.category,
-                refusal=GENERIC_REFUSAL,
+                refusal=REFUSAL_MESSAGES.get(blocking.category, GENERIC_REFUSAL),
                 escalate=escalate,
                 hits=relevant_hits,
             )
