@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .db import (
     Conversation,
+    MemoryUser,
     add_episode,
     append_message,
     delete_episodes_matching,
@@ -43,6 +44,18 @@ from .extractor import ExtractedFact, ExtractedProcedure, FactExtractor, RuleBas
 logger = logging.getLogger(__name__)
 
 Turn = tuple[str, str]
+
+# `render()` sérialise les faits dans le prompt LLM : les clés internes
+# (snake_case, ex. `shoe_size`) ne doivent jamais y apparaître telles quelles
+# sous peine que le modèle les recopie dans sa réponse au client.
+_FACT_KEY_LABELS = {
+    "address": "adresse de livraison",
+    "order_number": "numéro de commande",
+    "shoe_size": "taille",
+    "clubs": "club préféré",
+    "contract_number": "numéro de contrat",
+    "address_mode": "mode de tutoiement",
+}
 
 # Extraction long terme (`write(..., background=True)`) et résumé de
 # compression (`_maybe_compress`) appellent le même LLM que la génération de
@@ -91,9 +104,34 @@ class MemoryContext:
         for role, content in self.history:
             parts.append(f"{role}: {content}")
         for key, value in self.facts.items():
-            parts.append(f"fact:{key}={value}")
+            label = _FACT_KEY_LABELS.get(key, key)
+            parts.append(f"{label} : {value}")
         parts.extend(self.episodic)
         return "\n".join(parts)
+
+
+@dataclass
+class RemovedFact:
+    key: str
+    value: str
+
+
+@dataclass
+class RemovedProcedure:
+    trigger: str
+    rule: str
+
+
+@dataclass
+class ForgetReport:
+    """Détail de ce qu'une suppression (`forget`/`forget_all`) a réellement
+    effacé — la traçabilité (`docs/reco_expert.md`) exige de pouvoir inspecter
+    ce qui a été retenu, donc aussi ce qui a été rendu à l'oubli."""
+
+    count: int
+    facts: list[RemovedFact] = field(default_factory=list)
+    procedures: list[RemovedProcedure] = field(default_factory=list)
+    episodes: list[str] = field(default_factory=list)  # résumés
 
 
 @dataclass
@@ -226,11 +264,11 @@ class MemoryManager:
             for ef in extracted.facts:
                 if ef.confidence < self.confidence_threshold:
                     continue
-                _, changed = upsert_fact(
+                fact, changed = upsert_fact(
                     session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id
                 )
                 if changed:
-                    write_audit(session, user_id, "write", f"fact:{ef.key}")
+                    write_audit(session, user_id, "write", f"fact:{fact.key}")
                 report.facts_written.append(ef)
                 if ef.type == "dispute":
                     has_dispute = True
@@ -290,11 +328,11 @@ class MemoryManager:
             # valeur déjà capturée correctement à l'écriture.
             if ef.type == "dispute":
                 continue
-            _, changed = upsert_fact(
+            fact, changed = upsert_fact(
                 session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id
             )
             if changed:
-                write_audit(session, user_id, "write", f"fact:{ef.key}")
+                write_audit(session, user_id, "write", f"fact:{fact.key}")
         for ep in extracted.procedures:
             if ep.confidence < self.confidence_threshold:
                 continue
@@ -305,7 +343,18 @@ class MemoryManager:
                 write_audit(session, user_id, "write", f"procedure:{ep.trigger}")
 
         # 2. Résumé LLM (remplace la concaténation brute).
-        summary = self.llm.invoke(SUMMARY_SYSTEM, "", block).strip()
+        try:
+            summary = self.llm.invoke(SUMMARY_SYSTEM, "", block).strip()
+        except Exception:
+            # Panne réseau/filtre de contenu Azure sur le résumé : ne doit jamais
+            # remonter jusqu'à `_extract_and_persist`, qui écraserait le rapport du
+            # tour courant (déjà committé juste au-dessus) avec un `WriteReport`
+            # vide (cf. `LLMExtractor.extract`, même logique). `summarized_up_to_turn`
+            # n'avance pas : nouvelle tentative sur ce bloc au prochain tour.
+            logger.exception(
+                "MemoryManager._maybe_compress: échec du résumé LLM pour user_id=%s", user_id
+            )
+            return
 
         # 3. Persistance.
         thread.summary = (thread.summary + " " if thread.summary else "") + summary
@@ -325,24 +374,73 @@ class MemoryManager:
         finally:
             session.close()
 
-    def forget(self, user_id: str, target: str) -> int:
+    def forget(self, user_id: str, target: str) -> ForgetReport:
         session = self._Session()
         try:
             self._bind_user(session, user_id)
             removed_facts = delete_facts_matching(session, user_id, target)
-            count = len(removed_facts)
+            report = ForgetReport(
+                count=len(removed_facts),
+                facts=[RemovedFact(key=f.key, value=f.value) for f in removed_facts],
+            )
             for fact in removed_facts:
                 redact_messages(session, user_id, fact.value)
                 removed_episodes = delete_episodes_matching(session, user_id, fact.value)
-                count += len(removed_episodes)
+                report.count += len(removed_episodes)
+                report.episodes.extend(e.summary for e in removed_episodes)
                 for episode in removed_episodes:
                     if episode.chroma_id:
                         self.episodic_store.delete(episode.chroma_id)
             removed_procs = delete_procedure_matching(session, user_id, target)
-            count += len(removed_procs)
+            report.count += len(removed_procs)
+            report.procedures = [
+                RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in removed_procs
+            ]
             write_audit(session, user_id, "delete", target)
             session.commit()
-            return count
+            return report
+        finally:
+            session.close()
+
+    def forget_all(self, user_id: str) -> ForgetReport:
+        """Droit à l'oubli total (`docs/reco_expert.md`, R5) : purge toute la
+        mémoire d'un utilisateur, court terme comme long terme.
+
+        `forget(target)` ne cible qu'un élément ; ceci supprime tout — faits,
+        procédures, épisodes (+ leurs vecteurs Chroma, sinon orphelins),
+        messages et threads — via la cascade DB sur `MemoryUser` (cf.
+        `test_cascade_delete_removes_children_on_sqlite`), puis recrée un
+        compte utilisateur vierge pour que l'agent reste utilisable et que
+        l'opération elle-même soit journalisée (traçabilité).
+        """
+        session = self._Session()
+        try:
+            self._bind_user(session, user_id)
+            facts = list_facts(session, user_id)
+            procedures = list_procedures(session, user_id)
+            episodes = list_episodes(session, user_id)
+            for episode in episodes:
+                if episode.chroma_id:
+                    self.episodic_store.delete(episode.chroma_id)
+
+            report = ForgetReport(
+                count=len(facts) + len(procedures) + len(episodes),
+                facts=[RemovedFact(key=f.key, value=f.value) for f in facts],
+                procedures=[
+                    RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in procedures
+                ],
+                episodes=[e.summary for e in episodes],
+            )
+
+            user = session.get(MemoryUser, user_id)
+            if user is not None:
+                session.delete(user)
+                session.flush()
+
+            get_or_create_user(session, user_id)
+            write_audit(session, user_id, "delete", "all")
+            session.commit()
+            return report
         finally:
             session.close()
 

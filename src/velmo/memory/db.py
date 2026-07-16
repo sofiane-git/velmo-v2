@@ -7,6 +7,7 @@ utilisable hors-ligne (même esprit que `kb_store.get_kb()`).
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import unicodedata
 import uuid
@@ -32,6 +33,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
+
+from velmo.memory.entities import CONTRACT_RE, ORDER_RE
 
 
 class Base(DeclarativeBase):
@@ -209,6 +212,36 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+_KEY_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_KEY_ENTITY_PATTERNS = (ORDER_RE, CONTRACT_RE)
+
+
+def _canonicalize_key(key: str) -> str:
+    """Rend équivalentes deux clés qui ne diffèrent que par l'ordre des mots.
+
+    `LLMExtractor` invente librement ses clés (pas de vocabulaire fixe comme
+    pour `RuleBasedExtractor`) : un tour écrit "order_status_O-2024-0101", un
+    autre "order_O-2024-0101_status" pour le même fait. `upsert_fact` matche
+    sur clé exacte : sans canonicalisation, ça crée un doublon au lieu d'une
+    mise à jour, et les deux copies peuvent diverger silencieusement au lieu
+    d'être une seule source de vérité par utilisateur (cf. `docs/reco_expert.md`,
+    traçabilité des écritures mémoire).
+
+    On isole les identifiants métier (commande, contrat) du reste des mots,
+    puis on reconstruit `mots-restants_dans-leur-ordre + entités` : ça fusionne
+    les deux variantes ci-dessus sans renommer les clés fixes déjà stables
+    (ex. "order_number" reste "order_number", aucune entité à isoler).
+    """
+    remainder = key
+    entities: list[str] = []
+    for pattern in _KEY_ENTITY_PATTERNS:
+        entities.extend(pattern.findall(key))
+        remainder = pattern.sub(" ", remainder)
+
+    concept_tokens = _KEY_TOKEN_RE.findall(remainder.lower())
+    return "_".join([*concept_tokens, *entities])
+
+
 def get_or_create_user(session: Session, user_id: str) -> MemoryUser:
     user = session.get(MemoryUser, user_id)
     if user is None:
@@ -317,6 +350,7 @@ def upsert_fact(
     confidence: float,
     source_thread_id: str | None,
 ) -> tuple[Fact, bool]:
+    key = _canonicalize_key(key)
     existing = session.scalars(select(Fact).where(Fact.user_id == user_id, Fact.key == key)).first()
     now = utcnow()
     if existing is None:

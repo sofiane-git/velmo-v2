@@ -94,7 +94,7 @@ def test_r5_droit_oubli():
     assert "O-2024-0101" in mm.read("r5", "Rappel ?").render()
 
     removed = mm.forget("r5", "order_number")
-    assert removed >= 1
+    assert removed.count >= 1
     assert "O-2024-0101" not in mm.read("r5", "Rappel ?").render()
 
 

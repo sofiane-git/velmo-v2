@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from velmo.memory import MemoryManager
+from velmo.memory import MemoryManager, RemovedFact, RemovedProcedure
 
 
 def _mm(**kwargs):
     kwargs.setdefault("db_url", "sqlite:///:memory:")
     return MemoryManager(**kwargs)
+
+
+class _RaisingLLM:
+    """LLM dont chaque appel echoue (simule un filtre de contenu Azure ou un timeout)."""
+
+    def invoke(self, system: str, context: str, message: str) -> str:
+        raise RuntimeError("content_filter blocked")
 
 
 def test_write_extracts_order_number_fact_automatically():
@@ -38,6 +45,25 @@ def test_compression_triggers_past_budget_and_facts_still_surface():
     assert len(ctx.history) < 22  # fenetre reellement retrecie (moins que 11 echanges * 2)
 
 
+def test_compression_llm_failure_does_not_erase_current_turn_report():
+    mm = _mm(token_budget=20, keep_last_n_turns=1, llm=_RaisingLLM())
+    mm.write("u3b", "Ma commande prioritaire est O-2024-0101.", "Note.")
+    for i in range(5):
+        mm.write(
+            "u3b",
+            f"Question de suivi numero {i} sur un maillot tres demande.",
+            f"Reponse detaillee {i}.",
+        )
+    report = mm.write(
+        "u3b",
+        "Ma commande prioritaire est O-2024-0202.",
+        "C'est note.",
+    )
+    # L'echec du resume LLM (compression) ne doit pas ecraser le rapport du
+    # tour courant, deja committe en base.
+    assert any(f.key == "order_number" for f in report.facts_written)
+
+
 def test_dispute_fact_creates_episode():
     mm = _mm()
     mm.write("u4", "Le maillot recu est un faux, je conteste.", "C'est note, je transmets.")
@@ -58,8 +84,44 @@ def test_forget_removes_fact_and_redacts_history():
     mm.write("u6", "Mon adresse de livraison est 12 rue des Lilas.", "C'est note.")
     assert "rue des Lilas" in mm.read("u6", "Mon adresse ?").render()
     removed = mm.forget("u6", "adresse")
-    assert removed >= 1
+    assert removed.count >= 1
+    assert removed.facts == [RemovedFact(key="address", value="12 rue des Lilas")]
     assert "rue des Lilas" not in mm.read("u6", "Mon adresse ?").render()
+
+
+def test_forget_all_wipes_facts_episodes_and_history_but_keeps_user_usable():
+    mm = _mm()
+    mm.write("u6b", "Mon adresse de livraison est 12 rue des Lilas.", "C'est note.")
+    mm.write("u6b", "Le maillot recu est un faux, je conteste.", "C'est note, je transmets.")
+    assert "rue des Lilas" in mm.read("u6b", "Mon adresse ?").render()
+    inspected_before = mm.inspect("u6b")
+    assert inspected_before["facts"]
+    assert inspected_before["episodic"]
+
+    removed = mm.forget_all("u6b")
+    assert removed.count >= 1
+    assert RemovedFact(key="address", value="12 rue des Lilas") in removed.facts
+    assert removed.episodes  # l'episode de litige est bien dans le detail
+
+    ctx = mm.read("u6b", "Mon adresse ?")
+    assert "rue des Lilas" not in ctx.render()
+    assert ctx.facts == {}
+    inspected_after = mm.inspect("u6b")
+    assert inspected_after["facts"] == []
+    assert inspected_after["episodic"] == []
+
+    # utilisateur toujours utilisable ensuite (pas de crash sur compte recree).
+    mm.remember_fact("u6b", "pointure", "M")
+    assert mm.read("u6b", "?").facts["pointure"] == "M"
+
+
+def test_forget_all_does_not_touch_other_users():
+    mm = _mm()
+    mm.remember_fact("u6c", "commande", "O-2024-0109")
+    mm.remember_fact("u6d", "commande", "O-2024-0110")
+    mm.forget_all("u6c")
+    assert mm.read("u6c", "?").facts == {}
+    assert mm.read("u6d", "?").facts.get("commande") == "O-2024-0110"
 
 
 def test_isolation_between_two_users():
@@ -161,7 +223,8 @@ def test_forget_removes_matching_procedure():
     mm.write("fp", "Peu importe.", "Ok.")
     assert mm.inspect("fp")["procedures"]
     removed = mm.forget("fp", "refund")
-    assert removed >= 1
+    assert removed.count >= 1
+    assert removed.procedures == [RemovedProcedure(trigger="refund_offer", rule="Proposer un bon de 10%.")]
     assert mm.inspect("fp")["procedures"] == []
 
 

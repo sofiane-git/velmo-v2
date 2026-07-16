@@ -217,6 +217,46 @@ def test_upsert_fact_dedups_and_reports_change():
     session.close()
 
 
+def test_upsert_fact_canonicalizes_reordered_key_with_entity():
+    """LLMExtractor invente librement ses clés : deux tours peuvent produire
+    "order_status_O-2024-0101" puis "order_O-2024-0101_status" pour le même
+    fait. Sans canonicalisation, ça duplique la ligne au lieu de la mettre à
+    jour (bug reporté : deux valeurs divergentes pour le même statut de
+    commande)."""
+    session = _session()
+    get_or_create_user(session, "u9")
+    fact, changed = upsert_fact(
+        session, "u9", "order_status_O-2024-0101", "prepared", "order", 0.9, None
+    )
+    session.commit()
+    assert changed is True
+
+    fact2, changed2 = upsert_fact(
+        session, "u9", "order_O-2024-0101_status", "préparée (prête pour l'expédition)",
+        "order", 0.9, None
+    )
+    session.commit()
+    assert changed2 is True
+    assert fact2.id == fact.id
+    assert fact2.key == fact.key
+
+    facts = list_facts(session, "u9")
+    assert len(facts) == 1
+    assert facts[0].value == "préparée (prête pour l'expédition)"
+    session.close()
+
+
+def test_upsert_fact_leaves_fixed_keys_unchanged():
+    """Les clés fixes de `RuleBasedExtractor` (sans entité de commande/contrat)
+    ne doivent pas être réordonnées par la canonicalisation."""
+    session = _session()
+    get_or_create_user(session, "u10")
+    fact, _ = upsert_fact(session, "u10", "order_number", "O-2024-0101", "order", 0.85, None)
+    session.commit()
+    assert fact.key == "order_number"
+    session.close()
+
+
 def test_delete_facts_matching_by_alias_and_redact_messages():
     session = _session()
     get_or_create_user(session, "u8")

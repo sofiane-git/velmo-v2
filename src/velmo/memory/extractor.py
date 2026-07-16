@@ -17,6 +17,8 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 
 from velmo.llm import LLM
+from velmo.memory.entities import CONTRACT_RE as _CONTRACT_RE
+from velmo.memory.entities import ORDER_RE as _ORDER_RE
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +54,6 @@ def _norm(s: str) -> str:
 
 
 _SIZE_RE = re.compile(r"\b(XXL|XL|S|M|L)\b")
-_ORDER_RE = re.compile(r"O-\d{4}-\d{4}")
-_CONTRACT_RE = re.compile(r"C-\d+")
 
 _SIZE_TRIGGERS = ("taille", "pointure")
 _CLUB_TRIGGERS = ("club", "clubs", "equipe", "equipes")

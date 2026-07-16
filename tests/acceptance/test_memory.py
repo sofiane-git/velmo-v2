@@ -51,5 +51,5 @@ def test_right_to_be_forgotten():
     assert "rue des Lilas" in mm.read(user, "Mon adresse ?").render()
 
     removed = mm.forget(user, "adresse")
-    assert removed >= 1
+    assert removed.count >= 1
     assert "rue des Lilas" not in mm.read(user, "Mon adresse ?").render()
