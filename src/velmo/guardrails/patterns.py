@@ -1,10 +1,10 @@
 """Étage 1 du pipeline garde-fous : motifs déterministes (regex/lexical).
 
 Coup net (`block`) sur les catégories qui se détectent à coup sûr par un motif
-fixe : injection de prompt connue (G6), tentative d'extraction de secret (G7).
-La PII structurée (G4 : carte + Luhn, mot de passe, IBAN) est vérifiée par
-`scan_pii`, appelé uniquement en sortie par `pipeline.py` — ce module reste
-sans connaissance du sens entrée/sortie.
+fixe : injection de prompt connue (G6), tentative d'extraction de secret (G7),
+PII structurée (G4 : carte + Luhn, mot de passe, IBAN) via `scan_pii` — appelé
+par `pipeline.py` en entrée comme en sortie ; ce module reste sans
+connaissance du sens entrée/sortie.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def scan_secret_leak(text: str) -> Hit | None:
 
 
 def scan_pii(text: str) -> Hit | None:
-    """G4 — PII structurée (carte + Luhn, mot de passe, IBAN). Sortie uniquement."""
+    """G4 — PII structurée (carte + Luhn, mot de passe, IBAN). Entrée et sortie."""
     card = CARD_RE.search(text)
     if card and luhn_valid(card.group(0)):
         return Hit(
@@ -124,3 +124,29 @@ def scan_pii(text: str) -> Hit | None:
     if IBAN_RE.search(text):
         return Hit(category="pii", method="regex", action="block", reasoning="IBAN détecté")
     return None
+
+
+def redact_secret_leak(text: str) -> str:
+    """Masque un jeton/clé secret trouvé en clair (G7) avant persistance —
+    même raison que `redact_pii` : ne pas faire survivre la valeur dans le
+    journal de mémoire ni la renvoyer en clair à l'extracteur LLM. Les
+    expressions d'extraction (« donne-moi ta clé api ») ne portent elles-mêmes
+    aucune valeur secrète : rien à masquer dans ce cas, le message est laissé
+    intact."""
+    return SECRET_KEY_RE.sub("[clé secrète masquée]", text)
+
+
+def redact_pii(text: str) -> str:
+    """Masque toute PII structurée (carte, IBAN, mot de passe) avant toute
+    persistance — un message bloqué par `scan_pii` ne doit pas survivre en
+    clair dans le journal de mémoire ni repartir en clair vers l'extracteur
+    LLM. Le mot de passe n'a pas de format fixe (contrairement à la carte et
+    à l'IBAN) : sa valeur ne peut pas être délimitée de façon fiable par
+    regex, donc tout le message est masqué plutôt que de risquer une fuite
+    partielle de la valeur."""
+    if PASSWORD_RE.search(text):
+        return "[message masqué : mention d'un mot de passe]"
+    card = CARD_RE.search(text)
+    if card and luhn_valid(card.group(0)):
+        text = CARD_RE.sub("[carte masquée]", text)
+    return IBAN_RE.sub("[IBAN masqué]", text)

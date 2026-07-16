@@ -56,5 +56,11 @@ def get_llm() -> LLM:
         # des tests de bout en bout de l'interface pédagogique (chat/stream).
         request_timeout=45.0,
         max_retries=1,
+        # Cette ressource expose l'endpoint OpenAI-compatible `/openai/v1` ;
+        # la Responses API (défaut de la classe) n'y répond jamais et fait
+        # tourner l'appel jusqu'au timeout — confirmé en isolant l'appel
+        # (~90s avant `APITimeoutError`). Chat Completions y répond en
+        # quelques secondes.
+        use_responses_api=False,
     )
     return AzureLLM(model)

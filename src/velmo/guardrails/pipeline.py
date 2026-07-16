@@ -60,10 +60,9 @@ def run(
     secret_hit = scan_secret_leak(text)
     if secret_hit:
         return [secret_hit]
-    if location == "output":
-        pii_hit = scan_pii(text)
-        if pii_hit:
-            hits.append(pii_hit)  # "filter" au sens conception : le reste continue
+    pii_hit = scan_pii(text)
+    if pii_hit:
+        return [pii_hit]  # court-circuit : la donnée sensible ne part pas vers classifieur/juge
 
     futures: dict[str, Future[Any]] = {
         "classifier": _EXECUTOR.submit(classifier.score_detailed, text),

@@ -19,6 +19,16 @@ from . import pipeline
 from .classifier import ModerationClassifier, get_classifier
 from .db import bind_user, count_recent_audit, make_guardrails_engine, write_audit
 from .judge import Judge, get_judge
+from .patterns import redact_pii, redact_secret_leak
+
+__all__ = [
+    "GENERIC_REFUSAL",
+    "CATEGORIES",
+    "Decision",
+    "GuardrailEngine",
+    "redact_pii",
+    "redact_secret_leak",
+]
 
 # Catégories de contenus contrôlés.
 CATEGORIES = (

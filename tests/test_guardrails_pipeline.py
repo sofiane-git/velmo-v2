@@ -28,9 +28,11 @@ def test_run_detects_out_of_scope_via_judge():
     assert any(h.category == "out_of_scope" and h.action == "block" for h in hits)
 
 
-def test_run_detects_pii_only_on_output():
+def test_run_detects_pii_on_input_and_output():
     text = "Le paiement est passe avec la carte 4111 1111 1111 1111."
+    hits_in = _run(text, "input")
     hits_out = _run(text, "output")
+    assert any(h.category == "pii" and h.action == "block" for h in hits_in)
     assert any(h.category == "pii" and h.action == "block" for h in hits_out)
 
 

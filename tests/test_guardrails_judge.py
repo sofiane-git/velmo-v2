@@ -50,7 +50,7 @@ def _patch_azure_openai(
             client_kwargs.append(kwargs)
         return _FakeAzureOpenAI(content, calls)
 
-    monkeypatch.setattr(openai, "AzureOpenAI", fake_azure_openai)
+    monkeypatch.setattr(openai, "OpenAI", fake_azure_openai)
 
 
 def test_rule_based_judge_detects_out_of_scope():

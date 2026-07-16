@@ -5,11 +5,11 @@
 Deux portes de sécurité encadrent l'agent : une à l'entrée (le message du client), une à la sortie (la réponse de l'agent). Chaque porte utilise les mêmes trois techniques de détection, de la moins chère à la plus fine.
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph MAIN[" "]
         subgraph PORTES["Deux portes autour de l'agent"]
             direction LR
-            GIN["🛡️ PORTE D'ENTRÉE<br/>arrête haine, violence, contenu sexuel,<br/>tentatives de manipulation<br/>→ couper le plus tôt possible"] --> AGENT["🤖 Agent"] --> GOUT["🛡️ PORTE DE SORTIE<br/>revérifie tout + retient données bancaires,<br/>secrets internes, réponses hors sujet<br/>→ le filet de sécurité"]
+            GIN["🛡️ PORTE D'ENTRÉE<br/>arrête haine, violence, contenu sexuel,<br/>tentatives de manipulation, données bancaires<br/>→ couper le plus tôt possible"] --> AGENT["🤖 Agent"] --> GOUT["🛡️ PORTE DE SORTIE<br/>revérifie tout + retient données bancaires,<br/>secrets internes, réponses hors sujet<br/>→ le filet de sécurité"]
         end
 
         subgraph PIPE["Les trois techniques, à chaque porte"]
@@ -59,7 +59,7 @@ flowchart TB
 
 ## Les points traités dans ce document
 
-- **Ce qu'on bloque** (à l'entrée comme à la sortie) : la haine et le harcèlement ; la violence et les menaces ; le contenu sexuel ; les données personnelles sensibles dans les réponses (numéros de carte, mots de passe, données d'autres clients) ; les réponses hors du rôle de support (conseil juridique ou médical, promesses engageant Velmo) ; les tentatives de manipulation de l'agent (« ignore tes instructions… ») ; les fuites de secrets techniques internes.
+- **Ce qu'on bloque** (à l'entrée comme à la sortie) : la haine et le harcèlement ; la violence et les menaces ; le contenu sexuel ; les données personnelles sensibles, structurées (numéros de carte, IBAN, mots de passe — bloquées dès l'entrée) ou en texte libre dans les réponses (données d'autres clients) ; les réponses hors du rôle de support (conseil juridique ou médical, promesses engageant Velmo) ; les tentatives de manipulation de l'agent (« ignore tes instructions… ») ; les fuites de secrets techniques internes.
 - **Pourquoi deux portes et pas une seule** : si on ne contrôlait qu'à la sortie, l'agent aurait déjà _lu et raisonné_ sur un contenu toxique ou manipulateur — le mal serait fait. La porte d'entrée coupe tôt ; la sortie rattrape ce qui a échappé.
 - **Pourquoi trois techniques et pas une** : chaque risque appelle l'outil le moins cher qui suffit. Un numéro de carte se repère à coup sûr par un motif — payer un appel d'IA pour ça serait absurde. Une manipulation reformulée, à l'inverse, échappe à tout motif fixe et exige un jugement contextuel.
 - **L'équilibre sécurité / utilité** : un client furieux (« ce maillot est un scandale ! ») n'est pas une menace. Plutôt que de bloquer au moindre doute, les cas limites passent mais sont notés — et ces notes servent ensuite à ajuster les seuils sur des cas réels, pas au jugé.

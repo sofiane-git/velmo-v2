@@ -72,12 +72,17 @@ class AzureJudge:
     """Client Azure OpenAI dédié (gpt-5-mini), distinct de l'agent principal."""
 
     def __init__(self) -> None:
-        from openai import AzureOpenAI  # import différé : dépendance optionnelle
+        from openai import OpenAI  # import différé : dépendance optionnelle
 
-        self._client = AzureOpenAI(
-            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        self._client = OpenAI(
+            # Cette ressource expose l'endpoint OpenAI-compatible `/openai/v1`
+            # (`AZURE_OPENAI_ENDPOINT` s'y termine déjà) : le client Azure
+            # classique (`azure_endpoint` + `api_version`) construit une URL
+            # incompatible et échoue en 404 quel que soit le déploiement —
+            # confirmé en isolant l'appel. Le client OpenAI standard pointé
+            # sur ce `base_url` fonctionne directement, sans `api_version`.
+            base_url=os.environ["AZURE_OPENAI_ENDPOINT"],
             api_key=os.environ["AZURE_OPENAI_API_KEY"],
-            api_version="2024-08-01-preview",
             # Sans ceci, le SDK openai retombe sur son défaut (~600s). Le
             # thread qui exécute cet appel tourne dans le pool partagé de
             # `pipeline.py` (`_EXECUTOR`, 4 workers) ; `Future.result(timeout=

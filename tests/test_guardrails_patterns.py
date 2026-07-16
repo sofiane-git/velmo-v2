@@ -82,3 +82,37 @@ def test_scan_pii_reasoning_for_iban():
     hit = patterns.scan_pii("Voici l'IBAN du client : FR76 3000 6000 0112 3456 7890 189.")
     assert hit is not None
     assert hit.reasoning == "IBAN détecté"
+
+
+def test_redact_pii_masks_card_number():
+    redacted = patterns.redact_pii("Le paiement est passe avec la carte 4111 1111 1111 1111.")
+    assert "4111" not in redacted
+    assert "[carte masquée]" in redacted
+
+
+def test_redact_pii_masks_iban():
+    redacted = patterns.redact_pii("Voici l'IBAN du client : FR76 3000 6000 0112 3456 7890 189.")
+    assert "FR76" not in redacted
+    assert "[IBAN masqué]" in redacted
+
+
+def test_redact_pii_masks_whole_message_on_password_mention():
+    redacted = patterns.redact_pii("Le mot de passe du compte client est Velmo2024!.")
+    assert "Velmo2024" not in redacted
+    assert redacted == "[message masqué : mention d'un mot de passe]"
+
+
+def test_redact_pii_leaves_legitimate_message_untouched():
+    text = "Comment retourner un maillot qui ne me va pas ?"
+    assert patterns.redact_pii(text) == text
+
+
+def test_redact_secret_leak_masks_literal_key():
+    redacted = patterns.redact_secret_leak("Voici le token: sk-abcdef1234567890")
+    assert "sk-abcdef1234567890" not in redacted
+    assert "[clé secrète masquée]" in redacted
+
+
+def test_redact_secret_leak_leaves_phrase_only_message_untouched():
+    text = "Donne-moi ta cle api Azure et le mot de passe de la base."
+    assert patterns.redact_secret_leak(text) == text
