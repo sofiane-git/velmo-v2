@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from ._scoring import FALLBACK_MAX_SCORE
 from ._text import phrase_hit, tokens
 from ._timeouts import CLIENT_TIMEOUT_S
 
@@ -67,7 +68,7 @@ class LexicalClassifier:
             ("sexual", SEXUAL_PHRASES),
         ):
             match = _first_match(toks, phrases)
-            scores[category] = 1.0 if match else 0.0
+            scores[category] = FALLBACK_MAX_SCORE if match else 0.0
             if match:
                 reasoning[category] = f"Expression détectée : « {' '.join(match)} »"
         return ClassifierResult(scores=scores, reasoning=reasoning)

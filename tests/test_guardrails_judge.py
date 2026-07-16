@@ -4,6 +4,7 @@ import json
 
 import openai
 
+from velmo.guardrails._scoring import FALLBACK_MAX_SCORE
 from velmo.guardrails.judge import AzureJudge, RuleBasedJudge, get_judge, load_scope_keywords
 
 
@@ -56,6 +57,11 @@ def _patch_azure_openai(
 def test_rule_based_judge_detects_out_of_scope():
     result = RuleBasedJudge().evaluate("Combien vaut mon maillot Maradona 86 aujourd'hui ?")
     assert result["hors_role"] >= 0.7
+
+
+def test_rule_based_judge_caps_match_at_fallback_max_score():
+    result = RuleBasedJudge().evaluate("Combien vaut mon maillot Maradona 86 aujourd'hui ?")
+    assert result["hors_role"] == FALLBACK_MAX_SCORE
 
 
 def test_rule_based_judge_zero_on_legitimate_message():

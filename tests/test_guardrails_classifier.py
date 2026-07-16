@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import requests
 
+from velmo.guardrails._scoring import FALLBACK_MAX_SCORE
 from velmo.guardrails.classifier import (
     ClassifierResult,
     CombinedClassifier,
@@ -55,6 +56,11 @@ def test_lexical_classifier_detects_violence():
 def test_lexical_classifier_detects_sexual():
     scores = LexicalClassifier().score("Envoie-moi du contenu sexuel explicite.")
     assert scores["sexual"] >= 0.7
+
+
+def test_lexical_classifier_caps_match_at_fallback_max_score():
+    scores = LexicalClassifier().score("Si mon maillot n'arrive pas je vais te frapper.")
+    assert scores["violence"] == FALLBACK_MAX_SCORE
 
 
 def test_lexical_classifier_zero_on_legitimate_message():

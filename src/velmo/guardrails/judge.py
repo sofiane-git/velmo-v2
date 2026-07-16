@@ -14,6 +14,7 @@ from typing import Protocol
 
 import yaml
 
+from ._scoring import FALLBACK_MAX_SCORE
 from ._text import phrase_hit, tokens
 from ._timeouts import CLIENT_TIMEOUT_S
 
@@ -77,7 +78,7 @@ class RuleBasedJudge:
         return {
             "manipulation": 0.0,
             "secret_interne": 0.0,
-            "hors_role": 1.0 if match else 0.0,
+            "hors_role": FALLBACK_MAX_SCORE if match else 0.0,
             "reasoning": reasoning,
         }
 
