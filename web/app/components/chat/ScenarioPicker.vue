@@ -40,7 +40,7 @@ async function run(scenario: (typeof scenarios)[number], times = 1) {
 
     <div
       v-if="open"
-      class="max-h-64 space-y-3 overflow-y-auto p-4"
+      class="max-h-96 space-y-3 overflow-y-scroll p-4"
     >
       <div
         v-for="(group, gi) in grouped"
