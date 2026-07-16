@@ -59,3 +59,31 @@ def test_pii_hit_carries_reasoning():
     hits = _run(text, "output")
     pii_hit = next(h for h in hits if h.category == "pii")
     assert pii_hit.reasoning is not None
+
+
+def test_level_below_flag_threshold_is_allow():
+    assert pipeline._level(pipeline.FLAG_THRESHOLD - 0.01) is None
+
+
+def test_level_at_flag_threshold_is_flag():
+    assert pipeline._level(pipeline.FLAG_THRESHOLD) == "flag"
+
+
+def test_level_just_below_block_threshold_is_flag():
+    assert pipeline._level(pipeline.BLOCK_THRESHOLD - 0.01) == "flag"
+
+
+def test_level_at_block_threshold_is_block():
+    assert pipeline._level(pipeline.BLOCK_THRESHOLD) == "block"
+
+
+def test_level_just_below_escalate_threshold_is_block():
+    assert pipeline._level(pipeline.ESCALATE_THRESHOLD - 0.01) == "block"
+
+
+def test_level_at_escalate_threshold_is_block_escalate():
+    assert pipeline._level(pipeline.ESCALATE_THRESHOLD) == "block_escalate"
+
+
+def test_level_none_score_is_none():
+    assert pipeline._level(None) is None

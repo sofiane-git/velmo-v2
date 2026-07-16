@@ -10,6 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from . import pii_redaction, prompt_shields
+from ._scoring import FALLBACK_MAX_SCORE
 from ._timeouts import CALL_TIMEOUT_S
 from .classifier import ClassifierResult, ModerationClassifier
 from .judge import Judge
@@ -19,6 +20,14 @@ __all__ = ["Hit", "run"]
 
 BLOCK_THRESHOLD = 0.7
 FLAG_THRESHOLD = 0.4
+# Valeur de départ, à recalibrer sur eval/guardrail_cases.jsonl une fois des
+# cas expected_escalate labellisés disponibles (eval/calibrate_thresholds.py,
+# cf. docs/superpowers/specs/2026-07-16-gradation-scores-guardrails-design.md
+# §4). Doit toujours rester strictement au-dessus de FALLBACK_MAX_SCORE : un
+# repli hors-ligne sans confiance calibrée ne doit jamais atteindre ce palier
+# seul.
+ESCALATE_THRESHOLD = 0.9
+assert FALLBACK_MAX_SCORE < ESCALATE_THRESHOLD
 
 # Clé du dict renvoyé par Judge.evaluate() -> catégorie G1-G7 correspondante.
 JUDGE_KEY_TO_CATEGORY = {
@@ -36,6 +45,8 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=4)
 def _level(score: float | None) -> str | None:
     if score is None:
         return None
+    if score >= ESCALATE_THRESHOLD:
+        return "block_escalate"
     if score >= BLOCK_THRESHOLD:
         return "block"
     if score >= FLAG_THRESHOLD:
