@@ -157,7 +157,7 @@ def count_recent_audit(session: Session, user_id: str, category: str, window: ti
             .where(
                 GuardrailAudit.user_id == user_id,
                 GuardrailAudit.category == category,
-                GuardrailAudit.action == "block",
+                GuardrailAudit.action.in_(("block", "block_escalate")),
                 GuardrailAudit.created_at >= since,
             )
         )

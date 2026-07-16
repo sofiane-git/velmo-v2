@@ -50,3 +50,12 @@ def test_write_audit_accepts_missing_user_id():
     session = _session()
     write_audit(session, None, "hate", "input", "classifier", 0.9, "flag", None)
     session.commit()  # ne doit pas lever malgré user_id=None
+
+
+def test_count_recent_audit_counts_block_escalate_too():
+    session = _session()
+    write_audit(session, "u5", "secret_leak", "input", "llm_judge", 0.95, "block_escalate", None)
+    write_audit(session, "u5", "secret_leak", "input", "llm_judge", 0.72, "block", None)
+    session.commit()
+    count = count_recent_audit(session, "u5", "secret_leak", timedelta(hours=24))
+    assert count == 2
