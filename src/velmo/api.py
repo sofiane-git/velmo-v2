@@ -10,6 +10,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .agent import Agent, build_default_agent
+from .db import Customer
+from .tools._common import select
 
 app = FastAPI(
     title="Velmo 2.0 API",
@@ -47,6 +49,11 @@ class ChatResponse(BaseModel):
     response: str
 
 
+class CustomerOut(BaseModel):
+    id: str
+    full_name: str
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest, agent: Agent = Depends(get_agent)) -> ChatResponse:
     """
@@ -81,6 +88,18 @@ def chat_stream_endpoint(
         _stream_events(agent, request.user_id, request.message),
         media_type="text/event-stream",
     )
+
+
+@app.get("/customers", response_model=list[CustomerOut])
+def list_customers(agent: Agent = Depends(get_agent)) -> list[CustomerOut]:
+    """
+    Liste les clients inscrits, pour peupler le sélecteur d'utilisateur du
+    frontend de démo.
+    """
+    rows = agent.session.execute(
+        select(Customer.id, Customer.full_name).order_by(Customer.full_name)
+    ).all()
+    return [CustomerOut(id=i, full_name=n) for i, n in rows]
 
 
 @app.get("/health")
