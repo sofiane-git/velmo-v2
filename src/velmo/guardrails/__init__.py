@@ -78,6 +78,11 @@ REPEAT_ESCALATE_CATEGORIES = ("prompt_injection", "hate", "sexual")
 REPEAT_THRESHOLD = 3
 REPEAT_WINDOW = timedelta(hours=24)
 
+# Actions considérées comme un blocage pour le choix du hit "bloquant" et
+# l'audit de récidive — "block_escalate" (pipeline.py, ESCALATE_THRESHOLD)
+# est un block avec un signal de confiance en plus, pas une catégorie à part.
+BLOCKING_ACTIONS = ("block", "block_escalate")
+
 
 @dataclass
 class Decision:
@@ -159,13 +164,13 @@ class GuardrailEngine:
             session.commit()
 
             blocking = next(
-                (h for h in hits if h.action == "block" and h.category in CATEGORIES), None
+                (h for h in hits if h.action in BLOCKING_ACTIONS and h.category in CATEGORIES), None
             )
             relevant_hits = [h for h in hits if h.category in CATEGORIES]
             if blocking is None:
                 return Decision(allowed=True, action="allow", hits=relevant_hits)
 
-            escalate = blocking.category in ESCALATE_CATEGORIES
+            escalate = blocking.category in ESCALATE_CATEGORIES or blocking.action == "block_escalate"
             if blocking.category in REPEAT_ESCALATE_CATEGORIES and user_id is not None:
                 count = count_recent_audit(session, user_id, blocking.category, REPEAT_WINDOW)
                 escalate = escalate or count >= REPEAT_THRESHOLD

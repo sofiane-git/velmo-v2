@@ -3,10 +3,42 @@
 from __future__ import annotations
 
 from velmo.guardrails import GuardrailEngine
+from velmo.guardrails.classifier import LexicalClassifier
 
 
 def _engine() -> GuardrailEngine:
     return GuardrailEngine(db_url="sqlite:///:memory:")
+
+
+class _AlwaysHighConfidencePromptInjection:
+    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+        return {
+            "manipulation": 0.95,  # >= ESCALATE_THRESHOLD (0.9)
+            "secret_interne": 0.0,
+            "hors_role": 0.0,
+            "reasoning": "Tentative de contournement à très haute confiance.",
+        }
+
+
+def test_high_confidence_prompt_injection_escalates_on_first_occurrence():
+    engine = GuardrailEngine(
+        db_url="sqlite:///:memory:",
+        classifier=LexicalClassifier(),
+        judge=_AlwaysHighConfidencePromptInjection(),  # type: ignore[arg-type]
+    )
+
+    # prompt_injection est dans REPEAT_ESCALATE_CATEGORIES (escalade
+    # normalement seulement à la 3e occurrence) mais PAS dans
+    # ESCALATE_CATEGORIES (pas d'escalade immédiate par catégorie seule) —
+    # si l'escalade se déclenche ici dès le premier appel, c'est bien le
+    # nouveau signal de confiance qui agit, pas une des deux règles
+    # préexistantes (contrairement à "secret_leak"/"violence", déjà
+    # auto-escaladées par catégorie, qui n'isoleraient pas ce test).
+    decision = engine.check_input("Bonjour, une question sur ma commande.", user_id="u-conf-1")
+
+    assert decision.allowed is False
+    assert decision.category == "prompt_injection"
+    assert decision.escalate is True
 
 
 def test_check_input_exposes_hits_on_block():
