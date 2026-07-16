@@ -42,8 +42,15 @@ class _FakeAzureOpenAI:
         self.chat = _FakeChat(content, calls)
 
 
-def _patch_azure_openai(monkeypatch, content: str, calls: list[dict]) -> None:
-    monkeypatch.setattr(openai, "AzureOpenAI", lambda **kwargs: _FakeAzureOpenAI(content, calls))
+def _patch_azure_openai(
+    monkeypatch, content: str, calls: list[dict], client_kwargs: list[dict] | None = None
+) -> None:
+    def fake_azure_openai(**kwargs: object) -> _FakeAzureOpenAI:
+        if client_kwargs is not None:
+            client_kwargs.append(kwargs)
+        return _FakeAzureOpenAI(content, calls)
+
+    monkeypatch.setattr(openai, "AzureOpenAI", fake_azure_openai)
 
 
 def test_rule_based_judge_detects_out_of_scope():
@@ -145,6 +152,23 @@ def test_azure_judge_defaults_missing_keys_to_zero(monkeypatch):
         "hors_role": 0.0,
         "reasoning": "",
     }
+
+
+def test_azure_judge_uses_timeout_below_pipeline_call_timeout(monkeypatch):
+    # < CALL_TIMEOUT_S (30s, pipeline.py) : sans ce timeout explicite, le
+    # client openai retombe sur son défaut (~600s) et un appel Azure lent
+    # bloque un thread du pool partagé bien au-delà de ce que le pipeline
+    # attend, sans que ce thread ne soit jamais libéré (cf. commentaire
+    # judge.py).
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
+    client_kwargs: list[dict] = []
+    _patch_azure_openai(monkeypatch, "{}", [], client_kwargs)
+
+    AzureJudge()
+
+    assert client_kwargs[0]["timeout"] < 30
+    assert client_kwargs[0]["timeout"] >= 20
 
 
 def test_rule_based_judge_reasoning_names_matched_phrase():

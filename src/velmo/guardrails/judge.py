@@ -15,6 +15,7 @@ from typing import Protocol
 import yaml
 
 from ._text import phrase_hit, tokens
+from ._timeouts import CLIENT_TIMEOUT_S
 
 SCOPE_POLICY_PATH = Path(__file__).resolve().parent / "scope_policy.yaml"
 
@@ -77,6 +78,15 @@ class AzureJudge:
             azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
             api_key=os.environ["AZURE_OPENAI_API_KEY"],
             api_version="2024-08-01-preview",
+            # Sans ceci, le SDK openai retombe sur son défaut (~600s). Le
+            # thread qui exécute cet appel tourne dans le pool partagé de
+            # `pipeline.py` (`_EXECUTOR`, 4 workers) ; `Future.result(timeout=
+            # CALL_TIMEOUT_S)` abandonne l'attente sans tuer le thread, donc un
+            # appel Azure lent y reste bloqué et réduit la capacité du pool
+            # pour tous les appels suivants. `CLIENT_TIMEOUT_S` (<
+            # CALL_TIMEOUT_S) garantit que ce timeout se déclenche toujours
+            # avant l'abandon côté pipeline.
+            timeout=CLIENT_TIMEOUT_S,
         )
         self._deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
 

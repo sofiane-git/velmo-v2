@@ -10,6 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from . import pii_redaction, prompt_shields
+from ._timeouts import CALL_TIMEOUT_S
 from .classifier import ClassifierResult, ModerationClassifier
 from .judge import Judge
 from .patterns import Hit, scan_injection, scan_pii, scan_secret_leak
@@ -18,17 +19,6 @@ __all__ = ["Hit", "run"]
 
 BLOCK_THRESHOLD = 0.7
 FLAG_THRESHOLD = 0.4
-# 30s (pas 8s) : mesuré en conditions réelles (docker, CPU) — un premier appel
-# à Llama Guard 3 8B après démarrage du conteneur Ollama (chargement du modèle
-# en mémoire) prend 18-27s, largement au-delà des 8s précédents. Un timeout
-# trop court ici ne fait pas que "perdre le signal LLM" : `CombinedClassifier`
-# calcule le repli lexical (instantané) dans la MÊME fonction synchrone que
-# l'appel Llama Guard, donc `Future.result(timeout=...)` abandonne aussi ce
-# repli déjà calculé — un message pourtant détecté par le lexique (ex.
-# "frapper") passe alors en "allow" au lieu d'être bloqué. Les appels suivants
-# restent rapides (~0.2-0.5s, modèle résident en mémoire) : ce budget élargi
-# ne coûte donc qu'au tout premier appel après démarrage.
-CALL_TIMEOUT_S = 30.0
 
 # Clé du dict renvoyé par Judge.evaluate() -> catégorie G1-G7 correspondante.
 JUDGE_KEY_TO_CATEGORY = {

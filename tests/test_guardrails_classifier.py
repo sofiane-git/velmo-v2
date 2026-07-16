@@ -1,12 +1,45 @@
 from __future__ import annotations
 
+import requests
+
 from velmo.guardrails.classifier import (
     ClassifierResult,
     CombinedClassifier,
     LexicalClassifier,
+    LlamaGuardClassifier,
     _parse_llama_guard_response,
     get_classifier,
 )
+
+
+class _FakeResponse:
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return {"message": {"content": self._content}}
+
+
+def test_llama_guard_classifier_uses_timeout_below_pipeline_call_timeout(monkeypatch):
+    # < CALL_TIMEOUT_S (30s, pipeline.py) : sinon ce timeout HTTP n'a jamais
+    # l'occasion de se déclencher avant que le pipeline n'abandonne l'attente
+    # sans libérer le thread du pool partagé (cf. commentaires classifier.py
+    # et judge.py).
+    calls: list[dict] = []
+
+    def fake_post(url: str, **kwargs: object) -> _FakeResponse:
+        calls.append(kwargs)
+        return _FakeResponse("safe")
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    LlamaGuardClassifier(base_url="http://localhost:11434").score_detailed("bonjour")
+
+    assert calls[0]["timeout"] < 30
+    assert calls[0]["timeout"] >= 20
 
 
 def test_lexical_classifier_detects_hate():

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ._text import phrase_hit, tokens
+from ._timeouts import CLIENT_TIMEOUT_S
 
 
 @dataclass
@@ -138,7 +139,14 @@ class LlamaGuardClassifier:
                 "messages": [{"role": "user", "content": text}],
                 "stream": False,
             },
-            timeout=8,
+            # Le premier appel après démarrage/inactivité d'Ollama charge le
+            # modèle en mémoire (mesuré ~21-27s) — un timeout de 8s ici
+            # abandonnait systématiquement ce premier appel (confirmé par les
+            # logs Ollama : réponses 499, connexion fermée côté client à ~8s).
+            # `CLIENT_TIMEOUT_S` (< CALL_TIMEOUT_S) garantit que ce timeout se
+            # déclenche toujours avant l'abandon côté pipeline, qui lui ne tue
+            # pas le thread (cf. pipeline.py).
+            timeout=CLIENT_TIMEOUT_S,
         )
         response.raise_for_status()
         content = response.json().get("message", {}).get("content", "")
