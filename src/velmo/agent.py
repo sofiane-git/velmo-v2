@@ -17,17 +17,23 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from . import tools
-from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine
+from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine, redact_pii, redact_secret_leak
 from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
-from .memory import MemoryContext, MemoryManager, WriteReport
+from .memory import ForgetReport, MemoryContext, MemoryManager, WriteReport
 from .memory.db import FACT_KEY_ALIASES
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "Tu es l'assistant de support de Velmo, boutique de maillots de foot collector. "
-    "Tu traites la gestion de commandes de niveau 1 avec courtoisie et précision."
+    "Tu traites la gestion de commandes de niveau 1 avec courtoisie et précision. "
+    "Structure toujours ta réponse en Markdown pour qu'elle soit visuelle et facile à "
+    "scanner : titres courts en gras, listes à puces ou numérotées, emphase sur les "
+    "informations clés, un emoji pertinent en ouverture si utile. Évite les longs "
+    "paragraphes denses. Ne révèle jamais de détail d'implémentation interne (nom de "
+    "fichier, nom de variable ou de champ technique, requête, nom de table ou "
+    "d'architecture) : reformule toujours ces informations en langage client naturel."
 )
 
 DEFAULT_REFUSAL = GENERIC_REFUSAL
@@ -70,6 +76,7 @@ _FAQ_KEYWORDS = (
 )
 
 _FORGET_TRIGGERS = ("oublie", "efface", "supprime")
+_FORGET_ALL_RE = re.compile(r"\btoute?s?\b")
 
 
 @dataclass
@@ -125,6 +132,16 @@ def _is_repeat_question(context: MemoryContext, message: str) -> bool:
     )
 
 
+def _forget_report_payload(target: str, report: ForgetReport) -> dict[str, Any]:
+    return {
+        "target": target,
+        "removed": report.count,
+        "facts": [asdict(f) for f in report.facts],
+        "procedures": [asdict(p) for p in report.procedures],
+        "episodes": report.episodes,
+    }
+
+
 def _write_report_payload(report: WriteReport) -> dict[str, Any]:
     return {
         "facts_written": [f.model_dump() for f in report.facts_written],
@@ -167,7 +184,12 @@ class Agent:
                 tools.escalate_to_human(
                     self.session, user_id, f"garde-fou {gate_in.category} (entrée)"
                 )
-            self.memory.write(user_id, message, refusal, background=True)
+            stored_message = message
+            if gate_in.category == "pii":
+                stored_message = redact_pii(message)
+            elif gate_in.category == "secret_leak":
+                stored_message = redact_secret_leak(message)
+            self.memory.write(user_id, stored_message, refusal, background=True)
             yield "final", {
                 "answer": refusal,
                 "status": "blocked_input",
@@ -347,6 +369,14 @@ class Agent:
         return f"C'est fait pour la commande {order_id} ({result.get('action')}).", result
 
     def _handle_forget(self, user_id: str, low: str) -> tuple[str, RoutingInfo]:
+        if _FORGET_ALL_RE.search(low):
+            report = self.memory.forget_all(user_id)
+            result = _forget_report_payload("all", report)
+            return (
+                f"C'est fait, j'ai supprimé toute votre mémoire ({report.count} élément(s) "
+                "supprimé(s)). On repart de zéro.",
+                RoutingInfo(handler="tool", tool_name="memory_forget_all", tool_result=result),
+            )
         target = next((alias for alias in FACT_KEY_ALIASES if alias in low), None)
         if target is None:
             return (
@@ -354,15 +384,16 @@ class Agent:
                 "contrat...) ?",
                 RoutingInfo(handler="tool", tool_name="memory_forget"),
             )
-        count = self.memory.forget(user_id, target)
-        result = {"target": target, "removed": count}
-        if count == 0:
+        report = self.memory.forget(user_id, target)
+        result = _forget_report_payload(target, report)
+        if report.count == 0:
             return (
                 "Je n'ai rien trouvé à oublier à ce sujet.",
                 RoutingInfo(handler="tool", tool_name="memory_forget", tool_result=result),
             )
         return (
-            f"C'est fait, j'ai oublié cette information ({count} élément(s) supprimé(s)).",
+            f"C'est fait, j'ai oublié cette information ({report.count} élément(s) "
+            "supprimé(s)).",
             RoutingInfo(handler="tool", tool_name="memory_forget", tool_result=result),
         )
 

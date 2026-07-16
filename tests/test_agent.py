@@ -72,6 +72,17 @@ def test_forget_route_without_recognized_target_asks_for_clarification():
     assert "?" in answer
 
 
+def test_forget_all_route_wipes_every_fact():
+    agent = _hermetic_agent(_RecordingLLM())
+    agent.respond("forget-3", "Ma taille est L, tu peux le noter ?")
+    agent.respond("forget-3", "Mon adresse de livraison est 12 rue des Lilas.")
+
+    answer = agent.respond("forget-3", "Efface toute ma mémoire, s'il te plaît.")
+
+    assert agent.memory.inspect("forget-3")["facts"] == []
+    assert "supprimé" in answer.lower()
+
+
 def test_routing_tool_name_for_order_lookup():
     agent = _hermetic_agent(_RecordingLLM())
     context = agent.memory.read("C-marc-dubois", "peu importe")
@@ -132,6 +143,38 @@ def test_respond_traced_short_circuits_on_blocked_input():
     assert event_types == ["input_guardrail", "final"]
     assert events[0][1]["allowed"] is False
     assert events[-1][1]["status"] == "blocked_input"
+
+
+def test_blocked_pii_input_is_redacted_before_memory_write():
+    agent = _hermetic_agent(_RecordingLLM())
+    agent.respond("trace-pii", "Voici l'IBAN du client : FR76 3000 6000 0112 3456 7890 189.")
+
+    history = agent.memory.read("trace-pii", "peu importe").history
+    user_turns = [content for role, content in history if role == "user"]
+    assert user_turns
+    assert "FR76" not in user_turns[0]
+    assert "[IBAN masqué]" in user_turns[0]
+
+
+def test_blocked_password_input_is_fully_redacted_before_memory_write():
+    agent = _hermetic_agent(_RecordingLLM())
+    agent.respond("trace-pwd", "Le mot de passe du compte client est Velmo2024!.")
+
+    history = agent.memory.read("trace-pwd", "peu importe").history
+    user_turns = [content for role, content in history if role == "user"]
+    assert user_turns
+    assert "Velmo2024" not in user_turns[0]
+
+
+def test_blocked_secret_leak_input_is_redacted_before_memory_write():
+    agent = _hermetic_agent(_RecordingLLM())
+    agent.respond("trace-secret", "Voici le token: sk-abcdef1234567890")
+
+    history = agent.memory.read("trace-secret", "peu importe").history
+    user_turns = [content for role, content in history if role == "user"]
+    assert user_turns
+    assert "sk-abcdef1234567890" not in user_turns[0]
+    assert "[clé secrète masquée]" in user_turns[0]
 
 
 def test_respond_traced_yields_error_final_when_downstream_raises():
