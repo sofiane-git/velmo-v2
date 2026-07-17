@@ -2,6 +2,15 @@
 
 > Support oral. Un problème par section, un schéma, la preuve que ça marche.
 
+> ⚠️ **Statut : as-built (implémentation actuelle), pas la référence de conception.**
+> Ce document décrit le code **tel qu'il tourne aujourd'hui** (Prompt Shields + PII redaction
+> déjà branchés, repli fail-open sur timeout). La **référence d'architecture cible** est
+> [`conceptions/conception_chantier2_guardrails.md`](conceptions/conception_chantier2_guardrails.md)
+> (Prompt Shields + PII redaction en **feature-flag à activation mesurée**, **matrice de repli
+> par catégorie** fail-closed/fail-open, cross-check `user_id` explicite pour G4…). Le code sera
+> **réaligné sur la conception** ; ce support sera régénéré à ce moment-là. En cas de divergence,
+> **la conception fait foi**.
+
 ---
 
 ## 1. Vue d'ensemble : deux portes, un seul point d'entrée
@@ -85,7 +94,7 @@ flowchart LR
         PII["PII redaction<br/>(texte libre, sortie)"] -.->|"non configuré"| NONE2["ignoré (liste vide)"]
     end
     subgraph E3a["Étage 3a — Juge"]
-        AJ["Azure OpenAI<br/>(gpt-4o-mini, isolé)"] -.->|"pas de clé"| RB["Règles + scope_policy.yaml<br/>(repli déterministe)"]
+        AJ["Azure OpenAI<br/>(gpt-5-mini, isolé)"] -.->|"pas de clé"| RB["Règles + scope_policy.yaml<br/>(repli déterministe)"]
     end
     subgraph E2["Étage 2 — Classifieur"]
         D["Llama Guard 3 8B<br/>(Ollama, local)"] -.-|"OLLAMA_URL non défini"| L["Lexique FR<br/>(repli déterministe)"]
@@ -98,7 +107,7 @@ flowchart LR
     class L,RB,NONE1,NONE2 fallback;
 ```
 
-**Le juge, un modèle différent de l'agent** : l'agent principal parle à Kimi-K2.6 (Azure AI Inference) ; le juge appelle un client Azure OpenAI **séparé** (gpt-4o-mini, SDK différent, aucun historique de conversation transmis). Une injection qui a piégé l'agent n'a aucune raison de fonctionner sur un système qui n'a même pas vu le contexte de l'attaque.
+**Le juge, un modèle différent de l'agent** : l'agent principal parle à Mistral-Large-3 (Azure AI Inference) ; le juge appelle un client Azure OpenAI **séparé** (gpt-5-mini, SDK différent, aucun historique de conversation transmis). Une injection qui a piégé l'agent n'a aucune raison de fonctionner sur un système qui n'a même pas vu le contexte de l'attaque.
 
 ---
 
