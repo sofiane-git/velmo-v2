@@ -9,6 +9,8 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
+from velmo.config import get_settings
+
 from . import pii_redaction, prompt_shields
 from ._scoring import FALLBACK_MAX_SCORE
 from ._timeouts import CALL_TIMEOUT_S
@@ -75,13 +77,16 @@ def run(
     if pii_hit:
         return [pii_hit]  # court-circuit : la donnée sensible ne part pas vers classifieur/juge
 
+    # Une résolution de config par tour (au lieu d'une par étage) : passée en
+    # `settings=` à `check()`/`scan()`, qui sinon en construiraient chacun une.
+    settings = get_settings()
     futures: dict[str, Future[Any]] = {
         "classifier": _EXECUTOR.submit(classifier.score_detailed, text),
         "judge": _EXECUTOR.submit(judge.evaluate, text, agent_response),
-        "prompt_shields": _EXECUTOR.submit(prompt_shields.check, text),
+        "prompt_shields": _EXECUTOR.submit(prompt_shields.check, text, settings),
     }
     if location == "output":
-        futures["pii_redaction"] = _EXECUTOR.submit(pii_redaction.scan, text)
+        futures["pii_redaction"] = _EXECUTOR.submit(pii_redaction.scan, text, settings)
 
     results: dict[str, Any] = {}
     for name, future in futures.items():

@@ -13,6 +13,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from velmo.config import get_settings, require
+
 from ._scoring import FALLBACK_MAX_SCORE
 from ._text import phrase_hit, tokens
 from ._timeouts import CLIENT_TIMEOUT_S
@@ -152,10 +154,9 @@ class LlamaGuardClassifier:
     nos 3 catégories (`LLAMA_GUARD_CATEGORY_MAP`)."""
 
     def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
-        import os
-
-        self._base_url = (base_url or os.environ["OLLAMA_URL"]).rstrip("/")
-        self._model = model or os.getenv("LLAMA_GUARD_MODEL", "llama-guard3:8b")
+        settings = get_settings()
+        self._base_url = require(base_url or settings.ollama_url, "OLLAMA_URL").rstrip("/")
+        self._model = model or settings.llama_guard_model
 
     def score(self, text: str) -> dict[str, float]:
         return self.score_detailed(text).scores
@@ -234,11 +235,10 @@ class CombinedClassifier:
 def get_classifier() -> ModerationClassifier:
     """Llama Guard 3 (Ollama) combiné au repli lexical si `OLLAMA_URL` est
     configuré, sinon repli lexical seul."""
-    import os
-
-    if not os.getenv("OLLAMA_URL"):
+    ollama_url = get_settings().ollama_url
+    if not ollama_url:
         return LexicalClassifier()
     try:
-        return CombinedClassifier(LlamaGuardClassifier())
+        return CombinedClassifier(LlamaGuardClassifier(base_url=ollama_url))
     except Exception:
         return LexicalClassifier()

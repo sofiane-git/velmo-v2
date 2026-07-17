@@ -9,17 +9,20 @@ Shields, seulement `analyze_text`/`analyze_image` pour la modération G1/G2/G3).
 
 from __future__ import annotations
 
-import os
+from velmo.config import Settings, get_settings
 
 
-def check(text: str) -> float | None:
+def check(text: str, settings: Settings | None = None) -> float | None:
     """Score d'injection 0..1, ou `None` si le service n'est pas configuré.
 
     `None` est ignoré par l'agrégation (`pipeline.py`) — Prompt Shields est un
     renfort de l'étage 1 (regex) et du LLM-juge sur G6, jamais le seul filet.
+
+    `settings` : réutilisé depuis `pipeline.run()` si fourni, sinon résolu ici.
     """
-    endpoint = os.getenv("AZURE_CONTENT_SAFETY_ENDPOINT")
-    key = os.getenv("AZURE_CONTENT_SAFETY_KEY")
+    settings = settings or get_settings()
+    endpoint = settings.azure_content_safety_endpoint
+    key = settings.azure_content_safety_key
     if not endpoint or not key:
         return None
 

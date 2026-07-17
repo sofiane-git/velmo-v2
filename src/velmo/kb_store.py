@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import re
 import unicodedata
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
+
+from velmo.config import get_settings
 
 KB_DOCS_DIR = Path(__file__).resolve().parents[2] / "kb" / "docs"
 
@@ -84,7 +85,8 @@ class ChromaKB:
 
 def get_kb() -> KnowledgeBase:
     """Renvoie le backend Chroma si configuré et disponible, sinon le backend local."""
-    chroma_url = os.getenv("CHROMA_URL")
+    settings = get_settings()
+    chroma_url = settings.chroma_url
     if not chroma_url:
         return LocalKB()
     try:
@@ -99,7 +101,7 @@ def get_kb() -> KnowledgeBase:
         port = parsed.port or 8000
         client = chromadb.HttpClient(host=host, port=port)
         embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+            model_name=settings.embedding_model
         )
         # Le stub chromadb type SentenceTransformerEmbeddingFunction plus étroitement
         # (float32) que EmbeddingFunction générique attendu ici (float64) : incompatibilité

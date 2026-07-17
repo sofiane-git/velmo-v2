@@ -1,4 +1,4 @@
-"""Clients LLM : Azure AI Inference (Kimi-K2.6) et repli local hors-ligne.
+"""Clients LLM : Azure AI Inference (Mistral-Large-3) et repli local hors-ligne.
 
 L'import du SDK Azure est différé pour que le harness démarre et que les tests
 tournent sans dépendre du SDK ni d'un endpoint joignable.
@@ -6,8 +6,9 @@ tournent sans dépendre du SDK ni d'un endpoint joignable.
 
 from __future__ import annotations
 
-import os
 from typing import Any, Protocol, cast
+
+from velmo.config import get_settings, require
 
 
 class LLM(Protocol):
@@ -42,15 +43,16 @@ class AzureLLM:
 
 def get_llm() -> LLM:
     """Construit le client Azure si configuré, sinon le repli `EchoLLM`."""
-    if not os.getenv("AZURE_AI_INFERENCE_ENDPOINT"):
+    settings = get_settings()
+    if not settings.azure_ai_inference_endpoint:
         return EchoLLM()
 
     from langchain_azure_ai.chat_models import AzureAIOpenAIApiChatModel
 
     model = AzureAIOpenAIApiChatModel(
-        endpoint=os.environ["AZURE_AI_INFERENCE_ENDPOINT"],
-        credential=os.environ["AZURE_AI_INFERENCE_API_KEY"],
-        model=os.environ.get("AZURE_AI_INFERENCE_MODEL", "Mistral-Large-3"),
+        endpoint=settings.azure_ai_inference_endpoint,
+        credential=require(settings.azure_ai_inference_api_key, "AZURE_AI_INFERENCE_API_KEY"),
+        model=settings.azure_ai_inference_model,
         # Sans timeout explicite, un appel réseau resté sans réponse (endpoint
         # lent/indisponible) bloque indéfiniment — observé en pratique lors
         # des tests de bout en bout de l'interface pédagogique (chat/stream).

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Iterator
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -9,9 +8,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from velmo.config import get_settings, validate_startup
+
 from .agent import Agent, build_default_agent
 from .db import Customer
 from .tools._common import select
+
+# Échoue tôt si une intégration Azure est à moitié configurée (endpoint sans
+# clé ou l'inverse) — avant que le process ne serve du trafic, pas à la
+# première requête qui la découvre.
+_settings = get_settings()
+validate_startup(_settings)
 
 app = FastAPI(
     title="Velmo 2.0 API",
@@ -24,10 +31,9 @@ app = FastAPI(
 # /chat/stream en fetch cross-origin — sans CORS le navigateur bloque la
 # requête SSE. Allowlist explicite (pas de wildcard) même si le service reste
 # non authentifié.
-_default_web_origins = "http://localhost:3000,http://127.0.0.1:3000"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("VELMO_WEB_ORIGINS", _default_web_origins).split(","),
+    allow_origins=_settings.velmo_web_origins.split(","),
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )

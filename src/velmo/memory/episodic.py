@@ -5,12 +5,13 @@ local (hors-ligne, scoring mots-clés) — même convention prod/offline que
 
 from __future__ import annotations
 
-import os
 import re
 import unicodedata
 import uuid
 from typing import Any, Protocol
 from urllib.parse import urlparse
+
+from velmo.config import get_settings
 
 
 def _strip_accents(s: str) -> str:
@@ -83,7 +84,8 @@ def get_episodic_backend() -> EpisodicStore:
     sinon `LocalEpisodic`. Ne lève jamais — toute erreur de connexion/import
     retombe sur le repli local (même contrat que `kb_store.get_kb()`).
     """
-    chroma_url = os.getenv("CHROMA_URL")
+    settings = get_settings()
+    chroma_url = settings.chroma_url
     if not chroma_url:
         return LocalEpisodic()
     try:
@@ -98,7 +100,7 @@ def get_episodic_backend() -> EpisodicStore:
         port = parsed.port or 8000
         client = chromadb.HttpClient(host=host, port=port)
         embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+            model_name=settings.embedding_model
         )
         # Le stub chromadb type SentenceTransformerEmbeddingFunction plus étroitement
         # (float32) que EmbeddingFunction générique attendu ici (float64) : incompatibilité

@@ -13,7 +13,6 @@ d'écriture entre eux.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import uuid
 import warnings
@@ -22,6 +21,8 @@ from pathlib import Path
 
 from sqlalchemy import DateTime, Engine, Float, String, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+
+from velmo.config import get_settings
 
 
 class Base(DeclarativeBase):
@@ -86,7 +87,7 @@ def make_guardrails_engine(url: str | None = None) -> Engine:
         else:
             engine = create_engine(url, future=True)
     else:
-        pg_url = os.getenv("DB_URL", "postgresql+psycopg://app:app@localhost:5432/velmo")
+        pg_url = get_settings().db_url
         if _postgres_reachable(pg_url):
             engine = create_engine(pg_url, future=True)
         else:

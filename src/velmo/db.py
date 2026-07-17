@@ -8,7 +8,6 @@ en production, SQLite en mémoire pour les tests.
 from __future__ import annotations
 
 import enum
-import os
 from datetime import datetime
 from typing import Any
 
@@ -30,6 +29,8 @@ from sqlalchemy.orm import (
     relationship,
     sessionmaker,
 )
+
+from velmo.config import get_settings
 
 
 class Base(DeclarativeBase):
@@ -175,7 +176,7 @@ class Escalation(Base):
 def make_engine(url: str | None = None) -> Engine:
     """Crée un engine SQLAlchemy (Postgres en prod, fourni via `DB_URL`)."""
     if url is None:
-        url = os.getenv("DB_URL", "postgresql+psycopg://app:app@localhost:5432/velmo")
+        url = get_settings().db_url
     return create_engine(url, future=True)
 
 

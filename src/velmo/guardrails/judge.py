@@ -1,6 +1,6 @@
 """Étage 3a du pipeline garde-fous : juge contextuel (G5 périmètre, G6 subtil,
 G7 fuite). Client dédié, modèle et SDK distincts de l'agent principal
-(`velmo.llm` — Azure AI Inference / Kimi-K2.6) : le juge doit être un système
+(`velmo.llm` — Azure AI Inference / Mistral-Large-3) : le juge doit être un système
 séparé pour qu'une injection ayant piégé l'agent n'ait aucune prise sur lui
 (cf. conception_chantier2_guardrails.md, § Résister à l'injection).
 """
@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 import math
-import os
 from pathlib import Path
 from typing import Any, Protocol
 
 import yaml
+
+from velmo.config import Settings, get_settings, require
 
 from ._scoring import FALLBACK_MAX_SCORE
 from ._text import phrase_hit, tokens
@@ -168,8 +169,12 @@ class RuleBasedJudge:
 class AzureJudge:
     """Client Azure OpenAI dédié (gpt-5-mini), distinct de l'agent principal."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         from openai import OpenAI  # import différé : dépendance optionnelle
+
+        settings = settings or get_settings()
+        endpoint = require(settings.azure_openai_endpoint, "AZURE_OPENAI_ENDPOINT")
+        api_key = require(settings.azure_openai_api_key, "AZURE_OPENAI_API_KEY")
 
         self._client = OpenAI(
             # Cette ressource expose l'endpoint OpenAI-compatible `/openai/v1`
@@ -178,8 +183,8 @@ class AzureJudge:
             # incompatible et échoue en 404 quel que soit le déploiement —
             # confirmé en isolant l'appel. Le client OpenAI standard pointé
             # sur ce `base_url` fonctionne directement, sans `api_version`.
-            base_url=os.environ["AZURE_OPENAI_ENDPOINT"],
-            api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            base_url=endpoint,
+            api_key=api_key,
             # Sans ceci, le SDK openai retombe sur son défaut (~600s). Le
             # thread qui exécute cet appel tourne dans le pool partagé de
             # `pipeline.py` (`_EXECUTOR`, 4 workers) ; `Future.result(timeout=
@@ -190,7 +195,7 @@ class AzureJudge:
             # avant l'abandon côté pipeline.
             timeout=CLIENT_TIMEOUT_S,
         )
-        self._deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
+        self._deployment = settings.azure_openai_deployment
 
     def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
         user_content = f"Texte à évaluer:\n{text}"
@@ -230,6 +235,7 @@ class AzureJudge:
 
 def get_judge() -> Judge:
     """Azure si `AZURE_OPENAI_ENDPOINT`/`AZURE_OPENAI_API_KEY` sont définis, sinon repli."""
-    if os.getenv("AZURE_OPENAI_ENDPOINT") and os.getenv("AZURE_OPENAI_API_KEY"):
-        return AzureJudge()
+    settings = get_settings()
+    if settings.azure_openai_endpoint and settings.azure_openai_api_key:
+        return AzureJudge(settings)
     return RuleBasedJudge()

@@ -6,13 +6,17 @@ d'un autre client en texte libre — cf. conception_chantier2_guardrails.md.
 
 from __future__ import annotations
 
-import os
+from velmo.config import Settings, get_settings
 
 
-def scan(text: str) -> list[tuple[int, int]]:
-    """Liste des spans PII détectés (`(offset, length)`), vide si non configuré."""
-    endpoint = os.getenv("AZURE_LANGUAGE_ENDPOINT")
-    key = os.getenv("AZURE_LANGUAGE_KEY")
+def scan(text: str, settings: Settings | None = None) -> list[tuple[int, int]]:
+    """Liste des spans PII détectés (`(offset, length)`), vide si non configuré.
+
+    `settings` : réutilisé depuis `pipeline.run()` si fourni, sinon résolu ici.
+    """
+    settings = settings or get_settings()
+    endpoint = settings.azure_language_endpoint
+    key = settings.azure_language_key
     if not endpoint or not key:
         return []
 

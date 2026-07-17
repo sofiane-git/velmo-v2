@@ -6,7 +6,6 @@ utilisable hors-ligne (même esprit que `kb_store.get_kb()`).
 
 from __future__ import annotations
 
-import os
 import re
 import sqlite3
 import unicodedata
@@ -34,6 +33,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
 
+from velmo.config import get_settings
 from velmo.memory.entities import CONTRACT_RE, ORDER_RE
 
 
@@ -178,7 +178,7 @@ def make_memory_engine(url: str | None = None) -> Engine:
         else:
             engine = create_engine(url, future=True)
     else:
-        pg_url = os.getenv("DB_URL", "postgresql+psycopg://app:app@localhost:5432/velmo")
+        pg_url = get_settings().db_url
         if _postgres_reachable(pg_url):
             engine = create_engine(pg_url, future=True)
         else:

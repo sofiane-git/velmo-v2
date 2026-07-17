@@ -5,6 +5,7 @@ description = "Velmo 2.0 — agent de support pour une boutique de maillots de f
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "pydantic>=2.7,<3",
+    "pydantic-settings>=2.5,<3",
     "python-dotenv>=1.0",
     "sqlalchemy>=2.0,<2.1",
     "psycopg[binary]>=3.1,<3.3",

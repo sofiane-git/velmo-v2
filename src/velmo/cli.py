@@ -7,10 +7,12 @@ import argparse
 from dotenv import load_dotenv
 
 from .agent import build_default_agent
+from .config import validate_startup
 
 
 def main() -> None:
     load_dotenv()
+    validate_startup()
     parser = argparse.ArgumentParser(description="Chat support Velmo 2.0")
     parser.add_argument("--user", default="C-marc-dubois", help="Identifiant client authentifié")
     args = parser.parse_args()
