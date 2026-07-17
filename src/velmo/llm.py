@@ -6,9 +6,12 @@ tournent sans dépendre du SDK ni d'un endpoint joignable.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol, cast
 
 from velmo.config import get_settings, require
+
+logger = logging.getLogger(__name__)
 
 
 class LLM(Protocol):
@@ -20,8 +23,18 @@ class LLM(Protocol):
 class EchoLLM:
     """Repli déterministe et hors-ligne : renvoie un accusé de réception.
 
-    Permet au harness de conversation de démarrer sans identifiants Azure.
+    Permet au harness de conversation de démarrer sans identifiants Azure — en
+    dev/CI uniquement (cf. `get_llm`) ; jamais censé être atteint en production
+    (contrat de démarrage, `docs/job/conceptions/conception_chantier1_memoire.md`
+    §Contrat de démarrage). Loggue un warning à chaque instanciation : un repli
+    non voulu doit être visible immédiatement, pas découvert après coup.
     """
+
+    def __init__(self) -> None:
+        logger.warning(
+            "EchoLLM instancié : aucune réponse réelle ne sera générée. "
+            "Attendu uniquement en dev/CI (ENVIRONMENT != 'production')."
+        )
 
     def invoke(self, system: str, context: str, message: str) -> str:
         return f"[velmo] J'ai bien reçu : {message}"
@@ -42,9 +55,21 @@ class AzureLLM:
 
 
 def get_llm() -> LLM:
-    """Construit le client Azure si configuré, sinon le repli `EchoLLM`."""
+    """Construit le client Azure si configuré, sinon le repli `EchoLLM`.
+
+    En production (`Settings.environment == "production"`), l'absence de
+    configuration LLM est une erreur de démarrage (fail-fast) — pas un repli
+    silencieux qui servirait du contenu mock à de vrais clients (cf. contrat de
+    démarrage, Chantier 1). En dev/CI, `EchoLLM` reste un repli toléré.
+    """
     settings = get_settings()
     if not settings.azure_ai_inference_endpoint:
+        if settings.environment == "production":
+            raise RuntimeError(
+                "Configuration LLM absente en production : "
+                "`AZURE_AI_INFERENCE_ENDPOINT` doit être défini "
+                "(ENVIRONMENT=production interdit le repli EchoLLM)."
+            )
         return EchoLLM()
 
     from langchain_azure_ai.chat_models import AzureAIOpenAIApiChatModel

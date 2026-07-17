@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # API.
     velmo_web_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # Distingue prod (fail-fast si config LLM absente) de dev/CI (repli EchoLLM toléré).
+    environment: str = "development"
+
 
 def get_settings() -> Settings:
     return Settings()
