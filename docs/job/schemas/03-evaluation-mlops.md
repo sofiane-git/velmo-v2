@@ -2,34 +2,35 @@
 
 ## Ce que ce schéma raconte
 
-À chaque modification de l'agent, une batterie de tests rejoue les mêmes scénarios et produit des notes. Si une seule dimension baisse trop, la livraison est bloquée automatiquement. `develop` intègre en continu et alimente seule l'environnement de staging ; `main` ne reçoit que des versions déjà validées en conditions réelles ; un correctif prod urgent passe par un chemin court-circuit dédié.
+À chaque modification de l'agent, une batterie de tests rejoue les mêmes scénarios et produit des notes. Si une seule dimension baisse trop, la livraison est bloquée
+automatiquement. `main` est le tronc **toujours livrable** : il alimente en continu
+l'environnement de staging ; une **release est un tag** ; la production ne reçoit que des artefacts déjà validés en conditions réelles ; un correctif urgent est une simple branche courte, sans cérémonie de synchronisation.
 
 ```mermaid
 flowchart TB
     subgraph MAIN[" "]
-        FIX["📋 Fixtures figées<br/>(cases/*.jsonl)"]
+        FIX["📋 Fixtures figées<br/>(eval/*.jsonl)"]
 
-        N1["① Code sur feature/*<br/>(part de develop)"] --> N2["② PR vers develop<br/>lint + unitaires + revue"]
-        N2 -->|"vert + approuvée"| N3["③ Merge dans develop<br/>→ redéploie staging automatiquement"]
-        N3 --> N4["④ PR develop → main<br/>(quand prêt à livrer)"]
+        N1["① Code sur feature/*<br/>(branche courte, part de main)"] --> N2["② PR vers main<br/>lint + unitaires + revue"]
+        N2 -->|"vert + approuvée"| N3["③ Squash-merge dans main<br/>→ redéploie staging automatiquement"]
+        N3 --> N4["④ Tag semver<br/>(quand prêt à livrer)"]
         N4 --> N5["⑤ CI : rejoue les 3 suites<br/>(mémoire · garde-fous · qualité)<br/>contre staging"]
         FIX -.-> N5
-        N5 -->|"une note sous le seuil"| C1["✗ Correctif requis<br/>(retour en ①, via develop)"]
+        N5 -->|"une note sous le seuil"| C1["✗ Correctif requis<br/>(retour en ①)"]
         C1 -.-> N2
-        N5 -->|"tout vert"| N6["⑥ Validation manuelle<br/>sur staging"]
+        N5 -->|"tout vert"| N6["⑥ Approbation manuelle<br/>(Environment production)"]
         N6 -->|"non"| C1
-        N6 -->|"oui"| N7["⑦ Merge develop → main"]
-        N7 --> N8["⑧ Retag production<br/>(pas de rebuild — même artefact)"]
-        N8 --> N9["⑨ Monitoring continu<br/>+ suites rejouées en nightly"]
-        N9 -->|"régression détectée"| N10["⑩ Rollback :<br/>réétiquette la version précédente"]
-        N7 --> REP["📊 mlops/report.md"]
-        N9 --> REP
+        N6 -->|"oui"| N7["⑦ Promotion staging → production<br/>(même artefact — pas de rebuild)"]
+        N7 --> N8["⑧ Monitoring continu<br/>+ suites rejouées en nightly"]
+        N8 -->|"régression détectée"| N9["⑨ Rollback :<br/>re-promotion du tag précédent"]
+        N7 --> REP["📊 mlops/report.md (+ report.json)"]
+        N8 --> REP
 
-        MBUG(["Régression détectée en prod"]) --> HF["hotfix/* part de main<br/>(pas d'attente sur develop)"]
+        MBUG(["Régression détectée en prod"]) --> HF["hotfix/* : branche courte off main<br/>(main EST la ligne prod)"]
         HF --> HFC["Suites réduites<br/>(garde-fous + mémoire, skip qualité)"]
-        HFC --> HFV{"Validation allégée<br/>(1 reviewer)"}
-        HFV -->|"oui"| HFM["Merge hotfix/* → main ET develop<br/>(sync obligatoire)"]
-        HFM --> N8
+        HFC --> HFV{"Review expédité"}
+        HFV -->|"oui"| HFT["Tag patch → promotion production"]
+        HFT --> N7
     end
 
     MAIN --- LG1
@@ -37,9 +38,9 @@ flowchart TB
     subgraph LEGEND["Légende"]
         direction LR
         LG1["① Développement"]
-        LG2["② ③ PR + merge vers develop"]
-        LG3["④ ⑤ ⑥ Release : develop → main"]
-        LG4["⑦ ⑧ ⑨ Production"]
+        LG2["② ③ PR + merge dans main"]
+        LG3["④ ⑤ ⑥ Release : tag + suites"]
+        LG4["⑦ ⑧ Production"]
         LG5["Correctif / rollback"]
         LG6["Hotfix prod urgent"]
         LG7["Fixtures / rapport"]
@@ -55,39 +56,71 @@ flowchart TB
     class N1,LG1 dev;
     class N2,N3,LG2 ci;
     class N4,N5,N6,LG3 stg;
-    class N7,N8,N9,LG4 prod;
-    class C1,N10,LG5 fail;
+    class N7,N8,LG4 prod;
+    class C1,N9,LG5 fail;
     class FIX,REP,LG7 fixture;
-    class MBUG,HF,HFC,HFV,HFM,LG6 hotfix;
+    class MBUG,HF,HFC,HFV,HFT,LG6 hotfix;
     style MAIN fill:none,stroke:none;
     %% connecteur invisible (force la légende en bas) — index = ordre des flèches, recalculer si le flux change
-    linkStyle 21 stroke:none;
+    linkStyle 19 stroke:none;
 ```
 
-## Les dix étapes, en une phrase chacune
+## Les étapes, en une phrase chacune
 
-1. **Code** sur une branche `feature/*` — part de `develop`, libre, aucune contrainte.
-2. **PR ouverte** vers `develop` — palier gratuit : lint, tests unitaires, revue de code, pas de suites LLM.
-3. **Merge dans `develop`** — redéploie automatiquement l'environnement de staging. Pas de file d'attente : les merges se sérialisent déjà via Git.
-4. **PR `develop` → `main`** — ouverte quand l'équipe juge prêt à livrer, pas à chaque feature. C'est le gate de release.
-5. **CI de release** : rejoue les 3 batteries de tests contre les fixtures figées, sur staging déjà déployé. Une note sous le seuil → bloqué, correctif via `develop`, retour à l'étape 1.
-6. **Validation manuelle sur staging** — le seul geste humain du cycle normal. Refusé → correctif, retour à l'étape 1.
-7. **Merge `develop` → `main`** — autorisé seulement après le vert de l'étape 6.
-8. **Retag production** — pas un nouveau déploiement, juste une étiquette qui change (même artefact déjà validé).
-9. **Monitoring continu** en prod + les 3 suites rejouées chaque nuit.
-10. **Rollback** si régression détectée : réétiquette la version précédente, pas de redéploiement.
+1. **Code** sur une branche `feature/*` courte — part de `main`, libre.
+2. **PR vers `main`** — palier gratuit : lint, tests unitaires, revue. Pas de suites LLM.
+3. **Squash-merge dans `main`** — redéploie automatiquement staging. Les merges se
+   sérialisent déjà via Git, pas de file d'attente.
+4. **Tag semver** — posé quand l'équipe juge prêt à livrer. C'est le gate de release.
+5. **CI de release** : rejoue les 3 batteries contre les fixtures figées, sur staging déjà
+   déployé. Une note sous le seuil → bloqué, correctif, retour à l'étape 1.
+6. **Approbation manuelle** via l'Environment `production` (required reviewers) — le seul
+   geste humain du cycle normal. Refusé → correctif, retour à l'étape 1.
+7. **Promotion staging → production** — pas un nouveau déploiement, juste la promotion de
+   l'artefact taggé déjà validé.
+8. **Monitoring continu** en prod + les 3 suites rejouées chaque nuit.
+9. **Rollback** si régression : re-promotion du tag précédent (artefacts immuables).
 
-**Hotfix (hors cycle normal)** : régression détectée en prod → `hotfix/*` part de `main` directement → suites réduites (garde-fous + mémoire, la qualité étant bruitée et non bloquante en urgence) → validation allégée → merge dans `main` **et** `develop` (sync obligatoire, sinon la régression revient à la prochaine release).
+**Hotfix (urgent)** : en trunk-based, `main` **est** déjà la ligne de production — pas de
+flow `develop`/`hotfix` séparé. Un correctif = une branche courte off `main` → suites
+réduites (garde-fous + mémoire, la qualité étant bruitée et non bloquante en urgence) → tag
+patch → promotion. Zéro double-merge à synchroniser.
 
 ## Les points traités dans ce document
 
-- **Trois batteries de tests, une par chantier** : la mémoire (l'info du début ressort-elle après 30 tours ? le client revenu est-il reconnu ? l'oubli est-il effectif ?), les garde-fous (chaque type d'attaque est-il bloqué ? les messages légitimes passent-ils ?), et la qualité générale des réponses (pertinence, ton, exactitude — notée par des métriques spécialisées).
-- **Des scénarios figés, jamais générés à la volée** : si les cas de test changeaient à chaque exécution, impossible de savoir si une note a bougé à cause de l'agent ou à cause des cas. Ici, seul l'agent change entre deux exécutions — tout écart lui est imputable.
-- **Qu'est-ce qu'une « version » de l'agent** : le prompt + les réglages de mémoire + les réglages de garde-fous, identifiés par une empreinte calculée automatiquement. Impossible d'oublier de « changer le numéro de version » : toute modification change l'empreinte.
-- **Le verdict se joue dimension par dimension, jamais sur la moyenne** — le piège classique : si les garde-fous chutent de 20 points mais que la qualité gagne 10, une moyenne pourrait rester au vert… alors qu'un garde-fou a disparu. Chaque dimension a son propre seuil ; une seule qui flanche suffit à bloquer.
-- **Ne pas bloquer pour du bruit** : les notes mémoire et garde-fous sont vérifiables exactement (l'info ressort ou non), donc seuil ferme avec une petite marge. La note de qualité, elle, est un jugement d'IA, naturellement fluctuant : on la compare à la version précédente (« pas de baisse de plus de X % ») plutôt qu'à un seuil absolu.
-- **Ce qu'on surveille en continu** dans le rapport de suivi : la note mémoire, le taux de blocage des garde-fous, le taux de faux positifs, la durée de réponse et le coût par conversation — décomposés par composant, car chaque garde-fou et chaque extracteur ajoute un appel qui coûte et qui prend du temps.
-- **Deux outils, deux responsabilités** : PostgreSQL garde les verdicts (rapide à interroger, c'est lui qui décide), Langfuse garde le détail de chaque appel (coût, durée) — aucune donnée dupliquée.
-- **`develop` comme source unique de staging** : plus besoin de file d'attente ni de verrou de concurrence — les PR se sérialisent naturellement au merge dans `develop`, staging reflète toujours son état courant.
-- **Merge `develop → main` = feu vert prod, sans nouveau déploiement** (étapes 7–8) : le geste humain a eu lieu une fois, sur staging ; il n'est pas dupliqué après le merge.
-- **`hotfix/*` : le chemin qu'un modèle plus simple oublierait** : une régression en prod ne doit pas attendre le prochain cycle de release complet — le hotfix part de `main`, passe par une validation allégée, et se propage obligatoirement vers `develop` pour ne pas être perdu à la prochaine livraison normale.
+- **Trois batteries de tests, une par chantier** : la mémoire (l'info du début ressort-elle
+  après 30 tours ? le client revenu est-il reconnu ? l'oubli est-il effectif ?), les
+  garde-fous (chaque type d'attaque est-il bloqué ? les messages légitimes passent-ils ?), et
+  la qualité générale (pertinence, ton, exactitude — notée par DeepEval).
+- **Des scénarios figés, jamais générés à la volée** : seul l'agent change entre deux
+  exécutions, tout écart lui est imputable.
+- **Qu'est-ce qu'une « version »** : le prompt + les réglages mémoire + les réglages
+  garde-fous, identifiés par une **empreinte git** calculée automatiquement. Impossible
+  d'oublier de « changer le numéro » : toute modification change l'empreinte.
+- **Le verdict se joue dimension par dimension, via un minimum** — jamais sur la moyenne. Si
+  les garde-fous chutent de 20 points mais la qualité gagne 10, une moyenne pourrait rester au
+  vert alors qu'un garde-fou a disparu. On bloque sur `min(dimensions)` : une seule qui
+  flanche suffit.
+- **Ne pas bloquer pour du bruit** : mémoire et garde-fous sont vérifiables exactement →
+  seuil ferme avec marge + retry tracé. La qualité, jugement d'IA fluctuant, est comparée à la
+  version précédente sur une **bande statistique (± 2σ)** plutôt qu'à un seuil absolu.
+- **Robustesse du harness** : un échec d'infra (timeout Azure) n'est **pas** compté comme une
+  régression de l'agent ; un run incomplet ne produit pas de verdict.
+- **Ce qu'on surveille en continu** : note mémoire, taux de blocage, taux de faux positifs,
+  latence **et coût** — décomposés par composant, et **pouvant bloquer** (SLO), pas seulement
+  reportés.
+- **Deux outils, deux responsabilités** : PostgreSQL garde les verdicts et les agrégats qui
+  décident (rapide, toujours là) ; Langfuse (self-host) garde le détail de chaque appel pour
+  le drill-down — **hors du chemin de blocage**, aucune donnée de décision dupliquée.
+- **`main` comme tronc unique** : plus de branche `develop` ni de verrou de concurrence — les
+  PR se sérialisent au merge, staging reflète toujours `main`.
+- **Release = tag, promotion = feu vert prod sans nouveau déploiement** : le geste humain a
+  lieu une fois, sur staging ; il n'est pas dupliqué après.
+
+## Couverture (complète)
+
+- `memory_cases.jsonl` couvre **R1 à R6** — les cas **R4** (rétention après compression) et
+  **R6** (inspection d'un souvenir) ont été ajoutés au chantier 1.
+- `guardrail_cases.jsonl` couvre **G1 à G7** via le champ `category` (bijection documentée au
+  chantier 2), avec des cas côté **entrée et sortie** (la porte de sortie n'est plus
+  sous-testée).
