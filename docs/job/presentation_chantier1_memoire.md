@@ -2,6 +2,14 @@
 
 > Support oral. Un problème par section, un schéma, la preuve que ça marche.
 
+> ⚠️ **Statut : as-built (implémentation actuelle), pas la référence de conception.**
+> Ce document décrit le code **tel qu'il tourne aujourd'hui** (orchestration mémoire
+> hand-rolled en SQLAlchemy, 7 tables dont `conversation`/`message`). La **référence
+> d'architecture cible** est [`conceptions/conception_chantier1_memoire.md`](conceptions/conception_chantier1_memoire.md)
+> (orchestration **LangGraph** + checkpointer `PostgresSaver`, durcissements R5, calibration,
+> TTL épisodes…). Le code sera **réaligné sur la conception** ; ce support sera régénéré à ce
+> moment-là. En cas de divergence, **la conception fait foi**.
+
 ---
 
 ## 1. Vue d'ensemble : 3 mémoires, 1 seul point d'entrée
