@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from velmo.memory import MemoryManager, RemovedFact, RemovedProcedure
 
 
@@ -247,3 +249,9 @@ def test_write_reports_episode_created_on_dispute():
     mm = MemoryManager(db_url="sqlite:///:memory:")
     report = mm.write("wr2", "Le maillot recu est un faux, je conteste.", "Note, je transmets.")
     assert report.episode_created is True
+
+
+def test_confidence_threshold_defaults_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORY_CONFIDENCE_THRESHOLD", "0.42")
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    assert mm.confidence_threshold == 0.42

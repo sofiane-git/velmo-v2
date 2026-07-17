@@ -39,6 +39,7 @@ from .db import (
     utcnow,
     write_audit,
 )
+from velmo.config import get_settings
 from velmo.llm import LLM, get_llm
 
 from .episodic import EpisodicStore, get_episodic_backend
@@ -165,7 +166,7 @@ class MemoryManager:
         self,
         *,
         token_budget: int = 2000,
-        confidence_threshold: float = 0.7,
+        confidence_threshold: float | None = None,
         session_gap_hours: float = 4.0,
         keep_last_n_turns: int = 10,
         db_url: str | None = None,
@@ -174,7 +175,11 @@ class MemoryManager:
         llm: LLM | None = None,
     ) -> None:
         self.token_budget = token_budget
-        self.confidence_threshold = confidence_threshold
+        self.confidence_threshold = (
+            confidence_threshold
+            if confidence_threshold is not None
+            else get_settings().memory_confidence_threshold
+        )
         self.session_gap_hours = session_gap_hours
         self.keep_last_n_turns = keep_last_n_turns
         engine = make_memory_engine(db_url)

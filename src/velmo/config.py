@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     # Distingue prod (fail-fast si config LLM absente) de dev/CI (repli EchoLLM toléré).
     environment: str = "development"
 
+    # Seuil d'écriture mémoire long terme (§Calibration, Chantier 1) — point de
+    # départ à calibrer sur `eval/memory_confidence_cases.jsonl`, pas une
+    # constante gravée : voir aussi le seuil équivalent des garde-fous (Ch.2).
+    memory_confidence_threshold: float = 0.7
+
 
 def get_settings() -> Settings:
     return Settings()
