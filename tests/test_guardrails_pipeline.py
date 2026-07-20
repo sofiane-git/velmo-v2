@@ -179,3 +179,13 @@ def test_total_outage_fails_open_on_filter_categories(monkeypatch) -> None:
     for category in ("pii", "secret_leak"):
         assert category in fallback_hits
         assert fallback_hits[category].action == "flag"
+
+
+def test_out_of_scope_is_fail_closed_not_fail_open() -> None:
+    """Décision de conception : G5 (hors périmètre) est passé en fail-closed —
+    un avis juridique/médical hors mandat émis par erreur pendant une panne est
+    un risque de responsabilité disproportionné face au coût d'un refus."""
+    from velmo.guardrails.pipeline import FAIL_CLOSED_CATEGORIES, FAIL_OPEN_CATEGORIES
+
+    assert "out_of_scope" in FAIL_CLOSED_CATEGORIES
+    assert "out_of_scope" not in FAIL_OPEN_CATEGORIES
