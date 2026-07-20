@@ -1,0 +1,27 @@
+{"id": "conf-01", "message": "je fais du 42", "decision": "retain", "reason": "contrainte stable, formulation certaine"}
+{"id": "conf-02", "message": "je crois que je faisais du 42 avant, plus trop sûr", "decision": "discard", "reason": "formulation hésitante, faible confiance"}
+{"id": "conf-03", "message": "tutoie-moi", "decision": "retain", "reason": "préférence durable, non ambiguë"}
+{"id": "conf-04", "message": "peu importe comment tu me parles", "decision": "discard", "reason": "absence de préférence exprimée"}
+{"id": "conf-05", "message": "je suis client pro, contrat #C-8841", "decision": "retain", "reason": "identité/statut vérifiable"}
+{"id": "conf-06", "message": "je suis peut-être pro, je sais plus si mon compte est encore actif", "decision": "discard", "reason": "statut incertain, auto-déclaré avec doute"}
+{"id": "conf-07", "message": "le maillot reçu est un faux, je conteste", "decision": "retain", "reason": "litige ouvert, factuel"}
+{"id": "conf-08", "message": "je me demande si ce maillot est vraiment authentique, sans certitude", "decision": "discard", "reason": "doute exprimé, pas une affirmation de litige"}
+{"id": "conf-09", "message": "la dernière fois j'ai préféré un avoir à un remboursement", "decision": "retain", "reason": "règle de comportement, événement passé confirmé"}
+{"id": "conf-10", "message": "un avoir ou un remboursement, ça m'est un peu égal en fait", "decision": "discard", "reason": "absence de préférence tranchée"}
+{"id": "conf-11", "message": "merci, bonne journée", "decision": "discard", "reason": "politesse, small talk"}
+{"id": "conf-12", "message": "attends je regarde mon panier", "decision": "discard", "reason": "état transitoire"}
+{"id": "conf-13", "message": "c'est bon j'ai trouvé, oublie", "decision": "discard", "reason": "déjà résolu"}
+{"id": "conf-14", "message": "mon adresse de livraison est 12 rue des Lilas à Paris", "decision": "retain", "reason": "identité/adresse, affirmation nette"}
+{"id": "conf-15", "message": "je sais plus si c'est 12 ou 14 rue des Lilas, faudrait vérifier", "decision": "discard", "reason": "incertitude sur la valeur exacte"}
+{"id": "conf-16", "message": "mon numéro de commande est O-2024-0101", "decision": "retain", "reason": "identifiant précis, vérifiable"}
+{"id": "conf-17", "message": "je crois avoir une commande en cours mais j'ai pas le numéro sous la main", "decision": "discard", "reason": "pas d'identifiant exploitable"}
+{"id": "conf-18", "message": "je suis revendeur agréé, ça fait 3 ans", "decision": "retain", "reason": "statut professionnel affirmé"}
+{"id": "conf-19", "message": "je fais un peu de revente à côté, informellement", "decision": "discard", "reason": "statut ambigu, non déclaré comme identité stable"}
+{"id": "conf-20", "message": "toujours vérifier le flocage avant expédition pour moi, on a eu un souci la dernière fois", "decision": "retain", "reason": "règle de comportement motivée par un incident réel"}
+{"id": "conf-21", "message": "vous pourriez peut-être faire un peu plus attention, des fois", "decision": "discard", "reason": "consigne vague, non actionnable"}
+{"id": "conf-22", "message": "mes clubs favoris sont l'OM et le Brésil", "decision": "retain", "reason": "préférence stable et précise"}
+{"id": "conf-23", "message": "j'aime bien plusieurs équipes, ça dépend des jours", "decision": "discard", "reason": "préférence non stable"}
+{"id": "conf-24", "message": "vouvoie-moi s'il te plaît, je préfère le formel", "decision": "retain", "reason": "préférence de ton, non ambiguë"}
+{"id": "conf-25", "message": "comme vous voulez pour le tutoiement", "decision": "discard", "reason": "absence de préférence exprimée"}
+{"id": "conf-26", "message": "mon contrat pro c'est le C-9012, actif depuis janvier", "decision": "retain", "reason": "identifiant contractuel précis"}
+{"id": "conf-27", "message": "j'ai un contrat quelque part mais je sais plus le numéro exact", "decision": "discard", "reason": "identifiant non exploitable"}

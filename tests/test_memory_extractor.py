@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from velmo.memory.extractor import (
     ExtractionResult,
     LLMExtractor,
@@ -120,3 +123,13 @@ def test_get_extractor_uses_llm_extractor_when_azure_async_configured(monkeypatc
     monkeypatch.setenv("AZURE_OPENAI_ASYNC_ENDPOINT", "https://fake.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_ASYNC_API_KEY", "fake-key")
     assert isinstance(get_extractor(), LLMExtractor)
+
+
+def test_memory_confidence_cases_fixture_exists_and_well_formed() -> None:
+    path = Path(__file__).resolve().parent.parent / "eval" / "memory_confidence_cases.jsonl"
+    assert path.exists()
+    cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(cases) >= 25  # "une trentaine" — tolérance basse pour ne pas figer un compte exact
+    for case in cases:
+        assert case["decision"] in ("retain", "discard")
+        assert "message" in case and "id" in case
