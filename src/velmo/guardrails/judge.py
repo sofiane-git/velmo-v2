@@ -8,9 +8,11 @@ séparé pour qu'une injection ayant piégé l'agent n'ait aucune prise sur lui
 from __future__ import annotations
 
 import json
+import logging
 import math
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import yaml
 
@@ -233,9 +235,62 @@ class AzureJudge:
         }
 
 
+# Pool dédié au calcul shadow — jamais le pool partagé de pipeline.py
+# (`_EXECUTOR`) : le shadow ne doit ajouter aucune latence ni contention sur le
+# chemin bloquant, il tourne strictement en tâche de fond.
+_SHADOW_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+
+
+class ShadowingJudge:
+    """Wrapper : délègue au juge cloud (`primary`) pour la décision réelle,
+    calcule en continu le verdict du repli déterministe (`shadow`, en général
+    `RuleBasedJudge`) sur le même texte, en tâche de fond — jamais sur le
+    chemin critique. But : exercer et mesurer le repli en permanence, pas le
+    découvrir cassé le jour d'une vraie panne (conception_chantier2_guardrails.md
+    §Spécification du RuleBasedJudge).
+
+    `on_divergence` est appelé (sur le thread de fond) avec (texte, verdict
+    primaire, verdict shadow) — le défaut journalise en `logger.info`, un
+    appelant peut le remplacer pour écrire dans `guardrail_audit.shadow_verdict`.
+    """
+
+    def __init__(
+        self,
+        primary: Judge,
+        shadow: Judge,
+        on_divergence: Callable[[str, dict[str, Any], dict[str, Any]], None] | None = None,
+    ) -> None:
+        self._primary = primary
+        self._shadow = shadow
+        self._on_divergence = on_divergence or self._log_divergence
+
+    def _log_divergence(
+        self, text: str, primary_result: dict[str, Any], shadow_result: dict[str, Any]
+    ) -> None:
+        logging.getLogger(__name__).info(
+            "ShadowingJudge : primary=%s shadow=%s", primary_result, shadow_result
+        )
+
+    def _run_shadow(
+        self, text: str, agent_response: str | None, primary_result: dict[str, Any]
+    ) -> None:
+        try:
+            shadow_result = self._shadow.evaluate(text, agent_response)
+        except Exception:
+            return  # le shadow ne doit jamais faire remonter d'erreur — best-effort pur
+        self._on_divergence(text, primary_result, shadow_result)
+
+    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+        primary_result = self._primary.evaluate(text, agent_response)
+        _SHADOW_EXECUTOR.submit(self._run_shadow, text, agent_response, primary_result)
+        return primary_result
+
+
 def get_judge() -> Judge:
-    """Azure si `AZURE_OPENAI_GUARD_ENDPOINT`/`AZURE_OPENAI_GUARD_API_KEY` sont définis, sinon repli."""
+    """Azure (enveloppé en shadow mode par `RuleBasedJudge`) si
+    `AZURE_OPENAI_GUARD_ENDPOINT`/`AZURE_OPENAI_GUARD_API_KEY` sont définis,
+    sinon `RuleBasedJudge` seul (pas de shadow sans juge cloud à comparer)."""
     settings = get_settings()
     if settings.azure_openai_guard_endpoint and settings.azure_openai_guard_api_key:
-        return AzureJudge(settings)
+        return ShadowingJudge(primary=AzureJudge(settings), shadow=RuleBasedJudge())
     return RuleBasedJudge()

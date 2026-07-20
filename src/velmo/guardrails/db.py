@@ -46,6 +46,10 @@ class GuardrailAudit(Base):
     method: Mapped[str] = mapped_column(String)  # regex | classifier | llm_judge | ...
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     action: Mapped[str] = mapped_column(String)  # "block" | "flag"
+    # Verdict du RuleBasedJudge calculé en shadow mode, format JSON compact
+    # (ex. '{"manipulation": 0.0, "hors_role": 0.5}') — NULL si le hit ne vient
+    # pas du juge cloud (shadow non applicable) ou si le calcul shadow a échoué.
+    shadow_verdict: Mapped[str | None] = mapped_column(String, nullable=True)
     source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -133,6 +137,7 @@ def write_audit(
     score: float | None,
     action: str,
     source_thread_id: str | None,
+    shadow_verdict: str | None = None,
 ) -> GuardrailAudit:
     row = GuardrailAudit(
         id=new_id("gaud"),
@@ -142,6 +147,7 @@ def write_audit(
         method=method,
         score=score,
         action=action,
+        shadow_verdict=shadow_verdict,
         source_thread_id=source_thread_id,
         created_at=utcnow(),
     )

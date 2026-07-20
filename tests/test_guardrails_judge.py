@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 
 import openai
 
@@ -9,7 +10,9 @@ from velmo.guardrails._scoring import FALLBACK_MAX_SCORE
 from velmo.guardrails.judge import (
     LEVEL_TO_SCORE,
     AzureJudge,
+    Judge,
     RuleBasedJudge,
+    ShadowingJudge,
     _field_confidence,
     _level_to_score,
     get_judge,
@@ -157,7 +160,12 @@ def test_get_judge_returns_azure_judge_with_credentials(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     _patch_azure_openai(monkeypatch, "{}", [])
-    assert isinstance(get_judge(), AzureJudge)
+    # get_judge() enveloppe désormais AzureJudge dans un ShadowingJudge : le
+    # RuleBasedJudge tourne en continu en tâche de fond (shadow mode), sans
+    # jamais influencer la décision retournée.
+    judge = get_judge()
+    assert isinstance(judge, ShadowingJudge)
+    assert isinstance(judge._primary, AzureJudge)
 
 
 def test_azure_judge_defaults_to_gpt5_mini_deployment(monkeypatch):
@@ -306,3 +314,32 @@ def test_rule_based_judge_reasoning_names_matched_phrase():
 def test_rule_based_judge_empty_reasoning_on_legitimate_message():
     result = RuleBasedJudge().evaluate("Comment retourner un maillot qui ne me va pas ?")
     assert result["reasoning"] == ""
+
+
+class _StubPrimary(Judge):
+    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+        return {"manipulation": 0.9, "secret_interne": 0.0, "hors_role": 0.0, "reasoning": "primary"}
+
+
+def test_shadowing_judge_returns_primary_verdict() -> None:
+    judge = ShadowingJudge(primary=_StubPrimary(), shadow=RuleBasedJudge())
+    result = judge.evaluate("texte quelconque")
+    assert result["reasoning"] == "primary"
+
+
+def test_shadowing_judge_logs_divergence(monkeypatch) -> None:
+    calls: list[tuple[str, dict, dict]] = []
+
+    def _capture(text: str, primary_result: dict, shadow_result: dict) -> None:
+        calls.append((text, primary_result, shadow_result))
+
+    judge = ShadowingJudge(primary=_StubPrimary(), shadow=RuleBasedJudge(), on_divergence=_capture)
+    judge.evaluate("texte de test")
+    # Le calcul shadow tourne en tâche de fond : laisser une fenêtre courte pour
+    # qu'il se termine avant l'assertion (pas de polling actif, juste une garde).
+    for _ in range(50):
+        if calls:
+            break
+        time.sleep(0.02)
+    assert len(calls) == 1
+    assert calls[0][0] == "texte de test"
