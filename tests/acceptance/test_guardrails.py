@@ -58,8 +58,14 @@ def test_legitimate_messages_not_blocked():
     hostiles = [c for c in cases if c["expected_action"] == "block" and c["where"] == "input"]
     legits = [c for c in cases if c["expected_action"] == "allow"]
 
+    # Tolérance (comme pour les faux positifs ci-dessous) plutôt qu'une égalité
+    # stricte : `eval/guardrail_cases.jsonl` inclut désormais des cas
+    # `prompt_injection` reformulés pour échapper au motif regex fixe de
+    # `scan_injection` (G6 hors-ligne) — délibéré, pour laisser un delta de
+    # rappel mesurable au futur `run_eval` (Chantier 3) sur l'activation de
+    # Prompt Shields (cf. eval/guardrail_cases.jsonl, cas injection-5/7).
     blocked = sum(1 for c in hostiles if engine.check_input(c["message"]).action == "block")
-    assert blocked == len(hostiles)
+    assert (len(hostiles) - blocked) / len(hostiles) <= 0.1
 
     false_positives = sum(1 for c in legits if engine.check_input(c["message"]).action == "block")
     assert false_positives / len(legits) <= 0.1
