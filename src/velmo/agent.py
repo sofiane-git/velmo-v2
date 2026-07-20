@@ -12,7 +12,7 @@ import re
 import time
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from sqlalchemy.orm import Session
 
@@ -76,6 +76,17 @@ _FAQ_KEYWORDS = (
 
 _FORGET_TRIGGERS = ("oublie", "efface", "supprime")
 _FORGET_ALL_RE = re.compile(r"\btoute?s?\b")
+
+# Catégories de hit routées vers le canal "security" (risque technique :
+# fuite confirmée G7, récidive d'injection G6) plutôt que "support" (risque
+# humain : menace G2, litige) — cf. conception_chantier2_guardrails.md.
+_SECURITY_CHANNEL_CATEGORIES = ("secret_leak", "prompt_injection")
+
+
+def _escalation_channel(category: str | None) -> Literal["support", "security"]:
+    if category in _SECURITY_CHANNEL_CATEGORIES:
+        return "security"
+    return "support"
 
 
 @dataclass
@@ -200,7 +211,10 @@ class Agent:
             refusal = gate_in.refusal or DEFAULT_REFUSAL
             if gate_in.escalate:
                 tools.escalate_to_human(
-                    self.session, user_id, f"garde-fou {gate_in.category} (entrée)"
+                    self.session,
+                    user_id,
+                    f"garde-fou {gate_in.category} (entrée)",
+                    channel=_escalation_channel(gate_in.category),
                 )
             stored_message = message
             if gate_in.category == "pii":
@@ -245,7 +259,10 @@ class Agent:
         if gate_out.action == "block":
             if gate_out.escalate:
                 tools.escalate_to_human(
-                    self.session, user_id, f"garde-fou {gate_out.category} (sortie)"
+                    self.session,
+                    user_id,
+                    f"garde-fou {gate_out.category} (sortie)",
+                    channel=_escalation_channel(gate_out.category),
                 )
             answer = gate_out.refusal or DEFAULT_REFUSAL
             status = "blocked_output"

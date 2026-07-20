@@ -169,6 +169,10 @@ class Escalation(Base):
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"))
     order_id: Mapped[str | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
     reason: Mapped[str] = mapped_column(String)
+    # "support" (risque humain : menace, litige) | "security" (risque
+    # technique : fuite confirmée, récidive d'injection) — deux destinataires
+    # distincts, cf. conception_chantier2_guardrails.md §Que fait l'agent.
+    channel: Mapped[str] = mapped_column(String, default="support")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime(2024, 1, 1))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
