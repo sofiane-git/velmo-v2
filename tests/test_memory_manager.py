@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from velmo.memory import MemoryManager, RemovedFact, RemovedProcedure
@@ -280,3 +282,80 @@ def test_tombstone_blocks_late_extractor_write_after_forget() -> None:
     mm._extract_and_persist(user, "je fais du 44", "noté")
     rendered = mm.read(user, "ma pointure ?").render()
     assert "44" not in rendered
+
+
+def test_remember_fact_resolves_tombstone_and_unblocks_extractor() -> None:
+    """Un `remember_fact` explicite (ré-)établit une donnée après un `forget()`
+    antérieur : il doit lever le tombstone qu'il a laissé en place, sinon
+    l'extracteur resterait bloqué à jamais sur cette clé alors qu'un fait
+    vivant et à jour existe désormais (finding #2, review finale chantier 1)."""
+    from velmo.memory.db import is_tombstoned
+    from velmo.memory.extractor import RuleBasedExtractor
+
+    mm = MemoryManager(db_url="sqlite:///:memory:", extractor=RuleBasedExtractor())
+    user = "acc-tombstone-resolve"
+    mm.remember_fact(user, "shoe_size", "XXL")
+    mm.forget(user, "pointure")
+
+    session = mm._Session()
+    try:
+        mm._bind_user(session, user)
+        assert is_tombstoned(session, user, "fact_key", "shoe_size") is True
+    finally:
+        session.close()
+
+    # Ré-établissement explicite : doit lever le tombstone posé par forget().
+    mm.remember_fact(user, "shoe_size", "S")
+
+    session = mm._Session()
+    try:
+        mm._bind_user(session, user)
+        assert is_tombstoned(session, user, "fact_key", "shoe_size") is False
+    finally:
+        session.close()
+
+    # L'extracteur peut désormais écrire à nouveau sur cette clé.
+    mm._extract_and_persist(user, "Ma taille est L, tu peux le noter ?", "Noté.")
+    rendered = mm.read(user, "ma pointure ?").render()
+    assert "taille : L" in rendered
+
+
+def test_concurrent_writes_do_not_corrupt_shared_checkpointer() -> None:
+    """Le checkpointer LangGraph (SqliteSaver/PostgresSaver) est partagé pour
+    la durée de vie de `MemoryManager` et enveloppe une seule connexion, non
+    thread-safe : `write()` invoque le graphe depuis le thread appelant, tandis
+    que l'extraction en arrière-plan (`_extract_and_persist`/`_maybe_compress`)
+    tourne sur `_BACKGROUND_EXECUTOR` (finding #1, review finale chantier 1).
+    Ce test fait écrire plusieurs threads "requête" concurrents sur la même
+    instance/utilisateur et vérifie qu'aucune exception ne survient et
+    qu'aucune écriture n'est perdue — la preuve que `_graph_lock` sérialise
+    bien l'accès."""
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    user = "concurrent-user"
+    # Amorce le thread actif avant la rafale concurrente : la création du
+    # thread (`get_or_create_active_thread`) n'est pas elle-même protégée par
+    # `_graph_lock` (elle ne touche pas le checkpointer) et n'est pas l'objet
+    # de ce test.
+    mm.write(user, "amorce", "ok")
+
+    n = 12
+    errors: list[BaseException] = []
+
+    def _do_write(i: int) -> None:
+        try:
+            mm.write(user, f"message numero {i}", f"reponse numero {i}", background=True)
+        except BaseException as exc:  # noqa: BLE001 - collecté pour assertion côté thread principal
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_do_write, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"écriture(s) concurrente(s) en échec : {errors}"
+
+    contents = [content for _, content in mm.read(user, "recap ?").history]
+    for i in range(n):
+        assert f"message numero {i}" in contents
+        assert f"reponse numero {i}" in contents

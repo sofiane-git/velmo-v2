@@ -9,6 +9,7 @@ n'est jamais exposée comme outil au LLM — elle encadre l'appel LLM côté
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 
@@ -33,6 +34,7 @@ from .db import (
     list_facts,
     list_procedures,
     make_memory_engine,
+    resolve_tombstone,
     set_tombstone,
     upsert_fact,
     upsert_procedure,
@@ -189,6 +191,12 @@ class MemoryManager:
         self._checkpointer_cm = get_checkpointer(resolved_db_url)
         self._checkpointer = self._checkpointer_cm.__enter__()
         self._graph = build_graph(self._checkpointer)
+        # `self._checkpointer` (SqliteSaver/PostgresSaver) enveloppe une seule
+        # connexion, pas thread-safe : `write()` tourne sur le thread de requête
+        # tandis que `_extract_and_persist`/`_maybe_compress`/
+        # `_scrub_thread_messages` tournent sur `_BACKGROUND_EXECUTOR` — sans
+        # verrou, deux threads peuvent toucher la même connexion en même temps.
+        self._graph_lock = threading.Lock()
         self.extractor = extractor or get_extractor()
         self.episodic_store = episodic_store or get_episodic_backend()
         self.llm = llm or get_llm()
@@ -233,7 +241,8 @@ class MemoryManager:
             get_or_create_user(session, user_id)
             thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
             config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
-            snapshot = self._graph.get_state(config)
+            with self._graph_lock:
+                snapshot = self._graph.get_state(config)
             all_messages = snapshot.values.get("messages", []) if snapshot.values else []
             limit = None if thread.token_count <= self.token_budget else self.keep_last_n_turns * 2
             windowed = all_messages if limit is None else all_messages[-limit:]
@@ -284,15 +293,16 @@ class MemoryManager:
             get_or_create_user(session, user_id)
             thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
             config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
-            self._graph.invoke(
-                {
-                    "messages": [
-                        {"role": "user", "content": user_message},
-                        {"role": "assistant", "content": assistant_message},
-                    ]
-                },
-                config,
-            )
+            with self._graph_lock:
+                self._graph.invoke(
+                    {
+                        "messages": [
+                            {"role": "user", "content": user_message},
+                            {"role": "assistant", "content": assistant_message},
+                        ]
+                    },
+                    config,
+                )
             thread.token_count += max(1, len(user_message) // 4) + max(
                 1, len(assistant_message) // 4
             )
@@ -378,7 +388,8 @@ class MemoryManager:
         if thread.token_count <= self.token_budget:
             return
         config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
-        snapshot = self._graph.get_state(config)
+        with self._graph_lock:
+            snapshot = self._graph.get_state(config)
         all_messages = snapshot.values.get("messages", []) if snapshot.values else []
         keep_n = self.keep_last_n_turns * 2
         older = all_messages[:-keep_n] if len(all_messages) > keep_n else []
@@ -450,23 +461,30 @@ class MemoryManager:
             session.close()
         for thread in threads:
             config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
-            snapshot = self._graph.get_state(config)
-            if not snapshot.values:
-                continue
-            messages = snapshot.values.get("messages", [])
-            scrubbed = [
-                {**m, "content": m["content"].replace(value, "[information supprimée]")}
-                for m in messages
-            ]
-            if scrubbed != messages:
-                self._graph.update_state(config, {"messages": replace_messages(scrubbed)})
+            with self._graph_lock:
+                snapshot = self._graph.get_state(config)
+                if not snapshot.values:
+                    continue
+                messages = snapshot.values.get("messages", [])
+                scrubbed = [
+                    {**m, "content": m["content"].replace(value, "[information supprimée]")}
+                    for m in messages
+                ]
+                if scrubbed != messages:
+                    self._graph.update_state(config, {"messages": replace_messages(scrubbed)})
 
     def remember_fact(self, user_id: str, key: str, value: str) -> None:
         session = self._Session()
         try:
             self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
-            upsert_fact(session, user_id, key, value, "identity", 1.0, None)
+            fact, _ = upsert_fact(session, user_id, key, value, "identity", 1.0, None)
+            # Un "remember" explicite (ré-)établit délibérément la donnée : lever
+            # un éventuel tombstone posé par un `forget()` antérieur sur cette
+            # clé, sinon l'extracteur resterait bloqué indéfiniment sur `fact.key`
+            # (cf. `is_tombstoned` dans `_extract_and_persist`/`_maybe_compress`)
+            # alors qu'un fait vivant et à jour existe désormais pour cette clé.
+            resolve_tombstone(session, user_id, "fact_key", fact.key)
             write_audit(session, user_id, "write", f"fact:{key}")
             session.commit()
         finally:
@@ -494,6 +512,12 @@ class MemoryManager:
                 RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in removed_procs
             ]
             for proc in removed_procs:
+                # Contrairement à `fact_key` (résolu par `remember_fact`), rien ne
+                # résout jamais un tombstone `procedure_trigger` : il n'existe pas
+                # d'API "remember_procedure" explicite (les procédures ne sont
+                # écrites que par l'extracteur, exactement le chemin que ce
+                # tombstone bloque). Lacune connue et acceptée pour l'instant —
+                # pas un bug à corriger silencieusement ici.
                 set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
             write_audit(session, user_id, "delete", target)
             session.commit()
@@ -537,6 +561,8 @@ class MemoryManager:
             for fact in facts:
                 set_tombstone(session, user_id, "fact_key", fact.key)
             for proc in procedures:
+                # Cf. `forget()` : aucune API "remember_procedure" n'existe pour
+                # résoudre ce tombstone — lacune connue, pas un bug.
                 set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
 
             user = session.get(MemoryUser, user_id)
