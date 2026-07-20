@@ -44,7 +44,11 @@ def test_isolation_between_customers():
 
 def test_right_to_be_forgotten():
     # Critère R5 : « oublie mon adresse » supprime effectivement l'information.
-    mm = MemoryManager()
+    # DB isolée : contrairement à test_cross_session_persistence, ce test n'utilise
+    # qu'une seule instance mm et n'a pas besoin du fichier SQLite persistant partagé.
+    # Sans ça, le tombstone posé par forget() survit au fichier var/velmo_memory.db
+    # d'une exécution pytest à l'autre et bloque la ré-écriture du fait au run suivant.
+    mm = MemoryManager(db_url="sqlite:///:memory:")
     user = "acc-forget"
     mm.write(user, "Mon adresse de livraison est 12 rue des Lilas.", "C'est noté.")
 
