@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     ollama_url: str | None = None
     llama_guard_model: str = "llama-guard3:8b"
 
+    # Seuil de latence (ms) au-delà duquel un warning documente le besoin de
+    # basculer vers le modèle 1B (voir conception_chantier2_guardrails.md
+    # §Seuil de bascule Llama Guard 3). Pas de bascule automatique : mesure et
+    # signal seulement, la décision de changer de modèle reste opérationnelle.
+    llama_guard_latency_threshold_ms: float = 800.0
+
     # PII redaction en texte libre : Azure AI Language.
     azure_language_endpoint: str | None = None
     azure_language_key: str | None = None

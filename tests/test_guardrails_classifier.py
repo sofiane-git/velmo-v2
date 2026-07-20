@@ -258,3 +258,30 @@ def test_score_detailed_falls_back_to_capped_score_when_logprobs_missing(monkeyp
     result = LlamaGuardClassifier(base_url="http://localhost:11434").score_detailed("texte")
 
     assert result.scores["hate"] == FALLBACK_MAX_SCORE
+
+
+def test_llama_guard_records_last_latency(monkeypatch) -> None:
+    def _fake_post(*args, **kwargs):
+        return _FakeResponse("safe")
+
+    monkeypatch.setattr(requests, "post", _fake_post)
+    clf = LlamaGuardClassifier(base_url="http://fake-ollama:11434")
+    assert clf.last_latency_ms is None
+    clf.score_detailed("bonjour")
+    assert clf.last_latency_ms is not None
+    assert clf.last_latency_ms >= 0
+
+
+def test_llama_guard_logs_warning_above_latency_threshold(monkeypatch, caplog) -> None:
+    import logging
+    import time
+
+    def _slow_post(*args, **kwargs):
+        time.sleep(0.05)
+        return _FakeResponse("safe")
+
+    monkeypatch.setattr(requests, "post", _slow_post)
+    clf = LlamaGuardClassifier(base_url="http://fake-ollama:11434", latency_threshold_ms=10.0)
+    with caplog.at_level(logging.WARNING, logger="velmo.guardrails.classifier"):
+        clf.score_detailed("bonjour")
+    assert any("latence" in r.message.lower() for r in caplog.records)

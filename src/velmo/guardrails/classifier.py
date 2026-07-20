@@ -9,7 +9,9 @@ logique de détection (`score()` délègue à `score_detailed()`).
 
 from __future__ import annotations
 
+import logging
 import math
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -18,6 +20,8 @@ from velmo.config import get_settings, require
 from ._scoring import FALLBACK_MAX_SCORE
 from ._text import phrase_hit, tokens
 from ._timeouts import CLIENT_TIMEOUT_S
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -153,10 +157,21 @@ class LlamaGuardClassifier:
     modèle multilingue (FR inclus), taxonomie MLCommons S1-S13 mappée sur
     nos 3 catégories (`LLAMA_GUARD_CATEGORY_MAP`)."""
 
-    def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        model: str | None = None,
+        latency_threshold_ms: float | None = None,
+    ) -> None:
         settings = get_settings()
         self._base_url = require(base_url or settings.ollama_url, "OLLAMA_URL").rstrip("/")
         self._model = model or settings.llama_guard_model
+        self._latency_threshold_ms = (
+            latency_threshold_ms
+            if latency_threshold_ms is not None
+            else settings.llama_guard_latency_threshold_ms
+        )
+        self.last_latency_ms: float | None = None
 
     def score(self, text: str) -> dict[str, float]:
         return self.score_detailed(text).scores
@@ -164,6 +179,7 @@ class LlamaGuardClassifier:
     def score_detailed(self, text: str) -> ClassifierResult:
         import requests
 
+        start = time.monotonic()
         response = requests.post(
             f"{self._base_url}/api/chat",
             json={
@@ -186,6 +202,16 @@ class LlamaGuardClassifier:
             # pas le thread (cf. pipeline.py).
             timeout=CLIENT_TIMEOUT_S,
         )
+        self.last_latency_ms = (time.monotonic() - start) * 1000
+        if self.last_latency_ms > self._latency_threshold_ms:
+            logger.warning(
+                "LlamaGuardClassifier : latence %.0fms > seuil %.0fms (modèle %s) — "
+                "envisager la bascule vers llama-guard3:1b (voir docs/job/"
+                "conceptions/conception_chantier2_guardrails.md §Seuil de bascule).",
+                self.last_latency_ms,
+                self._latency_threshold_ms,
+                self._model,
+            )
         response.raise_for_status()
         body = response.json()
         content = body.get("message", {}).get("content", "")
