@@ -284,7 +284,7 @@ class MemoryManager:
                     session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id
                 )
                 if changed:
-                    write_audit(session, user_id, "write", f"fact:{fact.key}")
+                    write_audit(session, user_id, "write", f"fact:{fact.key}", actor="extractor")
                 report.facts_written.append(ef)
                 if ef.type == "dispute":
                     has_dispute = True
@@ -296,7 +296,9 @@ class MemoryManager:
                     session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
                 )
                 if changed:
-                    write_audit(session, user_id, "write", f"procedure:{ep.trigger}")
+                    write_audit(
+                        session, user_id, "write", f"procedure:{ep.trigger}", actor="extractor"
+                    )
                 report.procedures_written.append(ep)
             session.commit()
 
@@ -348,7 +350,7 @@ class MemoryManager:
                 session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id
             )
             if changed:
-                write_audit(session, user_id, "write", f"fact:{fact.key}")
+                write_audit(session, user_id, "write", f"fact:{fact.key}", actor="extractor")
         for ep in extracted.procedures:
             if ep.confidence < self.confidence_threshold:
                 continue
@@ -356,7 +358,9 @@ class MemoryManager:
                 session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
             )
             if changed:
-                write_audit(session, user_id, "write", f"procedure:{ep.trigger}")
+                write_audit(
+                    session, user_id, "write", f"procedure:{ep.trigger}", actor="extractor"
+                )
 
         # 2. Résumé LLM (remplace la concaténation brute).
         try:

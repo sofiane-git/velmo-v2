@@ -122,6 +122,9 @@ class MemoryAudit(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
     action: Mapped[str] = mapped_column(String)
     target: Mapped[str] = mapped_column(String)
+    # Qui a déclenché l'action : "user" (requête explicite), "extractor" (écriture
+    # automatique post-tour), "system" (purge TTL, job de réconciliation...).
+    actor: Mapped[str] = mapped_column(String, default="user")
     at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -513,9 +516,13 @@ def delete_episodes_matching(session: Session, user_id: str, value: str) -> list
     return list(matches)
 
 
-def write_audit(session: Session, user_id: str, action: str, target: str) -> None:
+def write_audit(
+    session: Session, user_id: str, action: str, target: str, actor: str = "user"
+) -> None:
     session.add(
-        MemoryAudit(id=new_id("aud"), user_id=user_id, action=action, target=target, at=utcnow())
+        MemoryAudit(
+            id=new_id("aud"), user_id=user_id, action=action, target=target, actor=actor, at=utcnow()
+        )
     )
 
 

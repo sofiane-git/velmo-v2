@@ -328,6 +328,17 @@ def test_upsert_procedure_inserts_then_updates():
     assert updated.rule == "Bon de 20%."
 
 
+def test_write_audit_records_actor():
+    session = _session()
+    get_or_create_user(session, "u-actor")
+    write_audit(session, "u-actor", "write", "fact:shoe_size", actor="extractor")
+    session.commit()
+
+    rows = list_recent_audit(session, "u-actor")
+    assert rows[0].actor == "extractor"
+    session.close()
+
+
 def test_delete_procedure_matching_by_trigger_and_rule():
     session = _session()
     get_or_create_user(session, "p2")
