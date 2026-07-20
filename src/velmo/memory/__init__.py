@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from datetime import timedelta
 
 from .db import (
+    FACT_KEY_ALIASES as FACT_KEY_ALIASES,
     Thread,
     MemoryUser,
     add_episode,

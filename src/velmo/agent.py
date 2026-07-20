@@ -20,8 +20,7 @@ from . import tools
 from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine, redact_pii, redact_secret_leak
 from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
-from .memory import ForgetReport, MemoryContext, MemoryManager, WriteReport
-from .memory.db import FACT_KEY_ALIASES
+from .memory import FACT_KEY_ALIASES, ForgetReport, MemoryContext, MemoryManager, WriteReport
 
 logger = logging.getLogger(__name__)
 

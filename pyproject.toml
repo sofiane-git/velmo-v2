@@ -51,6 +51,7 @@ dev = [
     "pytest-cov>=5,<7",
     "ruff>=0.6,<0.10",
     "mypy>=1.10,<2",
+    "import-linter>=2.13,<2.14",
 ]
 
 [build-system]
@@ -63,6 +64,28 @@ packages = ["src/velmo"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+
+[tool.importlinter]
+root_package = "velmo"
+
+[[tool.importlinter.contracts]]
+name = "Isolation mémoire : db.py non-contournable"
+type = "forbidden"
+source_modules = [
+    "velmo.agent",
+    "velmo.api",
+    "velmo.cli",
+    "velmo.db",
+    "velmo.kb_store",
+    "velmo.guardrails",
+    "velmo.mlops",
+    "velmo.tools",
+]
+forbidden_modules = ["velmo.memory.db"]
+# Seuls les imports directs de velmo.memory.db sont interdits ; passer par
+# l'API publique velmo.memory (qui importe .db en interne) reste légitime —
+# sans ce réglage, le contrat casserait aussi l'usage normal de MemoryManager.
+allow_indirect_imports = true
 
 [tool.ruff]
 line-length = 100
