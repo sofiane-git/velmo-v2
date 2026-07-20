@@ -1,36 +1,30 @@
+"""Mémoire épisodique : repli local (hors-ligne) ; le backend pgvector est
+exercé via tests/test_memory_manager.py (nécessite Postgres réel)."""
+
 from __future__ import annotations
 
 from velmo.memory.episodic import LocalEpisodic, get_episodic_backend
 
 
-def test_local_episodic_add_and_search_isolated_by_user():
+def test_local_episodic_recalls_by_keyword_overlap() -> None:
     store = LocalEpisodic()
-    store.add("u1", "Litige signale sur commande O-2024-0199", None)
-    store.add("u2", "Question sur les frais de port", None)
-
-    results_u1 = store.search("u1", "litige commande", k=3)
-    assert any("Litige" in r for r in results_u1)
-
-    results_u2 = store.search("u2", "litige commande", k=3)
-    assert all("Litige" not in r for r in results_u2)
+    store.add("u1", "Litige authenticité maillot Milan 1994", "epi-1")
+    store.add("u1", "Question sur la taille des shorts", "epi-2")
+    results = store.search(None, "u1", "litige sur un maillot", k=1)  # type: ignore[arg-type]
+    assert results == ["Litige authenticité maillot Milan 1994"]
 
 
-def test_local_episodic_delete():
+def test_local_episodic_isolated_by_user() -> None:
     store = LocalEpisodic()
-    episode_id = store.add("u1", "Episode a supprimer", None)
-    store.delete(episode_id)
-    assert store.search("u1", "Episode", k=3) == []
+    store.add("marc", "Commande O-2024-0103 en litige", "epi-1")
+    store.add("sophie", "Commande O-2024-0107 en litige", "epi-2")
+    results = store.search(None, "sophie", "litige commande", k=5)  # type: ignore[arg-type]
+    assert results == ["Commande O-2024-0107 en litige"]
+    assert "O-2024-0103" not in "".join(results)
 
 
-def test_get_episodic_backend_without_chroma_url_returns_local(monkeypatch):
-    monkeypatch.delenv("CHROMA_URL", raising=False)
-    backend = get_episodic_backend()
-    assert isinstance(backend, LocalEpisodic)
-
-
-def test_get_episodic_backend_with_chroma_url_falls_back_if_unreachable(monkeypatch):
-    monkeypatch.setenv("CHROMA_URL", "http://chroma:8000")
-    backend = get_episodic_backend()
-    # chromadb non installé par défaut (extra 'vector') ou service injoignable en local
-    # -> repli garanti, jamais d'exception propagée.
-    assert hasattr(backend, "add") and hasattr(backend, "search") and hasattr(backend, "delete")
+def test_get_episodic_backend_falls_back_to_local_without_postgres(monkeypatch) -> None:
+    # `get_episodic_backend` ne doit plus dépendre de `chroma_url` : sans Postgres
+    # joignable (SQLite de test), il retombe sur LocalEpisodic.
+    store = get_episodic_backend(db_url="sqlite:///:memory:")
+    assert isinstance(store, LocalEpisodic)

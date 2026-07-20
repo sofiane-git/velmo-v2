@@ -30,6 +30,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
 
@@ -94,12 +95,18 @@ class Procedure(Base):
     __table_args__ = (UniqueConstraint("user_id", "trigger", name="uq_procedure_user_trigger"),)
 
 
+_EMBEDDING_DIM = 384
+
+
 class Episode(Base):
     __tablename__ = "episode"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
     summary: Mapped[str] = mapped_column(Text)
-    chroma_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(_EMBEDDING_DIM).with_variant(Text(), "sqlite"), nullable=True
+    )
+    embedding_model_id: Mapped[str | None] = mapped_column(String, nullable=True)
     source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -399,13 +406,15 @@ def add_episode(
     user_id: str,
     summary: str,
     source_thread_id: str | None,
-    chroma_id: str | None = None,
+    embedding: list[float] | None = None,
+    embedding_model_id: str | None = None,
 ) -> Episode:
     episode = Episode(
         id=new_id("epi"),
         user_id=user_id,
         summary=summary,
-        chroma_id=chroma_id,
+        embedding=embedding,
+        embedding_model_id=embedding_model_id,
         source_thread_id=source_thread_id,
         occurred_at=utcnow(),
     )

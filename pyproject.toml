@@ -15,9 +15,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Mémoire long terme épisodique + RAG FAQ (Chroma + embeddings e5).
+# Mémoire long terme épisodique : embeddings stockés dans PostgreSQL via
+# pgvector (même transaction que le texte — voir conception_chantier1_memoire.md
+# §Store épisodique). LocalEpisodic (mots-clés) reste le repli hors-ligne.
 vector = [
-    "chromadb>=1.4,<2",
+    "pgvector>=0.5,<0.6",
     "sentence-transformers>=3,<4",
 ]
 # LLM via Azure AI Inference (Kimi-K2.6).
@@ -71,7 +73,7 @@ python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["langchain_azure_ai.*", "yaml", "azure.ai.textanalytics.*"]
+module = ["langchain_azure_ai.*", "yaml", "azure.ai.textanalytics.*", "chromadb", "chromadb.*"]
 ignore_missing_imports = true
 
 # Torch CPU-only : évite libtorch_cuda.so (~2GB, inutile en inférence sentence-transformers).

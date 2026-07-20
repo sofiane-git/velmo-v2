@@ -39,7 +39,7 @@ from .db import (
 from velmo.llm import LLM, get_llm
 from velmo.config import get_settings
 
-from .episodic import EpisodicStore, get_episodic_backend
+from .episodic import EpisodicVectorStore, get_episodic_backend
 from .extractor import ExtractedFact, ExtractedProcedure, FactExtractor, RuleBasedExtractor
 from .graph import build_graph, get_checkpointer, replace_messages
 
@@ -169,7 +169,7 @@ class MemoryManager:
         keep_last_n_turns: int = 10,
         db_url: str | None = None,
         extractor: FactExtractor | None = None,
-        episodic_store: EpisodicStore | None = None,
+        episodic_store: EpisodicVectorStore | None = None,
         llm: LLM | None = None,
     ) -> None:
         self.token_budget = token_budget
@@ -214,6 +214,15 @@ class MemoryManager:
             text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id}
         )
 
+    def _embed_if_postgres(
+        self, session: Session, summary: str
+    ) -> tuple[list[float] | None, str | None]:
+        if session.get_bind().dialect.name != "postgresql":
+            return None, None
+        from velmo.memory.embeddings import embed_text, embedding_model_id
+
+        return embed_text(summary), embedding_model_id()
+
     def read(self, user_id: str, message: str) -> MemoryContext:
         session = self._Session()
         try:
@@ -236,7 +245,7 @@ class MemoryManager:
             facts_detailed = [
                 FactRecord(key=f.key, value=f.value, confidence=f.confidence) for f in fact_rows
             ]
-            episodic = self.episodic_store.search(user_id, message, k=3)
+            episodic = self.episodic_store.search(session, user_id, message, k=3)
             return MemoryContext(
                 history=history, facts=facts, episodic=episodic, facts_detailed=facts_detailed
             )
@@ -335,8 +344,9 @@ class MemoryManager:
 
             if has_dispute:
                 summary = f"Litige signalé : {user_message.strip()}"
-                episode = add_episode(session, user_id, summary, thread.thread_id)
-                episode.chroma_id = self.episodic_store.add(user_id, summary, thread.thread_id)
+                embedding, model_id = self._embed_if_postgres(session, summary)
+                episode = add_episode(session, user_id, summary, thread.thread_id, embedding, model_id)
+                self.episodic_store.add(user_id, summary, episode.id)
                 session.commit()
                 report.episode_created = True
 
@@ -411,8 +421,9 @@ class MemoryManager:
 
         # 3. Persistance.
         thread.summary = (thread.summary + " " if thread.summary else "") + summary
-        add_episode(session, user_id, summary, thread.thread_id)
-        self.episodic_store.add(user_id, summary, thread.thread_id)
+        embedding, model_id = self._embed_if_postgres(session, summary)
+        episode = add_episode(session, user_id, summary, thread.thread_id, embedding, model_id)
+        self.episodic_store.add(user_id, summary, episode.id)
         session.commit()
 
     def _scrub_thread_messages(self, user_id: str, value: str) -> None:
@@ -464,8 +475,7 @@ class MemoryManager:
                 report.count += len(removed_episodes)
                 report.episodes.extend(e.summary for e in removed_episodes)
                 for episode in removed_episodes:
-                    if episode.chroma_id:
-                        self.episodic_store.delete(episode.chroma_id)
+                    self.episodic_store.delete(episode.id)
             removed_procs = delete_procedure_matching(session, user_id, target)
             report.count += len(removed_procs)
             report.procedures = [
@@ -486,7 +496,7 @@ class MemoryManager:
         mémoire d'un utilisateur, court terme comme long terme.
 
         `forget(target)` ne cible qu'un élément ; ceci supprime tout — faits,
-        procédures, épisodes (+ leurs vecteurs Chroma, sinon orphelins),
+        procédures, épisodes (embedding pgvector inclus, même ligne),
         messages et threads — via la cascade DB sur `MemoryUser` (cf.
         `test_cascade_delete_removes_children_on_sqlite`), puis recrée un
         compte utilisateur vierge pour que l'agent reste utilisable et que
@@ -499,8 +509,7 @@ class MemoryManager:
             procedures = list_procedures(session, user_id)
             episodes = list_episodes(session, user_id)
             for episode in episodes:
-                if episode.chroma_id:
-                    self.episodic_store.delete(episode.chroma_id)
+                self.episodic_store.delete(episode.id)
 
             report = ForgetReport(
                 count=len(facts) + len(procedures) + len(episodes),
