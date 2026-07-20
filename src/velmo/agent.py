@@ -269,6 +269,13 @@ class Agent:
         elif gate_out.action == "filter" and gate_out.filtered_text is not None:
             answer = gate_out.filtered_text
             status = "filtered_output"
+            if gate_out.escalate:
+                tools.escalate_to_human(
+                    self.session,
+                    user_id,
+                    f"garde-fou {gate_out.category} (sortie)",
+                    channel=_escalation_channel(gate_out.category),
+                )
 
         # `background=True` : l'extraction long terme appelle le même LLM que
         # la génération de réponse (`self.llm`) — un endpoint lent/indisponible

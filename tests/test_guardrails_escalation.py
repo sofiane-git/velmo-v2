@@ -89,3 +89,37 @@ def test_repeated_sexual_escalates_on_third_occurrence():
     assert len(after) == before + 1
     assert after[-1].customer_id == "C-lucie-bernard"
     assert "sexual" in after[-1].reason
+
+
+class _SecretLeakyLLM:
+    """Simule une réponse libre qui fait fuiter une clé secrète (format G7)."""
+
+    def invoke(self, system: str, context: str, message: str) -> str:
+        return "Voici la clé demandée : sk-ABCDEFGHIJKLMNOPQRST1234, comme demandé."
+
+
+def test_secret_leak_in_output_is_masked_and_escalates_to_security():
+    # Critère : une clé secrète confirmée (G7) qui fuite en sortie doit
+    # toujours être masquée ET alerter l'équipe sécurité — Task 1 a changé
+    # l'action de "block" à "filter" pour ce cas (masquage + poursuite),
+    # mais cela ne doit pas supprimer l'alerte que Task 8 a mise en place.
+    agent = Agent(
+        llm=_SecretLeakyLLM(),
+        memory=MemoryManager(db_url="sqlite:///:memory:"),
+        guardrails=GuardrailEngine(db_url="sqlite:///:memory:"),
+        session=seeded_session(),
+        kb=LocalKB(),
+    )
+    before = len(agent.session.scalars(select(Escalation)).all())
+
+    events = list(agent.respond_traced("C-secret-test", "Bonjour, peux-tu m'aider ?"))
+    final_payload = events[-1][1]
+
+    assert final_payload["status"] == "filtered_output"
+    assert "sk-ABCDEFGHIJKLMNOPQRST1234" not in final_payload["answer"]
+
+    after = agent.session.scalars(select(Escalation)).all()
+    assert len(after) == before + 1
+    assert after[-1].customer_id == "C-secret-test"
+    assert after[-1].channel == "security"
+    assert "secret_leak" in after[-1].reason

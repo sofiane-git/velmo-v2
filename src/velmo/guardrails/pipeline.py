@@ -177,7 +177,7 @@ def run(
                 Hit(
                     category="pii",
                     method="pii_redaction",
-                    action="block",
+                    action="filter",
                     score=None,
                     reasoning=f"{len(pii_spans)} entité(s) PII détectée(s) par Azure AI Language.",
                 )

@@ -232,11 +232,16 @@ class GuardrailEngine:
                         filtered_text = redact_pii(filtered_text)
                     elif hit.category == "secret_leak":
                         filtered_text = redact_secret_leak(filtered_text)
+                # Une fuite confirmée (secret_leak) reste masquée côté client
+                # mais doit alerter l'équipe sécurité (canal "security", cf.
+                # Task 8) — le simple PII (G4) masqué n'a pas besoin d'alerte.
+                escalate = any(h.category in ESCALATE_CATEGORIES for h in filtering)
                 return Decision(
                     allowed=True,
                     action="filter",
                     category=filtering[0].category,
                     filtered_text=filtered_text,
+                    escalate=escalate,
                     hits=relevant_hits,
                 )
 
