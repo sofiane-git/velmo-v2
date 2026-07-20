@@ -255,3 +255,28 @@ def test_confidence_threshold_defaults_from_settings(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("MEMORY_CONFIDENCE_THRESHOLD", "0.42")
     mm = MemoryManager(db_url="sqlite:///:memory:")
     assert mm.confidence_threshold == 0.42
+
+
+def test_tombstone_blocks_late_extractor_write_after_forget() -> None:
+    """Course R5 : un write extracteur arrivant après un forget() ne doit pas
+    ressusciter la donnée effacée (voir doc §Course oubli ↔ écriture tardive)."""
+    from velmo.memory.extractor import RuleBasedExtractor
+
+    mm = MemoryManager(db_url="sqlite:///:memory:", extractor=RuleBasedExtractor())
+    user = "acc-tombstone"
+    mm.remember_fact(user, "shoe_size", "44")
+    mm.forget(user, "pointure")
+
+    # Simule une extraction tardive qui tenterait de réécrire la même clé.
+    session = mm._Session()
+    try:
+        mm._bind_user(session, user)
+        from velmo.memory.db import is_tombstoned
+
+        assert is_tombstoned(session, user, "fact_key", "shoe_size") is True
+    finally:
+        session.close()
+
+    mm._extract_and_persist(user, "je fais du 44", "noté")
+    rendered = mm.read(user, "ma pointure ?").render()
+    assert "44" not in rendered

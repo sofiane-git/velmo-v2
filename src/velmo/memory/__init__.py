@@ -27,10 +27,12 @@ from .db import (
     delete_procedure_matching,
     get_or_create_active_thread,
     get_or_create_user,
+    is_tombstoned,
     list_episodes,
     list_facts,
     list_procedures,
     make_memory_engine,
+    set_tombstone,
     upsert_fact,
     upsert_procedure,
     utcnow,
@@ -320,6 +322,8 @@ class MemoryManager:
             for ef in extracted.facts:
                 if ef.confidence < self.confidence_threshold:
                     continue
+                if is_tombstoned(session, user_id, "fact_key", ef.key):
+                    continue
                 fact, changed = upsert_fact(
                     session, user_id, ef.key, ef.value, ef.type, ef.confidence, thread.thread_id
                 )
@@ -331,6 +335,8 @@ class MemoryManager:
 
             for ep in extracted.procedures:
                 if ep.confidence < self.confidence_threshold:
+                    continue
+                if is_tombstoned(session, user_id, "procedure_trigger", ep.trigger):
                     continue
                 _, changed = upsert_procedure(
                     session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
@@ -384,6 +390,8 @@ class MemoryManager:
         for ef in extracted.facts:
             if ef.confidence < self.confidence_threshold:
                 continue
+            if is_tombstoned(session, user_id, "fact_key", ef.key):
+                continue
             # La capture "dispute" est tour-par-tour (message unique), pas bloc :
             # la ré-extraire sur `block` (concaténation multi-tours) corromprait la
             # valeur déjà capturée correctement à l'écriture.
@@ -396,6 +404,8 @@ class MemoryManager:
                 write_audit(session, user_id, "write", f"fact:{fact.key}", actor="extractor")
         for ep in extracted.procedures:
             if ep.confidence < self.confidence_threshold:
+                continue
+            if is_tombstoned(session, user_id, "procedure_trigger", ep.trigger):
                 continue
             _, changed = upsert_procedure(
                 session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
@@ -471,6 +481,7 @@ class MemoryManager:
                 facts=[RemovedFact(key=f.key, value=f.value) for f in removed_facts],
             )
             for fact in removed_facts:
+                set_tombstone(session, user_id, "fact_key", fact.key)
                 removed_episodes = delete_episodes_matching(session, user_id, fact.value)
                 report.count += len(removed_episodes)
                 report.episodes.extend(e.summary for e in removed_episodes)
@@ -481,6 +492,8 @@ class MemoryManager:
             report.procedures = [
                 RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in removed_procs
             ]
+            for proc in removed_procs:
+                set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
             write_audit(session, user_id, "delete", target)
             session.commit()
         finally:
@@ -519,6 +532,11 @@ class MemoryManager:
                 ],
                 episodes=[e.summary for e in episodes],
             )
+
+            for fact in facts:
+                set_tombstone(session, user_id, "fact_key", fact.key)
+            for proc in procedures:
+                set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
 
             user = session.get(MemoryUser, user_id)
             if user is not None:

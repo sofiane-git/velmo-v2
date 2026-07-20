@@ -123,6 +123,19 @@ class MemoryAudit(Base):
     at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class MemoryTombstone(Base):
+    __tablename__ = "memory_tombstone"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
+    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "procedure_trigger"
+    target: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("user_id", "target_kind", "target", name="uq_tombstone_target"),
+    )
+
+
 def _default_sqlite_path() -> Path:
     return Path(__file__).resolve().parents[3] / "var" / "velmo_memory.db"
 
@@ -465,3 +478,50 @@ def list_recent_audit(session: Session, user_id: str, limit: int = 50) -> list[M
             .limit(limit)
         ).all()
     )
+
+
+def set_tombstone(session: Session, user_id: str, target_kind: str, target: str) -> None:
+    existing = session.scalars(
+        select(MemoryTombstone).where(
+            MemoryTombstone.user_id == user_id,
+            MemoryTombstone.target_kind == target_kind,
+            MemoryTombstone.target == target,
+        )
+    ).first()
+    if existing is not None:
+        existing.resolved_at = None
+        existing.created_at = utcnow()
+        return
+    session.add(
+        MemoryTombstone(
+            id=new_id("tomb"),
+            user_id=user_id,
+            target_kind=target_kind,
+            target=target,
+            created_at=utcnow(),
+        )
+    )
+
+
+def is_tombstoned(session: Session, user_id: str, target_kind: str, target: str) -> bool:
+    existing = session.scalars(
+        select(MemoryTombstone).where(
+            MemoryTombstone.user_id == user_id,
+            MemoryTombstone.target_kind == target_kind,
+            MemoryTombstone.target == target,
+            MemoryTombstone.resolved_at.is_(None),
+        )
+    ).first()
+    return existing is not None
+
+
+def resolve_tombstone(session: Session, user_id: str, target_kind: str, target: str) -> None:
+    existing = session.scalars(
+        select(MemoryTombstone).where(
+            MemoryTombstone.user_id == user_id,
+            MemoryTombstone.target_kind == target_kind,
+            MemoryTombstone.target == target,
+        )
+    ).first()
+    if existing is not None:
+        existing.resolved_at = utcnow()
