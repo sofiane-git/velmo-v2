@@ -56,26 +56,14 @@ class MemoryUser(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class Conversation(Base):
-    __tablename__ = "conversation"
+class Thread(Base):
+    __tablename__ = "thread"
     thread_id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
     summary: Mapped[str] = mapped_column(Text, default="")
     token_count: Mapped[int] = mapped_column(Integer, default=0)
-    summarized_up_to_turn: Mapped[int] = mapped_column(Integer, default=0)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_message_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-
-class Message(Base):
-    __tablename__ = "message"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    thread_id: Mapped[str] = mapped_column(ForeignKey("conversation.thread_id", ondelete="CASCADE"))
-    user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
-    role: Mapped[str] = mapped_column(String)
-    content: Mapped[str] = mapped_column(Text)
-    turn: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Fact(Base):
@@ -256,92 +244,25 @@ def get_or_create_user(session: Session, user_id: str) -> MemoryUser:
 
 def get_or_create_active_thread(
     session: Session, user_id: str, session_gap_hours: float, now: datetime | None = None
-) -> Conversation:
+) -> Thread:
     now = now or utcnow()
     gap = timedelta(hours=session_gap_hours)
     latest = session.scalars(
-        select(Conversation)
-        .where(Conversation.user_id == user_id)
-        .order_by(Conversation.last_message_at.desc())
+        select(Thread).where(Thread.user_id == user_id).order_by(Thread.last_message_at.desc())
     ).first()
     if latest is not None and (now - latest.last_message_at) <= gap:
         return latest
-    thread = Conversation(
+    thread = Thread(
         thread_id=new_id("th"),
         user_id=user_id,
         summary="",
         token_count=0,
-        summarized_up_to_turn=0,
         started_at=now,
         last_message_at=now,
     )
     session.add(thread)
     session.commit()
     return thread
-
-
-def _next_turn(session: Session, thread_id: str) -> int:
-    last = session.scalars(
-        select(Message.turn).where(Message.thread_id == thread_id).order_by(Message.turn.desc())
-    ).first()
-    return (last or 0) + 1
-
-
-def append_message(
-    session: Session,
-    thread_id: str,
-    user_id: str,
-    role: str,
-    content: str,
-    now: datetime | None = None,
-) -> Message:
-    conv = session.get(Conversation, thread_id)
-    assert conv is not None
-    turn = _next_turn(session, thread_id)
-    msg = Message(
-        id=new_id("msg"),
-        thread_id=thread_id,
-        user_id=user_id,
-        role=role,
-        content=content,
-        turn=turn,
-    )
-    session.add(msg)
-    conv.token_count += max(1, len(content) // 4)
-    conv.last_message_at = now or utcnow()
-    return msg
-
-
-def recent_messages(session: Session, thread_id: str, limit: int | None) -> list[Message]:
-    query = select(Message).where(Message.thread_id == thread_id).order_by(Message.turn.desc())
-    if limit is not None:
-        query = query.limit(limit)
-    rows = session.scalars(query).all()
-    return list(reversed(rows))
-
-
-def older_messages(
-    session: Session, thread_id: str, keep_last_n_messages: int, summarized_up_to_turn: int
-) -> list[Message]:
-    max_turn = (
-        session.scalars(
-            select(Message.turn).where(Message.thread_id == thread_id).order_by(Message.turn.desc())
-        ).first()
-        or 0
-    )
-    cutoff = max_turn - keep_last_n_messages
-    if cutoff <= summarized_up_to_turn:
-        return []
-    rows = session.scalars(
-        select(Message)
-        .where(
-            Message.thread_id == thread_id,
-            Message.turn > summarized_up_to_turn,
-            Message.turn <= cutoff,
-        )
-        .order_by(Message.turn.asc())
-    ).all()
-    return list(rows)
 
 
 def upsert_fact(
@@ -408,18 +329,6 @@ def delete_facts_matching(session: Session, user_id: str, target: str) -> list[F
     for fact in matches:
         session.delete(fact)
     return list(matches)
-
-
-def redact_messages(session: Session, user_id: str, value: str) -> int:
-    pattern = f"%{_escape_like(value)}%"
-    rows = session.scalars(
-        select(Message).where(
-            Message.user_id == user_id, Message.content.ilike(pattern, escape="\\")
-        )
-    ).all()
-    for msg in rows:
-        msg.content = msg.content.replace(value, "[information supprimée]")
-    return len(rows)
 
 
 def upsert_procedure(

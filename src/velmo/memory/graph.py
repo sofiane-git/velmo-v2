@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import Annotated, Iterator, TypedDict
+from typing import Annotated, Any, Iterator, TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -23,13 +23,32 @@ from langgraph.graph.state import CompiledStateGraph
 logger = logging.getLogger(__name__)
 
 
+_REPLACE_KEY = "__replace__"
+
+
+def replace_messages(messages: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+    """Enveloppe `messages` pour `graph.update_state(...)` : signale au reducer
+    `_extend_messages` de remplacer le fil en place plutôt que de l'étendre.
+    `update_state` applique le même reducer qu'un retour de nœud — sans ce
+    marqueur, il concatènerait la version expurgée à la suite de l'originale
+    au lieu de la remplacer (échec silencieux du scrub RGPD, cf.
+    `MemoryManager._scrub_thread_messages`). Reste un `dict` JSON-sérialisable
+    (contrainte du checkpointer, qui persiste la valeur brute avant reduction)."""
+    return {_REPLACE_KEY: messages}
+
+
 def _extend_messages(
-    existing: list[dict[str, str]], new: list[dict[str, str]]
+    existing: list[dict[str, str]], new: Any
 ) -> list[dict[str, str]]:
     """Reducer : chaque `graph.invoke(...)` doit accumuler les messages du tour,
     pas écraser le fil (comportement par défaut de LangGraph sans reducer
-    explicite) — sinon `write()` perdrait l'historique à chaque nouveau tour."""
-    return existing + new
+    explicite) — sinon `write()` perdrait l'historique à chaque nouveau tour.
+    Exception : `new` enveloppé via `replace_messages` (cf. ci-dessus)."""
+    if isinstance(new, dict) and _REPLACE_KEY in new:
+        replaced: list[dict[str, str]] = new[_REPLACE_KEY]
+        return replaced
+    appended: list[dict[str, str]] = existing + new
+    return appended
 
 
 class TurnState(TypedDict):
@@ -39,10 +58,13 @@ class TurnState(TypedDict):
 
 
 def _append_turn(state: TurnState) -> dict[str, list[dict[str, str]]]:
-    # Nœud unique : le tour est déjà construit par l'appelant (`write()`), ce
-    # nœud ne fait qu'acter la persistance par le checkpointer — le reducer
-    # `_extend_messages` (ci-dessus) fait l'accumulation, pas ce nœud.
-    return {"messages": state["messages"]}
+    # Nœud unique : le tour est déjà construit par l'appelant (`write()`), et
+    # déjà fusionné dans `state["messages"]` par le reducer `_extend_messages`
+    # au moment où `graph.invoke(...)` applique son état d'entrée — avant même
+    # que ce nœud ne s'exécute. Ne rien retourner ici : renvoyer `state["messages"]`
+    # le referait fusionner une deuxième fois (le reducer ne remplace pas, il
+    # concatène), doublant le fil à chaque tour.
+    return {}
 
 
 def build_graph(checkpointer: BaseCheckpointSaver[str]) -> CompiledStateGraph[TurnState]:

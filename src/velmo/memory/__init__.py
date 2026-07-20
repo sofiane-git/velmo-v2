@@ -12,16 +12,16 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 
-from sqlalchemy import text
+from langchain_core.runnables import RunnableConfig
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from datetime import timedelta
 
 from .db import (
-    Conversation,
+    Thread,
     MemoryUser,
     add_episode,
-    append_message,
     delete_episodes_matching,
     delete_facts_matching,
     delete_procedure_matching,
@@ -31,19 +31,17 @@ from .db import (
     list_facts,
     list_procedures,
     make_memory_engine,
-    older_messages,
-    recent_messages,
-    redact_messages,
     upsert_fact,
     upsert_procedure,
     utcnow,
     write_audit,
 )
-from velmo.config import get_settings
 from velmo.llm import LLM, get_llm
+from velmo.config import get_settings
 
 from .episodic import EpisodicStore, get_episodic_backend
 from .extractor import ExtractedFact, ExtractedProcedure, FactExtractor, RuleBasedExtractor
+from .graph import build_graph, get_checkpointer, replace_messages
 
 logger = logging.getLogger(__name__)
 
@@ -182,11 +180,27 @@ class MemoryManager:
         )
         self.session_gap_hours = session_gap_hours
         self.keep_last_n_turns = keep_last_n_turns
+        resolved_db_url = db_url or get_settings().db_url
         engine = make_memory_engine(db_url)
         self._Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self._checkpointer_cm = get_checkpointer(resolved_db_url)
+        self._checkpointer = self._checkpointer_cm.__enter__()
+        self._graph = build_graph(self._checkpointer)
         self.extractor = extractor or RuleBasedExtractor()
         self.episodic_store = episodic_store or get_episodic_backend()
         self.llm = llm or get_llm()
+
+    def close(self) -> None:
+        """Ferme la connexion du checkpointer — à appeler à l'arrêt du process
+        (ou implicitement via `__del__` pour les instances de test à courte durée
+        de vie, cf. `_BACKGROUND_EXECUTOR`)."""
+        self._checkpointer_cm.__exit__(None, None, None)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _bind_user(self, session: Session, user_id: str) -> None:
         """Positionne le GUC PostgreSQL consommé par les policies RLS.
@@ -206,12 +220,17 @@ class MemoryManager:
             self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
             thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
+            config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
+            snapshot = self._graph.get_state(config)
+            all_messages = snapshot.values.get("messages", []) if snapshot.values else []
+            limit = None if thread.token_count <= self.token_budget else self.keep_last_n_turns * 2
+            windowed = all_messages if limit is None else all_messages[-limit:]
+
             history: list[Turn] = []
             if thread.summary:
                 history.append(("résumé", thread.summary))
-            limit = None if thread.token_count <= self.token_budget else self.keep_last_n_turns * 2
-            for msg in recent_messages(session, thread.thread_id, limit):
-                history.append((msg.role, msg.content))
+            history.extend((m["role"], m["content"]) for m in windowed)
+
             fact_rows = list_facts(session, user_id)
             facts = {f.key: f.value for f in fact_rows}
             facts_detailed = [
@@ -252,8 +271,20 @@ class MemoryManager:
             self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
             thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
-            append_message(session, thread.thread_id, user_id, "user", user_message)
-            append_message(session, thread.thread_id, user_id, "assistant", assistant_message)
+            config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
+            self._graph.invoke(
+                {
+                    "messages": [
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": assistant_message},
+                    ]
+                },
+                config,
+            )
+            thread.token_count += max(1, len(user_message) // 4) + max(
+                1, len(assistant_message) // 4
+            )
+            thread.last_message_at = utcnow()
             session.commit()
         finally:
             session.close()
@@ -326,15 +357,17 @@ class MemoryManager:
         finally:
             session.close()
 
-    def _maybe_compress(self, session: Session, user_id: str, thread: Conversation) -> None:
+    def _maybe_compress(self, session: Session, user_id: str, thread: Thread) -> None:
         if thread.token_count <= self.token_budget:
             return
-        older = older_messages(
-            session, thread.thread_id, self.keep_last_n_turns * 2, thread.summarized_up_to_turn
-        )
+        config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
+        snapshot = self._graph.get_state(config)
+        all_messages = snapshot.values.get("messages", []) if snapshot.values else []
+        keep_n = self.keep_last_n_turns * 2
+        older = all_messages[:-keep_n] if len(all_messages) > keep_n else []
         if not older:
             return
-        block = "\n".join(f"{m.role}: {m.content}" for m in older)
+        block = "\n".join(f"{m['role']}: {m['content']}" for m in older)
 
         # 1. Extraction préalable : l'info critique quitte le texte volatil avant résumé.
         extracted = self.extractor.extract(block, "")
@@ -369,7 +402,7 @@ class MemoryManager:
             # Panne réseau/filtre de contenu Azure sur le résumé : ne doit jamais
             # remonter jusqu'à `_extract_and_persist`, qui écraserait le rapport du
             # tour courant (déjà committé juste au-dessus) avec un `WriteReport`
-            # vide (cf. `LLMExtractor.extract`, même logique). `summarized_up_to_turn`
+            # vide (cf. `LLMExtractor.extract`, même logique). `thread.summary`
             # n'avance pas : nouvelle tentative sur ce bloc au prochain tour.
             logger.exception(
                 "MemoryManager._maybe_compress: échec du résumé LLM pour user_id=%s", user_id
@@ -378,10 +411,33 @@ class MemoryManager:
 
         # 3. Persistance.
         thread.summary = (thread.summary + " " if thread.summary else "") + summary
-        thread.summarized_up_to_turn = older[-1].turn
-        episode = add_episode(session, user_id, summary, thread.thread_id)
-        episode.chroma_id = self.episodic_store.add(user_id, summary, thread.thread_id)
+        add_episode(session, user_id, summary, thread.thread_id)
+        self.episodic_store.add(user_id, summary, thread.thread_id)
         session.commit()
+
+    def _scrub_thread_messages(self, user_id: str, value: str) -> None:
+        """Remplace `value` par un texte neutre dans tous les threads actifs de
+        l'utilisateur (scrub best-effort du fil court terme, cf. §R5 : purger le
+        checkpoint est le défaut prod, ce scrub partiel n'est utilisé que pour
+        les cas où la session doit continuer sans coupure — voir doc)."""
+        session = self._Session()
+        try:
+            self._bind_user(session, user_id)
+            threads = session.scalars(select(Thread).where(Thread.user_id == user_id)).all()
+        finally:
+            session.close()
+        for thread in threads:
+            config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
+            snapshot = self._graph.get_state(config)
+            if not snapshot.values:
+                continue
+            messages = snapshot.values.get("messages", [])
+            scrubbed = [
+                {**m, "content": m["content"].replace(value, "[information supprimée]")}
+                for m in messages
+            ]
+            if scrubbed != messages:
+                self._graph.update_state(config, {"messages": replace_messages(scrubbed)})
 
     def remember_fact(self, user_id: str, key: str, value: str) -> None:
         session = self._Session()
@@ -404,7 +460,6 @@ class MemoryManager:
                 facts=[RemovedFact(key=f.key, value=f.value) for f in removed_facts],
             )
             for fact in removed_facts:
-                redact_messages(session, user_id, fact.value)
                 removed_episodes = delete_episodes_matching(session, user_id, fact.value)
                 report.count += len(removed_episodes)
                 report.episodes.extend(e.summary for e in removed_episodes)
@@ -418,9 +473,13 @@ class MemoryManager:
             ]
             write_audit(session, user_id, "delete", target)
             session.commit()
-            return report
         finally:
             session.close()
+
+        for fact in removed_facts:
+            self._scrub_thread_messages(user_id, fact.value)
+
+        return report
 
     def forget_all(self, user_id: str) -> ForgetReport:
         """Droit à l'oubli total (`docs/reco_expert.md`, R5) : purge toute la
