@@ -115,6 +115,25 @@ def _routing_payload(routing: RoutingInfo) -> dict[str, Any]:
     }
 
 
+def _own_facts_this_turn(context: MemoryContext, routing: RoutingInfo) -> dict[str, str]:
+    """Faits "propriétaires" pour le cross-check G4 sortie : la mémoire long
+    terme (`context.facts`) ne couvre que ce qui a déjà été extrait lors d'un
+    tour précédent — elle est vide au premier tour d'une session. Un ordre
+    résolu *ce tour-ci* par un outil (`tools.get_order`, `tools.track_shipment`,
+    ...) est tout aussi légitimement "à l'utilisateur" : ces outils ne
+    renvoient une commande que si `owned_order` a confirmé qu'elle appartient
+    à `user_id` (sinon `{"error": "not_found_or_forbidden", ...}`). Sans ça,
+    le cross-check masquerait à tort le numéro de commande du client dans sa
+    propre réponse dès qu'il demande son statut en tout début de session."""
+    if (
+        routing.order_id is not None
+        and routing.tool_result is not None
+        and "error" not in routing.tool_result
+    ):
+        return {**context.facts, "order_number": routing.order_id}
+    return context.facts
+
+
 def _is_repeat_question(context: MemoryContext, message: str) -> bool:
     """Le même message (mot pour mot) apparaît déjà côté "user" dans l'historique.
 
@@ -218,7 +237,9 @@ class Agent:
         if routing.tool_result is not None:
             yield "tool_result", {"name": routing.tool_name, "result": routing.tool_result}
 
-        gate_out = self.guardrails.check_output(answer, user_id=user_id)
+        gate_out = self.guardrails.check_output(
+            answer, user_id=user_id, own_facts=_own_facts_this_turn(context, routing)
+        )
         yield "output_guardrail", _guardrail_payload(gate_out)
         status = "ok"
         if gate_out.action == "block":

@@ -123,11 +123,53 @@ class GuardrailEngine:
         )
 
     def check_output(
-        self, text: str, user_id: str | None = None, source_thread_id: str | None = None
+        self,
+        text: str,
+        user_id: str | None = None,
+        source_thread_id: str | None = None,
+        *,
+        own_facts: dict[str, str] | None = None,
     ) -> Decision:
-        """Contrôle une réponse sortante (PII, secrets, périmètre, modération)."""
-        return self._check(
+        """Contrôle une réponse sortante (PII, secrets, périmètre, modération).
+
+        `own_facts` : faits mémoire de l'utilisateur courant (cf.
+        `MemoryContext.facts`), utilisés pour le cross-check G4 (identifiant
+        d'un autre client détecté dans la réponse). `None` désactive ce
+        contrôle spécifique (mémoire non disponible à l'appel) sans affecter
+        les autres catégories.
+        """
+        decision = self._check(
             text, location="output", user_id=user_id, source_thread_id=source_thread_id
+        )
+        if own_facts is None or decision.action == "block":
+            # Un blocage complet remplace déjà toute la réponse par un refus —
+            # inutile de chercher un identifiant étranger dans un texte qui ne
+            # sera jamais renvoyé au client.
+            return decision
+
+        from .cross_check import find_foreign_identifiers, redact_foreign_identifiers
+
+        foreign = find_foreign_identifiers(text, own_facts)
+        if not foreign:
+            return decision
+
+        session = self._Session()
+        try:
+            bind_user(session, user_id)
+            write_audit(
+                session, user_id, "pii", "output", "cross_check", None, "filter", source_thread_id
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        filtered = redact_foreign_identifiers(decision.filtered_text or text, own_facts)
+        return Decision(
+            allowed=True,
+            action="filter",
+            category="pii",
+            filtered_text=filtered,
+            hits=decision.hits,
         )
 
     def _check(

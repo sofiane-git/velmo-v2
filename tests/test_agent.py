@@ -30,6 +30,13 @@ class _CrashingLLM:
         raise RuntimeError("LLM refusal")
 
 
+class _LeakyLLM:
+    """Simule une réponse libre qui fait fuiter la commande d'un autre client."""
+
+    def invoke(self, system: str, context: str, message: str) -> str:
+        return "Voici le suivi : commande O-2024-0107 de M. Dubois, comme demandé."
+
+
 def _hermetic_agent(llm: LLM) -> Agent:
     return Agent(
         llm=llm,
@@ -132,6 +139,36 @@ def test_respond_traced_emits_ok_sequence():
     final_payload = events[-1][1]
     assert final_payload["status"] == "ok"
     assert isinstance(final_payload["latency_ms"], int)
+
+
+def test_own_order_number_not_masked_on_first_turn():
+    # Cross-check G4 (cross_check.py) : la mémoire long terme (context.facts)
+    # est vide au premier tour d'une session, mais tools.get_order a déjà
+    # vérifié que O-2024-0101 appartient à C-marc-dubois (owned_order) — ce
+    # numéro ne doit pas être masqué comme s'il appartenait à un autre client.
+    agent = _hermetic_agent(_RecordingLLM())
+    context = agent.memory.read("C-marc-dubois", "peu importe")
+    assert context.facts == {}
+
+    events = list(
+        agent.respond_traced("C-marc-dubois", "Où en est ma commande O-2024-0101 ?")
+    )
+    final_payload = events[-1][1]
+    assert final_payload["status"] == "ok"
+    assert "O-2024-0101" in final_payload["answer"]
+    assert "••••" not in final_payload["answer"]
+
+
+def test_foreign_order_number_in_free_text_answer_is_still_masked():
+    # Défense en profondeur : une réponse en texte libre (route llm_libre, pas
+    # de vérification d'appartenance via un outil ce tour-ci) qui fait fuiter
+    # le numéro de commande d'un autre client doit toujours être masquée.
+    agent = _hermetic_agent(_LeakyLLM())
+    events = list(agent.respond_traced("trace-leak", "Bonjour, peux-tu m'aider ?"))
+    final_payload = events[-1][1]
+    assert final_payload["status"] == "filtered_output"
+    assert "O-2024-0107" not in final_payload["answer"]
+    assert "••••" in final_payload["answer"]
 
 
 def test_respond_traced_short_circuits_on_blocked_input():
