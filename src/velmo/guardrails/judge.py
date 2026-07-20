@@ -7,14 +7,14 @@ séparé pour qu'une injection ayant piégé l'agent n'ait aucune prise sur lui
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 import yaml
+from pydantic import BaseModel
 
 from velmo.config import Settings, get_settings, require
 
@@ -69,6 +69,30 @@ LEVEL_TO_SCORE: dict[str, float] = {
     "fort": 0.8,
     "tres_fort": 0.95,
 }
+
+_Level = Literal["aucun", "leger", "modere", "fort", "tres_fort"]
+
+
+class JudgeVerdict(BaseModel):
+    """Sortie structurée du juge — le contenu à évaluer est passé en `user_content`
+    (jamais concaténé aux instructions système), le juge répond dans ce schéma
+    fermé : un texte adverse arrive comme donnée à classer, pas comme
+    instruction capable de reconfigurer la réponse (anti-injection 2nd ordre,
+    conception_chantier2_guardrails.md §Résister à l'injection).
+
+    Chaque niveau a pour défaut "aucun" (pas de valeur par défaut pour
+    `reasoning` qui reste "") : une clé absente de la réponse JSON (ex. le
+    modèle ne renvoie que `manipulation`) doit être traitée comme "aucun" sur
+    les axes manquants sans invalider les axes présents — cf.
+    `AzureJudge.evaluate`, qui ne retombe sur un verdict entièrement "aucun"
+    que si le JSON est malformé ou qu'une valeur fournie est hors énumération.
+    """
+
+    manipulation: _Level = "aucun"
+    secret_interne: _Level = "aucun"
+    hors_role: _Level = "aucun"
+    reasoning: str = ""
+
 
 # En dessous de cette confiance (probabilité du token de verdict), un
 # "tres_fort" est requalifié en "fort" : l'auto-escalade (pipeline.py,
@@ -269,23 +293,26 @@ class AzureJudge:
         )
         choice = completion.choices[0]
         content = choice.message.content or "{}"
-        parsed = json.loads(content)
+        try:
+            verdict = JudgeVerdict.model_validate_json(content)
+        except ValueError:
+            # Réponse hors schéma (JSON malformé ou valeur de niveau invalide) :
+            # traité comme "aucun" partout plutôt que de propager l'exception —
+            # même contrat de tolérance que LLMExtractor.extract (Chantier 1).
+            verdict = JudgeVerdict(manipulation="aucun", secret_interne="aucun", hors_role="aucun")
+
         tokens_: list[dict[str, Any]] | None = None
         if choice.logprobs is not None and choice.logprobs.content is not None:
             tokens_ = [
                 {"token": item.token, "logprob": item.logprob} for item in choice.logprobs.content
             ]
         return {
-            "manipulation": _level_to_score(
-                "manipulation", str(parsed.get("manipulation", "aucun")), content, tokens_
-            ),
+            "manipulation": _level_to_score("manipulation", verdict.manipulation, content, tokens_),
             "secret_interne": _level_to_score(
-                "secret_interne", str(parsed.get("secret_interne", "aucun")), content, tokens_
+                "secret_interne", verdict.secret_interne, content, tokens_
             ),
-            "hors_role": _level_to_score(
-                "hors_role", str(parsed.get("hors_role", "aucun")), content, tokens_
-            ),
-            "reasoning": str(parsed.get("reasoning", "")),
+            "hors_role": _level_to_score("hors_role", verdict.hors_role, content, tokens_),
+            "reasoning": verdict.reasoning,
         }
 
 

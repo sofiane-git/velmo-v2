@@ -5,6 +5,7 @@ import math
 import time
 
 import openai
+import pytest
 
 from velmo.guardrails._scoring import FALLBACK_MAX_SCORE
 from velmo.guardrails.judge import (
@@ -20,6 +21,24 @@ from velmo.guardrails.judge import (
     get_judge,
     load_scope_keywords,
 )
+
+
+def test_judge_verdict_schema_rejects_invalid_level() -> None:
+    from pydantic import ValidationError
+
+    from velmo.guardrails.judge import JudgeVerdict
+
+    with pytest.raises(ValidationError):
+        JudgeVerdict(manipulation="extreme", secret_interne="aucun", hors_role="aucun", reasoning="")
+
+
+def test_judge_verdict_schema_accepts_valid_levels() -> None:
+    from velmo.guardrails.judge import JudgeVerdict
+
+    verdict = JudgeVerdict(
+        manipulation="tres_fort", secret_interne="aucun", hors_role="leger", reasoning="test"
+    )
+    assert verdict.manipulation == "tres_fort"
 
 
 def test_level_to_score_maps_known_levels():
