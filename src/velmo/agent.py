@@ -221,13 +221,16 @@ class Agent:
         gate_out = self.guardrails.check_output(answer, user_id=user_id)
         yield "output_guardrail", _guardrail_payload(gate_out)
         status = "ok"
-        if not gate_out.allowed:
+        if gate_out.action == "block":
             if gate_out.escalate:
                 tools.escalate_to_human(
                     self.session, user_id, f"garde-fou {gate_out.category} (sortie)"
                 )
             answer = gate_out.refusal or DEFAULT_REFUSAL
             status = "blocked_output"
+        elif gate_out.action == "filter" and gate_out.filtered_text is not None:
+            answer = gate_out.filtered_text
+            status = "filtered_output"
 
         # `background=True` : l'extraction long terme appelle le même LLM que
         # la génération de réponse (`self.llm`) — un endpoint lent/indisponible

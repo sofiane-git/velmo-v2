@@ -69,13 +69,25 @@ def run(
 
     injection_hit = scan_injection(text)
     if injection_hit:
-        return [injection_hit]  # court-circuit : rien de plus à évaluer
+        return [injection_hit]  # seul un vrai `block` (G6) court-circuite tout
+
     secret_hit = scan_secret_leak(text)
     if secret_hit:
-        return [secret_hit]
+        if location == "input" or secret_hit.action == "block":
+            if location == "input":
+                # Entrée : toujours un vrai blocage (protège `memory.write` en
+                # amont, cf. agent.py `redact_*`-avant-écriture, inchangé par
+                # cette tâche) — pas seulement un court-circuit du pipeline.
+                secret_hit.action = "block"
+            return [secret_hit]
+        hits.append(secret_hit)  # sortie + action="filter" : masque, continue vers étages 2/3
     pii_hit = scan_pii(text)
     if pii_hit:
-        return [pii_hit]  # court-circuit : la donnée sensible ne part pas vers classifieur/juge
+        if location == "input" or pii_hit.action == "block":
+            if location == "input":
+                pii_hit.action = "block"
+            return [pii_hit]
+        hits.append(pii_hit)
 
     # Une résolution de config par tour (au lieu d'une par étage) : passée en
     # `settings=` à `check()`/`scan()`, qui sinon en construiraient chacun une.

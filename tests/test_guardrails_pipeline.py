@@ -33,7 +33,46 @@ def test_run_detects_pii_on_input_and_output():
     hits_in = _run(text, "input")
     hits_out = _run(text, "output")
     assert any(h.category == "pii" and h.action == "block" for h in hits_in)
-    assert any(h.category == "pii" and h.action == "block" for h in hits_out)
+    assert any(h.category == "pii" and h.action == "filter" for h in hits_out)
+
+
+def test_run_still_blocks_pii_on_input():
+    """Sur l'entrée, G4/G7 court-circuitent toujours en `block` — protège
+    `agent.py`::redact-avant-écriture-mémoire, inchangé par cette tâche. Seule
+    la sortie passe en `filter` (voir test_run_detects_pii_on_input_and_output)."""
+    text = "Le paiement est passe avec la carte 4111 1111 1111 1111."
+    hits = _run(text, "input")
+    assert len(hits) == 1
+    assert hits[0].category == "pii"
+    assert hits[0].action == "block"
+
+
+def test_pipeline_filter_hit_still_runs_stage_2_3(monkeypatch) -> None:
+    """Un hit `filter` (PII) en sortie ne doit pas empêcher le classifieur/juge
+    de tourner sur le reste du message — seul un `block` (injection) coupe tout."""
+    from velmo.guardrails.classifier import ClassifierResult, ModerationClassifier
+    from velmo.guardrails.judge import Judge
+
+    class StubClassifier(ModerationClassifier):
+        def score(self, text: str) -> dict[str, float]:
+            return {}
+
+        def score_detailed(self, text: str) -> ClassifierResult:
+            return ClassifierResult(scores={"hate": 0.9}, reasoning={"hate": "test"})
+
+    class StubJudge(Judge):
+        def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+            return {"manipulation": 0.0, "secret_interne": 0.0, "hors_role": 0.0, "reasoning": ""}
+
+    hits = pipeline.run(
+        "Ma carte 4111 1111 1111 1111, je suis hyper énervé",
+        location="output",
+        classifier=StubClassifier(),
+        judge=StubJudge(),
+    )
+    categories = {h.category for h in hits}
+    assert "pii" in categories
+    assert "hate" in categories  # preuve que l'étage 2 a bien tourné malgré le hit PII
 
 
 def test_run_allows_legitimate_message():

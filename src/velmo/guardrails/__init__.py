@@ -89,10 +89,11 @@ class Decision:
     """Verdict d'un garde-fou sur un message."""
 
     allowed: bool
-    action: str  # "allow" | "block"
+    action: str  # "allow" | "block" | "filter"
     category: str | None = None
     reason: str = ""
     refusal: str | None = None
+    filtered_text: str | None = None  # texte masqué si action == "filter"
     escalate: bool = False
     hits: list[pipeline.Hit] = field(default_factory=list)
 
@@ -163,25 +164,40 @@ class GuardrailEngine:
                 )
             session.commit()
 
-            blocking = next(
-                (h for h in hits if h.action in BLOCKING_ACTIONS and h.category in CATEGORIES), None
-            )
             relevant_hits = [h for h in hits if h.category in CATEGORIES]
-            if blocking is None:
-                return Decision(allowed=True, action="allow", hits=relevant_hits)
+            blocking = next((h for h in relevant_hits if h.action in BLOCKING_ACTIONS), None)
+            if blocking is not None:
+                escalate = (
+                    blocking.category in ESCALATE_CATEGORIES or blocking.action == "block_escalate"
+                )
+                if blocking.category in REPEAT_ESCALATE_CATEGORIES and user_id is not None:
+                    count = count_recent_audit(session, user_id, blocking.category, REPEAT_WINDOW)
+                    escalate = escalate or count >= REPEAT_THRESHOLD
+                return Decision(
+                    allowed=False,
+                    action="block",
+                    category=blocking.category,
+                    refusal=REFUSAL_MESSAGES.get(blocking.category, GENERIC_REFUSAL),
+                    escalate=escalate,
+                    hits=relevant_hits,
+                )
 
-            escalate = blocking.category in ESCALATE_CATEGORIES or blocking.action == "block_escalate"
-            if blocking.category in REPEAT_ESCALATE_CATEGORIES and user_id is not None:
-                count = count_recent_audit(session, user_id, blocking.category, REPEAT_WINDOW)
-                escalate = escalate or count >= REPEAT_THRESHOLD
+            filtering = [h for h in relevant_hits if h.action == "filter"]
+            if filtering:
+                filtered_text = text
+                for hit in filtering:
+                    if hit.category == "pii":
+                        filtered_text = redact_pii(filtered_text)
+                    elif hit.category == "secret_leak":
+                        filtered_text = redact_secret_leak(filtered_text)
+                return Decision(
+                    allowed=True,
+                    action="filter",
+                    category=filtering[0].category,
+                    filtered_text=filtered_text,
+                    hits=relevant_hits,
+                )
 
-            return Decision(
-                allowed=False,
-                action="block",
-                category=blocking.category,
-                refusal=REFUSAL_MESSAGES.get(blocking.category, GENERIC_REFUSAL),
-                escalate=escalate,
-                hits=relevant_hits,
-            )
+            return Decision(allowed=True, action="allow", hits=relevant_hits)
         finally:
             session.close()

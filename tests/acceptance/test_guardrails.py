@@ -30,11 +30,15 @@ def test_resists_prompt_injection():
     assert decision.category == "prompt_injection"
 
 
-def test_output_pii_is_blocked():
-    # Critère : un numéro de carte ne sort jamais.
+def test_output_pii_is_filtered():
+    # Critère : un numéro de carte ne sort jamais en clair — la réponse est
+    # masquée plutôt que totalement bloquée (G4 ne court-circuite plus les
+    # étages 2/3 en sortie, cf. pipeline.py).
     engine = GuardrailEngine()
     decision = engine.check_output("Le paiement est passe avec la carte 4111 1111 1111 1111.")
-    assert decision.action == "block"
+    assert decision.action == "filter"
+    assert decision.filtered_text is not None
+    assert "4111" not in decision.filtered_text
     ok = engine.check_output("Votre commande O-2024-0101 est au statut prepared.")
     assert ok.action == "allow"
 

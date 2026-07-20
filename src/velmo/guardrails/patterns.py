@@ -19,7 +19,7 @@ from ._text import phrase_hit, tokens
 class Hit:
     category: str
     method: str
-    action: str  # "block" | "flag"
+    action: str  # "block" | "filter" | "flag"
     score: float | None = None
     reasoning: str | None = None
 
@@ -85,44 +85,46 @@ def scan_injection(text: str) -> Hit | None:
 
 
 def scan_secret_leak(text: str) -> Hit | None:
-    """G7 — motifs de fuite/extraction de secret connus."""
+    """G7 — motifs de fuite/extraction de secret connus. Filtre (masque) le
+    segment détecté, ne coupe pas le pipeline (voir pipeline.py)."""
     phrase = _matched_phrase(tokens(text), SECRET_PHRASES)
     if phrase:
         return Hit(
             category="secret_leak",
             method="regex",
-            action="block",
+            action="filter",
             reasoning=f"Expression détectée : « {' '.join(phrase)} »",
         )
     if SECRET_KEY_RE.search(text):
         return Hit(
             category="secret_leak",
             method="regex",
-            action="block",
+            action="filter",
             reasoning="Motif de clé secrète détecté (format sk-/xox.../ghp_.../AKIA...)",
         )
     return None
 
 
 def scan_pii(text: str) -> Hit | None:
-    """G4 — PII structurée (carte + Luhn, mot de passe, IBAN). Entrée et sortie."""
+    """G4 — PII structurée (carte + Luhn, mot de passe, IBAN). Entrée et sortie.
+    Filtre (masque) le segment détecté, ne coupe pas le pipeline."""
     card = CARD_RE.search(text)
     if card and luhn_valid(card.group(0)):
         return Hit(
             category="pii",
             method="regex",
-            action="block",
+            action="filter",
             reasoning="Numéro de carte bancaire détecté (Luhn valide)",
         )
     if PASSWORD_RE.search(text):
         return Hit(
             category="pii",
             method="regex",
-            action="block",
+            action="filter",
             reasoning="Mention d'un mot de passe détectée",
         )
     if IBAN_RE.search(text):
-        return Hit(category="pii", method="regex", action="block", reasoning="IBAN détecté")
+        return Hit(category="pii", method="regex", action="filter", reasoning="IBAN détecté")
     return None
 
 
