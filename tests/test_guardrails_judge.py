@@ -148,22 +148,22 @@ def test_load_scope_keywords_from_yaml():
 
 
 def test_get_judge_falls_back_without_azure_credentials(monkeypatch):
-    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
-    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_GUARD_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_GUARD_API_KEY", raising=False)
     assert isinstance(get_judge(), RuleBasedJudge)
 
 
 def test_get_judge_returns_azure_judge_with_credentials(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     _patch_azure_openai(monkeypatch, "{}", [])
     assert isinstance(get_judge(), AzureJudge)
 
 
 def test_azure_judge_defaults_to_gpt5_mini_deployment(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
-    monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
+    monkeypatch.delenv("AZURE_OPENAI_GUARD_DEPLOYMENT", raising=False)
     calls: list[dict] = []
     content = json.dumps(
         {
@@ -189,9 +189,9 @@ def test_azure_judge_defaults_to_gpt5_mini_deployment(monkeypatch):
 
 
 def test_azure_judge_respects_deployment_env_override(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
-    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "custom-deployment")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_DEPLOYMENT", "custom-deployment")
     calls: list[dict] = []
     _patch_azure_openai(monkeypatch, "{}", calls)
 
@@ -201,8 +201,8 @@ def test_azure_judge_respects_deployment_env_override(monkeypatch):
 
 
 def test_azure_judge_includes_agent_response_as_context(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     calls: list[dict] = []
     _patch_azure_openai(monkeypatch, "{}", calls)
 
@@ -213,8 +213,8 @@ def test_azure_judge_includes_agent_response_as_context(monkeypatch):
 
 
 def test_azure_judge_defaults_missing_or_invalid_levels_to_aucun(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     _patch_azure_openai(monkeypatch, json.dumps({"manipulation": "fort"}), [])
 
     result = AzureJudge().evaluate("texte")
@@ -239,8 +239,8 @@ def _tres_fort_logprobs(confidence: float) -> _FakeLogprobs:
 
 
 def test_azure_judge_downgrades_tres_fort_when_confidence_low(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
         {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
     )
@@ -252,8 +252,8 @@ def test_azure_judge_downgrades_tres_fort_when_confidence_low(monkeypatch):
 
 
 def test_azure_judge_keeps_tres_fort_when_confidence_high(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
         {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
     )
@@ -268,8 +268,8 @@ def test_azure_judge_treats_unmatched_logprobs_as_full_confidence(monkeypatch):
     # Les tokens renvoyés ne correspondent pas au contenu (cas dégradé
     # théorique) : ne doit pas planter, garde le verdict tel quel (confiance
     # 1.0 par défaut faute de correspondance exploitable).
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
         {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
     )
@@ -287,8 +287,8 @@ def test_azure_judge_uses_timeout_below_pipeline_call_timeout(monkeypatch):
     # bloque un thread du pool partagé bien au-delà de ce que le pipeline
     # attend, sans que ce thread ne soit jamais libéré (cf. commentaire
     # judge.py).
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     client_kwargs: list[dict] = []
     _patch_azure_openai(monkeypatch, "{}", [], client_kwargs)
 

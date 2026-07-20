@@ -22,8 +22,8 @@ def _load_calibrate_module():
 
 def test_calibrate_runs_without_crashing(capsys, monkeypatch):
     monkeypatch.delenv("OLLAMA_URL", raising=False)
-    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
-    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_GUARD_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_GUARD_API_KEY", raising=False)
 
     module = _load_calibrate_module()
     module.calibrate()

@@ -32,3 +32,10 @@ def test_echo_llm_logs_warning_on_instantiation(caplog: pytest.LogCaptureFixture
 
 def test_settings_default_environment_is_development() -> None:
     assert Settings().environment == "development"
+
+
+def test_azure_openai_llm_implements_llm_protocol() -> None:
+    from velmo.llm import AzureOpenAILLM, LLM
+
+    llm = AzureOpenAILLM(endpoint="https://fake.openai.azure.com", api_key="fake", deployment="gpt-5-mini")
+    assert isinstance(llm, LLM)

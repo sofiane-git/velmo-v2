@@ -173,12 +173,12 @@ class AzureJudge:
         from openai import OpenAI  # import différé : dépendance optionnelle
 
         settings = settings or get_settings()
-        endpoint = require(settings.azure_openai_endpoint, "AZURE_OPENAI_ENDPOINT")
-        api_key = require(settings.azure_openai_api_key, "AZURE_OPENAI_API_KEY")
+        endpoint = require(settings.azure_openai_guard_endpoint, "AZURE_OPENAI_GUARD_ENDPOINT")
+        api_key = require(settings.azure_openai_guard_api_key, "AZURE_OPENAI_GUARD_API_KEY")
 
         self._client = OpenAI(
             # Cette ressource expose l'endpoint OpenAI-compatible `/openai/v1`
-            # (`AZURE_OPENAI_ENDPOINT` s'y termine déjà) : le client Azure
+            # (`AZURE_OPENAI_GUARD_ENDPOINT` s'y termine déjà) : le client Azure
             # classique (`azure_endpoint` + `api_version`) construit une URL
             # incompatible et échoue en 404 quel que soit le déploiement —
             # confirmé en isolant l'appel. Le client OpenAI standard pointé
@@ -195,7 +195,7 @@ class AzureJudge:
             # avant l'abandon côté pipeline.
             timeout=CLIENT_TIMEOUT_S,
         )
-        self._deployment = settings.azure_openai_deployment
+        self._deployment = settings.azure_openai_guard_deployment
 
     def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
         user_content = f"Texte à évaluer:\n{text}"
@@ -234,8 +234,8 @@ class AzureJudge:
 
 
 def get_judge() -> Judge:
-    """Azure si `AZURE_OPENAI_ENDPOINT`/`AZURE_OPENAI_API_KEY` sont définis, sinon repli."""
+    """Azure si `AZURE_OPENAI_GUARD_ENDPOINT`/`AZURE_OPENAI_GUARD_API_KEY` sont définis, sinon repli."""
     settings = get_settings()
-    if settings.azure_openai_endpoint and settings.azure_openai_api_key:
+    if settings.azure_openai_guard_endpoint and settings.azure_openai_guard_api_key:
         return AzureJudge(settings)
     return RuleBasedJudge()

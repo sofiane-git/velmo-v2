@@ -27,8 +27,10 @@ def test_validate_startup_passes_when_all_pairs_fully_set():
     settings = Settings(
         azure_ai_inference_endpoint="https://example.com",
         azure_ai_inference_api_key="key",
-        azure_openai_endpoint="https://example.com",
-        azure_openai_api_key="key",
+        azure_openai_guard_endpoint="https://example.com",
+        azure_openai_guard_api_key="key",
+        azure_openai_async_endpoint="https://example.com",
+        azure_openai_async_api_key="key",
         azure_language_endpoint="https://example.com",
         azure_language_key="key",
         azure_content_safety_endpoint="https://example.com",
@@ -38,8 +40,8 @@ def test_validate_startup_passes_when_all_pairs_fully_set():
 
 
 def test_validate_startup_raises_on_partial_pair_endpoint_only():
-    settings = Settings(azure_openai_endpoint="https://example.com")
-    with pytest.raises(ConfigurationError, match="AZURE_OPENAI_API_KEY"):
+    settings = Settings(azure_openai_guard_endpoint="https://example.com")
+    with pytest.raises(ConfigurationError, match="AZURE_OPENAI_GUARD_API_KEY"):
         validate_startup(settings)
 
 
@@ -51,11 +53,11 @@ def test_validate_startup_raises_on_partial_pair_key_only():
 
 def test_validate_startup_reports_every_partial_pair():
     settings = Settings(
-        azure_openai_endpoint="https://example.com",
+        azure_openai_guard_endpoint="https://example.com",
         azure_language_key="key",
     )
     with pytest.raises(ConfigurationError) as exc_info:
         validate_startup(settings)
     message = str(exc_info.value)
-    assert "AZURE_OPENAI_API_KEY" in message
+    assert "AZURE_OPENAI_GUARD_API_KEY" in message
     assert "AZURE_LANGUAGE_ENDPOINT" in message

@@ -38,10 +38,21 @@ class Settings(BaseSettings):
     azure_ai_inference_api_key: str | None = None
     azure_ai_inference_model: str = "Mistral-Large-3"
 
-    # Juge garde-fous : Azure OpenAI (gpt-5-mini).
-    azure_openai_endpoint: str | None = None
-    azure_openai_api_key: str | None = None
-    azure_openai_deployment: str = "gpt-5-mini"
+    # Juge garde-fous (Chantier 2) : chemin BLOQUANT synchrone (chaque
+    # message) — déploiement/quota isolé, ne doit jamais partager son budget
+    # de rate-limit avec les usages asynchrones ci-dessous (Q1, session de
+    # grilling : un pic d'extraction ne doit jamais throttler le garde-fou).
+    azure_openai_guard_endpoint: str | None = None
+    azure_openai_guard_api_key: str | None = None
+    azure_openai_guard_deployment: str = "gpt-5-mini"
+
+    # Extracteur mémoire (Chantier 1) + juge DeepEval Qualité (Chantier 3) :
+    # usages ASYNCHRONES/best-effort — peuvent partager un même déploiement
+    # sans risque mutuel (voir conception_chantier1_memoire.md §Qui décide de
+    # mémoriser en long terme).
+    azure_openai_async_endpoint: str | None = None
+    azure_openai_async_api_key: str | None = None
+    azure_openai_async_deployment: str = "gpt-5-mini"
 
     # Classifieur de modération : Llama Guard 3 servi via Ollama.
     ollama_url: str | None = None
@@ -91,7 +102,8 @@ class ConfigurationError(RuntimeError):
 # intégrations (`_api_key` vs `_key`).
 _ENDPOINT_KEY_FIELDS: tuple[tuple[str, str], ...] = (
     ("azure_ai_inference_endpoint", "azure_ai_inference_api_key"),
-    ("azure_openai_endpoint", "azure_openai_api_key"),
+    ("azure_openai_guard_endpoint", "azure_openai_guard_api_key"),
+    ("azure_openai_async_endpoint", "azure_openai_async_api_key"),
     ("azure_language_endpoint", "azure_language_key"),
     ("azure_content_safety_endpoint", "azure_content_safety_key"),
 )

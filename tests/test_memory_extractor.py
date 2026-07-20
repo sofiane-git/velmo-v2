@@ -104,3 +104,19 @@ def test_llm_extractor_returns_empty_on_garbage():
     result = LLMExtractor(_StubJSONLLM("pas du json du tout")).extract("Salut", "Salut")
     assert result.facts == []
     assert result.procedures == []
+
+
+def test_get_extractor_falls_back_to_rule_based_without_azure_async_config(monkeypatch) -> None:
+    from velmo.memory.extractor import RuleBasedExtractor, get_extractor
+
+    monkeypatch.delenv("AZURE_OPENAI_ASYNC_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_ASYNC_API_KEY", raising=False)
+    assert isinstance(get_extractor(), RuleBasedExtractor)
+
+
+def test_get_extractor_uses_llm_extractor_when_azure_async_configured(monkeypatch) -> None:
+    from velmo.memory.extractor import LLMExtractor, get_extractor
+
+    monkeypatch.setenv("AZURE_OPENAI_ASYNC_ENDPOINT", "https://fake.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_ASYNC_API_KEY", "fake-key")
+    assert isinstance(get_extractor(), LLMExtractor)

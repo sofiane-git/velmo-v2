@@ -43,7 +43,7 @@ from velmo.llm import LLM, get_llm
 from velmo.config import get_settings
 
 from .episodic import EpisodicVectorStore, get_episodic_backend
-from .extractor import ExtractedFact, ExtractedProcedure, FactExtractor, RuleBasedExtractor
+from .extractor import ExtractedFact, ExtractedProcedure, FactExtractor, get_extractor
 from .graph import build_graph, get_checkpointer, replace_messages
 
 logger = logging.getLogger(__name__)
@@ -189,7 +189,7 @@ class MemoryManager:
         self._checkpointer_cm = get_checkpointer(resolved_db_url)
         self._checkpointer = self._checkpointer_cm.__enter__()
         self._graph = build_graph(self._checkpointer)
-        self.extractor = extractor or RuleBasedExtractor()
+        self.extractor = extractor or get_extractor()
         self.episodic_store = episodic_store or get_episodic_backend()
         self.llm = llm or get_llm()
 

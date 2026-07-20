@@ -7,13 +7,14 @@ tournent sans dépendre du SDK ni d'un endpoint joignable.
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from velmo.config import get_settings, require
 
 logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
 class LLM(Protocol):
     """Interface minimale d'un client de complétion."""
 
@@ -52,6 +53,29 @@ class AzureLLM:
             messages.append({"role": "system", "content": f"Mémoire:\n{context}"})
         messages.append({"role": "user", "content": message})
         return cast(str, self._model.invoke(messages).content)
+
+
+class AzureOpenAILLM:
+    """Client Azure OpenAI (chat completions), utilisé par l'extracteur
+    mémoire — déploiement asynchrone (`azure_openai_async_*`), distinct du
+    déploiement dédié au juge garde-fous (voir Settings, Q1 session de grilling).
+    """
+
+    def __init__(self, endpoint: str, api_key: str, deployment: str) -> None:
+        from openai import OpenAI  # import différé : dépendance optionnelle
+
+        self._client = OpenAI(base_url=endpoint, api_key=api_key, timeout=45.0)
+        self._deployment = deployment
+
+    def invoke(self, system: str, context: str, message: str) -> str:
+        messages = [{"role": "system", "content": system}]
+        if context:
+            messages.append({"role": "system", "content": f"Mémoire:\n{context}"})
+        messages.append({"role": "user", "content": message})
+        completion = self._client.chat.completions.create(
+            model=self._deployment, messages=messages  # type: ignore[arg-type]
+        )
+        return completion.choices[0].message.content or ""
 
 
 def get_llm() -> LLM:

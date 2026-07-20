@@ -3,7 +3,7 @@ eval/guardrail_cases.jsonl à partir des scores réels (Ollama + Azure).
 
 Usage : `uv run python eval/calibrate_thresholds.py`
 
-Nécessite OLLAMA_URL et AZURE_OPENAI_ENDPOINT/AZURE_OPENAI_API_KEY dans
+Nécessite OLLAMA_URL et AZURE_OPENAI_GUARD_ENDPOINT/AZURE_OPENAI_GUARD_API_KEY dans
 l'environnement pour utiliser les backends réels (sinon repli automatique sur
 LexicalClassifier/RuleBasedJudge — les valeurs affichées ne seront alors pas
 représentatives). Script one-shot, hors CI : affiche des seuils candidats à
