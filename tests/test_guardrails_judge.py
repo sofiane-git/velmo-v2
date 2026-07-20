@@ -8,6 +8,7 @@ import openai
 
 from velmo.guardrails._scoring import FALLBACK_MAX_SCORE
 from velmo.guardrails.judge import (
+    EXTENDED_SCOPE_ROOTS,
     LEVEL_TO_SCORE,
     AzureJudge,
     Judge,
@@ -15,6 +16,7 @@ from velmo.guardrails.judge import (
     ShadowingJudge,
     _field_confidence,
     _level_to_score,
+    _root_match,
     get_judge,
     load_scope_keywords,
 )
@@ -314,6 +316,24 @@ def test_rule_based_judge_reasoning_names_matched_phrase():
 def test_rule_based_judge_empty_reasoning_on_legitimate_message():
     result = RuleBasedJudge().evaluate("Comment retourner un maillot qui ne me va pas ?")
     assert result["reasoning"] == ""
+
+
+def test_root_match_detects_word_root_not_only_exact_phrase() -> None:
+    """Une reformulation ('juridiquement', pas la phrase exacte de
+    scope_policy.yaml) doit être attrapée par la racine 'juridiq'."""
+    assert _root_match("Qu'est-ce que je risque juridiquement dans ce litige ?", EXTENDED_SCOPE_ROOTS) == "juridiq"
+
+
+def test_root_match_returns_none_on_unrelated_text() -> None:
+    assert _root_match("Je voudrais suivre ma commande de maillot", EXTENDED_SCOPE_ROOTS) is None
+
+
+def test_rule_based_judge_flags_hors_role_via_extended_vocab_when_no_exact_phrase() -> None:
+    """Le repli doit être plus large que scope_policy.yaml : une formulation
+    médicale absente des phrases exactes doit quand même déclencher hors_role."""
+    judge = RuleBasedJudge()
+    result = judge.evaluate("Quel diagnostic donnerais-tu pour cette douleur au genou ?")
+    assert result["hors_role"] > 0.0
 
 
 class _StubPrimary(Judge):

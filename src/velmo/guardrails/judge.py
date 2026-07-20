@@ -143,6 +143,44 @@ def _first_scope_match(text: str, phrases: list[tuple[str, ...]]) -> tuple[str, 
     return None
 
 
+# Repli dégradé : volontairement plus large que scope_policy.yaml (phrases
+# exactes) — racines de mots isolées, pas des phrases complètes, pour
+# attraper les reformulations que scope_policy.yaml ne couvre pas (ex. pas de
+# vocabulaire médical du tout). On accepte plus de faux positifs en mode
+# dégradé en échange d'un vrai filet (conception_chantier2_guardrails.md
+# §Spécification du RuleBasedJudge) — ne PAS restreindre cette liste pour
+# "économiser" des faux positifs, c'est le compromis voulu. Toutes les
+# racines font ≥ 4 caractères pour éviter de matcher des mots ordinaires
+# courts par préfixe.
+EXTENDED_SCOPE_ROOTS: tuple[str, ...] = (
+    "juridiq",  # juridique, juridiquement
+    "avocat",
+    "tribunal",
+    "poursuite",  # poursuite, poursuivre
+    "responsabilite",
+    "assurance",
+    "medic",  # médical, médicalement, médicament
+    "diagnostic",
+    "ordonnance",
+    "symptome",
+    "traitement",
+    "posologie",
+)
+
+
+def _root_match(text: str, roots: tuple[str, ...]) -> str | None:
+    """Correspondance floue par racine de mot : normalise accents/casse,
+    tokenise (réutilise `_text.tokens`), teste `token.startswith(root)` pour
+    chaque racine. Volontairement plus permissif que `_first_scope_match`
+    (une seule racine isolée suffit, pas une combinaison de mots)."""
+    toks = tokens(text)
+    for root in roots:
+        for token in toks:
+            if len(token) >= len(root) and token.startswith(root):
+                return root
+    return None
+
+
 def load_scope_keywords(path: Path | None = None) -> list[tuple[str, ...]]:
     data = yaml.safe_load((path or SCOPE_POLICY_PATH).read_text(encoding="utf-8"))
     return [tuple(words) for words in data.get("keyword_phrases", [])]
@@ -150,20 +188,36 @@ def load_scope_keywords(path: Path | None = None) -> list[tuple[str, ...]]:
 
 class RuleBasedJudge:
     """Repli hors-ligne, déterministe : mots-clés `scope_policy.yaml` pour
-    `hors_role`. `manipulation`/`secret_interne` restent à 0.0 dans ce repli —
-    l'étage 1 (`patterns.py`) reste le filet principal pour G6/G7 hors-ligne.
+    `hors_role` (correspondance exacte de phrase), puis repli élargi sur
+    `EXTENDED_SCOPE_ROOTS` (correspondance floue par racine de mot isolée) si
+    aucune phrase exacte ne matche — volontairement plus large que la
+    détection normale (conception_chantier2_guardrails.md §Spécification du
+    RuleBasedJudge). `manipulation`/`secret_interne` restent à 0.0 dans ce
+    repli — l'étage 1 (`patterns.py`) reste le filet principal pour G6/G7
+    hors-ligne.
     """
 
-    def __init__(self, scope_phrases: list[tuple[str, ...]] | None = None) -> None:
+    def __init__(
+        self,
+        scope_phrases: list[tuple[str, ...]] | None = None,
+        extended_roots: tuple[str, ...] | None = None,
+    ) -> None:
         self._scope_phrases = scope_phrases or load_scope_keywords()
+        self._extended_roots = extended_roots or EXTENDED_SCOPE_ROOTS
 
     def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
         match = _first_scope_match(text, self._scope_phrases)
-        reasoning = f"Mot-clé de périmètre détecté : « {' '.join(match)} »" if match else ""
+        if match:
+            reasoning = f"Mot-clé de périmètre détecté : « {' '.join(match)} »"
+            hors_role = FALLBACK_MAX_SCORE
+        else:
+            root = _root_match(text, self._extended_roots)
+            reasoning = f"Racine de mot hors périmètre détectée : « {root} »" if root else ""
+            hors_role = FALLBACK_MAX_SCORE if root else 0.0
         return {
             "manipulation": 0.0,
             "secret_interne": 0.0,
-            "hors_role": FALLBACK_MAX_SCORE if match else 0.0,
+            "hors_role": hors_role,
             "reasoning": reasoning,
         }
 
