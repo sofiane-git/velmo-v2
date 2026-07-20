@@ -115,6 +115,21 @@ def test_combined_classifier_defaults_lexical_when_not_provided():
     assert scores["violence"] >= 0.7
 
 
+def test_combined_classifier_keeps_lexical_signal_when_primary_raises() -> None:
+    from velmo.guardrails.classifier import ModerationClassifier
+
+    class _BrokenPrimary(ModerationClassifier):
+        def score(self, text: str) -> dict[str, float]:
+            raise ConnectionError("ollama down")
+
+        def score_detailed(self, text: str) -> ClassifierResult:
+            raise ConnectionError("ollama down")
+
+    combined = CombinedClassifier(primary=_BrokenPrimary(), lexical=LexicalClassifier())
+    result = combined.score_detailed("je vais te frapper")
+    assert result.scores["violence"] > 0
+
+
 def test_parse_llama_guard_safe_is_all_zero():
     scores = _parse_llama_guard_response("safe")
     assert scores == {"hate": 0.0, "violence": 0.0, "sexual": 0.0}

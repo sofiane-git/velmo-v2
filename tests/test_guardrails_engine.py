@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from velmo.guardrails import GuardrailEngine
+from velmo.guardrails import CATEGORIES, GuardrailEngine
 from velmo.guardrails.classifier import LexicalClassifier
 
 
@@ -57,9 +57,10 @@ def test_check_input_exposes_empty_hits_on_allow():
     assert decision.hits == []
 
 
-def test_check_output_excludes_internal_availability_category():
-    # "availability" est un flag interne (timeout des étages 2/3), jamais exposé
-    # comme catégorie G1-G7 — vérifie que `Decision.hits` le filtre comme
-    # `self.events`/l'audit le font déjà.
+def test_check_output_only_exposes_known_categories():
+    # Défense en profondeur : `Decision.hits` ne doit jamais exposer une
+    # catégorie hors G1-G7 (le filtre de `_check()` reste en place même si la
+    # panne totale des étages 2/3 émet désormais des hits `method="fallback"`
+    # par catégorie réelle plutôt qu'un flag générique "availability").
     decision = _engine().check_output("Réponse neutre sans rien de particulier.", user_id="u-hits-3")
-    assert all(h.category != "availability" for h in decision.hits)
+    assert all(h.category in CATEGORIES for h in decision.hits)

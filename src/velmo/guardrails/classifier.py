@@ -215,8 +215,15 @@ class CombinedClassifier:
         return self.score_detailed(text).scores
 
     def score_detailed(self, text: str) -> ClassifierResult:
-        primary_result = self._primary.score_detailed(text)
         lexical_result = self._lexical.score_detailed(text)
+        try:
+            primary_result = self._primary.score_detailed(text)
+        except Exception:
+            # Panne du backend primaire (Ollama down/timeout non absorbé) : le
+            # lexical, déjà calculé, reste le seul signal — mieux qu'un échec
+            # total qui priverait aussi la matrice de repli (pipeline.py) du
+            # signal lexical qu'elle aurait pu exploiter.
+            primary_result = ClassifierResult(scores={}, reasoning={})
         scores: dict[str, float] = {}
         reasoning: dict[str, str] = {}
         for category in ("hate", "violence", "sexual"):

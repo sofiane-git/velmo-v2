@@ -38,6 +38,16 @@ JUDGE_KEY_TO_CATEGORY = {
     "secret_interne": "secret_leak",
 }
 
+# Matrice de repli par catégorie (conception_chantier2_guardrails.md §Repli &
+# robustesse) : G1/G2/G3/G5/G6 fail-closed (le risque de laisser passer est
+# pire qu'un refus temporaire) ; G4/G7 fail-open toléré (catégories à
+# filtrage, la regex/Luhn de l'étage 1 reste un filet déterministe local même
+# si les étages 2/3 tombent).
+FAIL_CLOSED_CATEGORIES: frozenset[str] = frozenset(
+    {"hate", "violence", "sexual", "out_of_scope", "prompt_injection"}
+)
+FAIL_OPEN_CATEGORIES: frozenset[str] = frozenset({"pii", "secret_leak"})
+
 # Pool partagé, créé une fois : `check_input`/`check_output` sont sur le
 # chemin critique de chaque tour agent — recréer/détruire 4 threads à chaque
 # appel serait un coût inutile sur le chemin le plus chaud du pipeline.
@@ -173,10 +183,30 @@ def run(
                 )
             )
 
-    if not hits and not any_stage_2_3_responded:
-        # Tous les étages 2/3 ont échoué/timeout et l'étage 1 n'a rien
-        # détecté : zone grise plutôt qu'un passage silencieux ou un blocage
-        # injustifié sur simple indisponibilité réseau.
-        hits.append(Hit(category="availability", method="timeout", action="flag", score=None))
+    if not any_stage_2_3_responded:
+        # Tous les étages 2/3 (classifieur, juge, Prompt Shields[, PII
+        # redaction]) ont échoué/timeout — pas un passage silencieux ni un flag
+        # générique : chaque catégorie dépendante des étages 2/3 applique sa
+        # ligne de la matrice de repli, toujours journalisée.
+        for category in FAIL_CLOSED_CATEGORIES:
+            hits.append(
+                Hit(
+                    category=category,
+                    method="fallback",
+                    action="block",
+                    score=None,
+                    reasoning="Étages 2/3 indisponibles (timeout/erreur) — repli fail-closed.",
+                )
+            )
+        for category in FAIL_OPEN_CATEGORIES:
+            hits.append(
+                Hit(
+                    category=category,
+                    method="fallback",
+                    action="flag",
+                    score=None,
+                    reasoning="Étages 2/3 indisponibles (timeout/erreur) — repli fail-open toléré.",
+                )
+            )
 
     return hits

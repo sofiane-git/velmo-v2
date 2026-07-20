@@ -126,3 +126,56 @@ def test_level_at_escalate_threshold_is_block_escalate():
 
 def test_level_none_score_is_none():
     assert pipeline._level(None) is None
+
+
+def test_total_outage_fails_closed_on_moderation_categories(monkeypatch) -> None:
+    """Si classifieur ET juge ET Prompt Shields échouent tous, G1/G2/G3/G5/G6
+    doivent fail-closed (bloquer), pas juste lever un flag générique silencieux."""
+    from velmo.guardrails import pipeline
+    from velmo.guardrails.classifier import ModerationClassifier
+    from velmo.guardrails.judge import Judge
+
+    class BrokenClassifier(ModerationClassifier):
+        def score(self, text: str) -> dict[str, float]:
+            raise ConnectionError("down")
+
+        def score_detailed(self, text: str):
+            raise ConnectionError("down")
+
+    class BrokenJudge(Judge):
+        def evaluate(self, text: str, agent_response: str | None = None):
+            raise ConnectionError("down")
+
+    hits = pipeline.run(
+        "message quelconque", location="input", classifier=BrokenClassifier(), judge=BrokenJudge()
+    )
+    fallback_hits = {h.category: h for h in hits if h.method == "fallback"}
+    for category in ("hate", "violence", "sexual", "out_of_scope", "prompt_injection"):
+        assert category in fallback_hits
+        assert fallback_hits[category].action == "block"
+
+
+def test_total_outage_fails_open_on_filter_categories(monkeypatch) -> None:
+    """G4/G7 restent fail-open (loggé) même en panne totale — pas de blocage dur."""
+    from velmo.guardrails import pipeline
+    from velmo.guardrails.classifier import ModerationClassifier
+    from velmo.guardrails.judge import Judge
+
+    class BrokenClassifier(ModerationClassifier):
+        def score(self, text: str) -> dict[str, float]:
+            raise ConnectionError("down")
+
+        def score_detailed(self, text: str):
+            raise ConnectionError("down")
+
+    class BrokenJudge(Judge):
+        def evaluate(self, text: str, agent_response: str | None = None):
+            raise ConnectionError("down")
+
+    hits = pipeline.run(
+        "message quelconque", location="output", classifier=BrokenClassifier(), judge=BrokenJudge()
+    )
+    fallback_hits = {h.category: h for h in hits if h.method == "fallback"}
+    for category in ("pii", "secret_leak"):
+        assert category in fallback_hits
+        assert fallback_hits[category].action == "flag"

@@ -140,7 +140,7 @@ class GuardrailEngine:
             bind_user(session, user_id)
             for hit in hits:
                 if hit.category not in CATEGORIES:
-                    continue  # ex. "availability" : flag interne, pas une catégorie G1-G7
+                    continue  # défense en profondeur : toute catégorie hors G1-G7 est ignorée
                 self.events.append(
                     {
                         "user_id": user_id,
