@@ -128,7 +128,7 @@ class LangfuseSink:
     Langfuse est down, `on_llm_call` peut lever — c'est `run_eval` (Task 6)
     qui décide comment isoler ça, pas cette classe elle-même."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self) -> None:
         from langfuse import Langfuse
 
         from velmo.config import get_settings, require
@@ -141,7 +141,6 @@ class LangfuseSink:
             mask=mask_sensitive_data,
         )
         self._trace_id: str = self._client.create_trace_id()
-        self._model = model
 
     def on_llm_call(
         self,
