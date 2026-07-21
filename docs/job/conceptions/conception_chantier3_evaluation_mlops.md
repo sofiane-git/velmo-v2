@@ -22,7 +22,7 @@ fonctionnent quand même. C'est la ligne de partage qui structure tout le docume
 | **DeepEval**                       | Bibliothèque de métriques LLM, **cadrée** : suite Qualité uniquement (G-Eval, answer relevancy, faithfulness). Juge **forcé sur un modèle explicitement qualifié et pinné** (`claude-opus-4-5`, Azure AI Foundry — décision révisée depuis `gpt-5-mini`, cf. [chantier 1](conception_chantier1_memoire.md)). Rubriques versionnées. **N'entre pas dans le gate de R1** (voir §Suites).                                             | **Oui** (suite Qualité)  |
 | **PostgreSQL**                     | `agent_version` (identité d'une version) + `eval_run` (résultat agrégé du gate) + `eval_case_result` (détail par cas). **Source de vérité unique du pass/fail et des agrégats latence/coût qui gatent.** Append-only forcé côté base.                                                | **Oui** (décision)       |
 | **Instrumentation locale**         | Décorateur sur chaque appel LLM (agent, extracteur mémoire Ch.1, classifieur + LLM-juge Ch.2) mesurant `tokens` + `durée` → agrégés (p50/p95, coût/conversation) dans `eval_run`. C'est **cette mesure-là** qui gate.                                                                | **Oui** (SLO)            |
-| **Langfuse (self-host)**           | **Observabilité fine, hors chemin de gate** : trace chaque appel LLM en prod pour le drill-down (quel composant dérape), dashboards, alerting. Branché derrière l'interface `ObservabilitySink`. Self-host (données client = PII, RGPD). `eval_run` ne stocke qu'un **pointeur** (URL de trace), pas la donnée. | Non (observabilité seule) |
+| **Langfuse (Cloud, EU)**           | **Observabilité fine, hors chemin de gate** : trace chaque appel LLM en prod pour le drill-down (quel composant dérape), dashboards, alerting. Branché derrière l'interface `ObservabilitySink`. Cloud EU (projet pédagogique, pas de vraies conversations client en prod — self-host resterait la bonne pratique sinon, voir §Gouvernance). `eval_run` ne stocke qu'un **pointeur** (URL de trace), pas la donnée. | Non (observabilité seule) |
 | **GitHub Actions** (`quality.yml`) | Exécute les suites, calcule les notes, applique les seuils par dimension, écrit `mlops/report.md`.                                                                                                                                                                                  | **Oui** (exécuteur)      |
 | **Git (trunk-based) + GitHub Environments** | `main` = tronc toujours livrable ; `feature/*` courtes ; **tags semver** = releases ; **Environments** `staging`/`production` = cibles de déploiement (pas des branches). Voir §Boucle qualité.                                                                          | Partiel (orchestration)  |
 
@@ -330,7 +330,7 @@ ils gatent, donc ne dépendent pas de Langfuse.
 
 ---
 
-## Observabilité : interface pluggable, Langfuse self-host
+## Observabilité : interface pluggable, Langfuse Cloud (EU)
 
 Le code appelle une interface, pas Langfuse directement :
 
@@ -340,9 +340,10 @@ ObservabilitySink (interface)
 └── run_url(run_id) -> str                              # pointeur stocké dans eval_run
 ```
 
-- **Implémentation par défaut : Langfuse self-host** (OSS, hébergé en interne / région EU).
-  Les conversations client sont des **données personnelles** : le self-host garantit qu'elles
-  ne sortent pas (RGPD — voir §Gouvernance). Langfuse trace **chaque appel LLM en prod** pour
+- **Implémentation par défaut : Langfuse Cloud, région EU** (SaaS — projet pédagogique, pas de
+  vraies conversations client en prod, donc pas de vraie PII à sortir du périmètre interne ;
+  self-host garantirait cette contrainte si le projet traitait un jour de vraies données
+  client — voir §Gouvernance RGPD). Langfuse trace **chaque appel LLM en prod** pour
   le drill-down, les dashboards, l'alerting.
 - **Découplage strict.** Langfuse **n'entre pas dans le calcul du gate** : `eval_run` ne
   stocke qu'une **URL de trace** (`langfuse_trace_url`), jamais les métriques dont dépend la
@@ -555,9 +556,12 @@ critère est explicite, pas « à l'appréciation ».
   changement de cas silencieux.
 - **PII dans les fixtures (RGPD).** `guardrail_cases.jsonl` contient des insultes/contenus
   sensibles et `memory_cases.jsonl` des données de type personnel (adresses, noms). Ce sont
-  des données **synthétiques** — à documenter comme telles. Les traces d'observabilité, elles,
-  contiennent de **vraies** conversations client → Langfuse **self-host**, rétention limitée,
-  accès restreint, anonymisation où possible. À inscrire au registre de traitement RGPD.
+  des données **synthétiques** — à documenter comme telles. Projet pédagogique : aucune
+  **vraie** conversation client ne transite par l'agent, donc aucune vraie PII dans les traces
+  Langfuse Cloud non plus — d'où l'usage du Cloud (EU) plutôt que self-host (§Observabilité).
+  Si ce projet traitait un jour de vraies conversations client, revenir au self-host,
+  rétention limitée, accès restreint, anonymisation où possible, et inscrire au registre de
+  traitement RGPD.
 
 ---
 
@@ -582,7 +586,7 @@ critère est explicite, pas « à l'appréciation ».
 | Absorber la variance du LLM-juge sans bloquer pour du bruit | Qualité en **delta ± 2σ** (N=5 runs) ; mémoire/garde-fous en seuil absolu + retry tracé                            | Seule la qualité est un jugement bruité ; R1–R6/G1–G7 restent vérifiables exactement. |
 | `EVAL_RUN` par version ou par exécution ?                   | **Par exécution** (1 version → N runs)                                                                              | Retry sur flake + nightly sans polluer l'identité de version. |
 | Moteur de métriques qualité : fait main ou biblio ?         | **DeepEval, cadré** : qualité seule, juge `claude-opus-4-5` pinné (Azure AI Foundry), rubriques versionnées, R1 hors gate | Métriques calibrées sans réinventer un juge ; mais on ne laisse pas une exigence non négociable dépendre d'un score flou. |
-| Observabilité : quel outil, quel rôle ?                     | **Langfuse self-host**, derrière `ObservabilitySink`, **hors chemin de gate**                                      | Trace fine + RGPD maîtrisé (self-host) ; découplage strict pour que Langfuse down ne casse ni CI ni gate. |
+| Observabilité : quel outil, quel rôle ?                     | **Langfuse Cloud (EU)**, derrière `ObservabilitySink`, **hors chemin de gate**                                     | Projet pédagogique (pas de vraie PII client) → Cloud EU pour un setup rapide ; interface `ObservabilitySink` laisse la porte ouverte à un `LangfuseSink` self-host si le projet traite un jour de vraies données ; découplage strict pour que Langfuse down ne casse ni CI ni gate. |
 | Identité de version : outil tiers ou git ?                  | **Hash git** des fichiers (prompt + configs) ; tag semver au release                                               | Git est déjà la source de vérité du prompt ; l'identité ne doit pas dépendre d'un service up. |
 | Stratégie de branches ?                                     | **Trunk-based** : `main` toujours livrable + `feature/*` courtes + **tags semver** + **GitHub Environments**       | Aligné continuous delivery ; supprime `develop` et le double-merge hotfix ; environnements = cibles de déploiement, pas branches. |
 | Environnement de test avant la prod ?                       | **Oui** : `main`→staging en continu, suites rejouées à la release, approbation via Environment `production`        | `main` reste toujours livrable ; on ne promeut en prod qu'un artefact validé en conditions réelles. |
@@ -602,7 +606,7 @@ critère est explicite, pas « à l'appréciation ».
 | Outil envisagé                          | Écarté / cadré au profit de                                              | Raison |
 | --------------------------------------- | ------------------------------------------------------------------------ | ------ |
 | Langfuse comme **backbone** (Prompt Mgmt = version, Dataset Runs) | Langfuse **observabilité seule**, versioning git, gate en Postgres | Ne pas coupler l'identité de version ni le blocage CI à un service tiers up. |
-| **LangSmith** (LangChain-natif)         | **Langfuse self-host**                                                    | RGPD : conversations client = PII ; LangSmith est SaaS-first (données hors EU sans plan dédié). Self-host garde la donnée en interne. |
+| **LangSmith** (LangChain-natif)         | **Langfuse Cloud (EU)**                                                   | Langfuse propose une région EU explicite et une trajectoire self-host si le projet passe un jour en vraie prod (RGPD, conversations client = PII) ; LangSmith est SaaS-first sans cette option, moins pertinent même pour un usage pédagogique. |
 | **DeepEval** pour tout (dont R1)        | DeepEval **qualité seule**, R1 déterministe                              | Une exigence mémoire non négociable ne peut pas dépendre d'une métrique LLM flaky. |
 | Juge **fait main** pour la qualité      | **DeepEval** (cadré)                                                      | Métriques déjà calibrées (G-Eval, faithfulness) — inutile de réinventer. |
 | **GitFlow simplifié** (`develop`+`hotfix/*`) | **Trunk-based** + tags + Environments                               | Pas de trains de release parallèles ici ; supprime `develop` et le double-merge hotfix. |
