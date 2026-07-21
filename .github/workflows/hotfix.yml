@@ -1,0 +1,28 @@
+name: hotfix
+
+on:
+  push:
+    branches: ["hotfix/**"]
+
+jobs:
+  hotfix-reduced-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.11
+      - run: uv sync
+      - name: Garde-fous + mémoire uniquement (qualité bruitée, non bloquante en urgence)
+        run: |
+          uv run python -c "
+          from velmo.mlops.suites.memory import run_memory_suite
+          from velmo.mlops.suites.guardrails import run_guardrails_suite
+          mem = run_memory_suite()
+          gr = run_guardrails_suite()
+          failed = [r.case_id for r in mem + gr if not r.passed]
+          if failed:
+              raise SystemExit(f'Cas échoués : {failed}')
+          print('Garde-fous + mémoire OK')
+          "
+      - name: Qualité en async (non bloquant) — informative seulement
+        run: uv run python -m velmo.mlops.score --min-score 0.0 --triggered-by hotfix || true

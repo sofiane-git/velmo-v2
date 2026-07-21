@@ -1,0 +1,42 @@
+name: nightly
+
+on:
+  schedule:
+    # Tous les jours à 3h UTC — le job lui-même décide s'il doit vraiment
+    # tourner en entier (1re nuit après un tag) ou en version allégée
+    # (hebdomadaire sur version stable), cf. conception_chantier3_evaluation_mlops.md
+    # §Coût par étape : « rejouer 3 suites LLM chaque nuit sur une version
+    # inchangée dépense un budget Azure pour zéro information nouvelle ».
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  nightly-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `fetch-depth: 0` (historique + tags complets) est indispensable
+          # ici : `git describe --tags`/`git log` ci-dessous doivent voir les
+          # tags réels pour détecter "1re nuit après un tag" — un checkout
+          # superficiel (défaut de l'action) ne les voit pas et cette
+          # branche ne se déclencherait jamais (dégradation silencieuse vers
+          # "hebdo lundi seulement").
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.11
+      - run: uv sync
+      - name: Décide si le nightly complet doit tourner (1re nuit post-tag, ou hebdo)
+        id: gate
+        run: |
+          LAST_TAG_DATE=$(git log -1 --format=%cd --date=short $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD))
+          TODAY=$(date -u +%Y-%m-%d)
+          DAY_OF_WEEK=$(date -u +%u)
+          if [ "$LAST_TAG_DATE" = "$TODAY" ] || [ "$DAY_OF_WEEK" = "1" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: 3 suites (si applicable)
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python -m velmo.mlops.score --min-score 0.0 --triggered-by nightly
