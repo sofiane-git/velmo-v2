@@ -26,7 +26,7 @@ flowchart TB
         end
 
         subgraph OBS["📡 Observabilité"]
-            LF[("Langfuse (self-host)<br/>observabilité seule : trace chaque appel LLM<br/>coût, latence — HORS chemin de gate")]
+            LF[("Langfuse (Cloud, EU)<br/>observabilité seule : trace chaque appel LLM<br/>coût, latence — HORS chemin de gate")]
         end
 
         JSONL --> DE --> GHA
@@ -106,7 +106,7 @@ chantier indiqué.
 | ----- | ---- | -------------------------- |
 | **GitHub Actions** | Exécute les 3 suites + applique le gate `min(dimensions)` | CI GitHub imposée par le brief, intégrée au repo. **Alt écartée** : autre CI → hors brief. |
 | **GitHub trunk-based + Environments** | `main` toujours livrable + `feature/*` + **tags** = releases ; Environments = cibles de déploiement | Sobre, aligné continuous delivery ; approbation manuelle portée par l'Environment `production`. **Alt écartée** : **GitFlow** → `develop` + double-merge hotfix = poids mort sans trains de release parallèles. |
-| **Langfuse (self-host)** | Observabilité : trace chaque appel LLM (coût, latence) — **hors chemin de gate** | Self-host = conversations client (**PII**) restent internes (**RGPD**) ; **découplé** du gate (Langfuse down ≠ CI cassée) ; versioning = hash git, pas Prompt Management. **Alt écartée** : **LangSmith** → SaaS hors-EU (RGPD) ; mettre les métriques-gate dans Langfuse → couplage à un tiers ; recalcul manuel → désync du code. |
+| **Langfuse (Cloud, EU)** | Observabilité : trace chaque appel LLM (coût, latence) — **hors chemin de gate** | Projet pédagogique, pas de vraie PII client en prod → Cloud EU pour un setup rapide (self-host resterait la bonne pratique en vraie prod, RGPD) ; **découplé** du gate (Langfuse down ≠ CI cassée) ; versioning = hash git, pas Prompt Management. **Alt écartée** : **LangSmith** → SaaS sans région EU explicite ni option self-host ; mettre les métriques-gate dans Langfuse → couplage à un tiers ; recalcul manuel → désync du code. |
 
 ---
 

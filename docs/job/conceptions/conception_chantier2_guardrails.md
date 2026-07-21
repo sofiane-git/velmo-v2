@@ -25,7 +25,7 @@
 > DeepEval pourrait throttler le juge garde-fous au pire moment. Déploiement séparé (même
 > modèle, quota isolé) : coût d'un 2ᵉ déploiement Azure à provisionner, pas d'un 2ᵉ modèle à
 > qualifier. **Région UE** pour tout déploiement traitant du contenu client en clair (cohérence
-> RGPD avec Langfuse self-host EU, Ch.3). **Quota standard (pay-as-you-go)** au démarrage —
+> RGPD avec Langfuse Cloud EU, Ch.3). **Quota standard (pay-as-you-go)** au démarrage —
 > Provisioned Throughput Unit (PTU, capacité réservée, coût plus élevé) envisagé seulement si
 > le taux de throttling réel mesuré en prod le justifie, pas en prévention.
 
