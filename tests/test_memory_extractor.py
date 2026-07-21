@@ -24,6 +24,16 @@ def test_shoe_size_extracted():
     assert fact.confidence >= 0.7
 
 
+def test_shoe_size_numeric_pointure_extracted_from_assistant_trigger():
+    """La pointure numerique est capturee meme quand le mot declencheur
+    ("pointure") n'apparait que dans la reformulation de l'assistant."""
+    result = RuleBasedExtractor().extract(
+        "Pour info je fais du 42 en maillot.", "Note : pointure 42."
+    )
+    fact = next(f for f in result.facts if f.key == "shoe_size")
+    assert fact.value == "42"
+
+
 def test_clubs_extracted():
     result = RuleBasedExtractor().extract("Mes clubs preferes sont l'OM et le Bresil.", "Note.")
     assert "clubs" in _keys(result)

@@ -53,7 +53,8 @@ def _norm(s: str) -> str:
     return _strip_accents(s.lower())
 
 
-_SIZE_RE = re.compile(r"\b(XXL|XL|S|M|L)\b")
+_SIZE_LETTER_RE = re.compile(r"\b(XXL|XL|S|M|L)\b")
+_SIZE_NUMERIC_RE = re.compile(r"\b(\d{2})\b")
 
 _SIZE_TRIGGERS = ("taille", "pointure")
 _CLUB_TRIGGERS = ("club", "clubs", "equipe", "equipes")
@@ -83,8 +84,14 @@ class RuleBasedExtractor:
         low = _norm(user_message)
         facts: list[ExtractedFact] = []
 
-        if any(t in low for t in _SIZE_TRIGGERS):
-            m = _SIZE_RE.search(user_message)
+        # Le mot déclencheur ("pointure") apparaît parfois seulement dans la
+        # reformulation de l'assistant (ex. client: "je fais du 42 en
+        # maillot" / assistant: "Note : pointure 42.") — on vérifie donc les
+        # deux messages, pas seulement celui du client.
+        if any(t in low for t in _SIZE_TRIGGERS) or any(
+            t in _norm(assistant_message) for t in _SIZE_TRIGGERS
+        ):
+            m = _SIZE_LETTER_RE.search(user_message) or _SIZE_NUMERIC_RE.search(user_message)
             if m:
                 facts.append(
                     ExtractedFact(
