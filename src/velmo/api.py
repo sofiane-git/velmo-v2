@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,7 @@ from velmo.mlops.observability import (
     InstrumentedExtractor,
     InstrumentedJudge,
     InstrumentedLLM,
+    get_langfuse_client,
     traced_reply,
     traced_respond,
 )
@@ -27,6 +29,21 @@ from velmo.mlops.observability import (
 from .agent import Agent, build_default_agent
 from .db import Customer
 from .tools._common import select
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+    # Le client Langfuse partagé (`get_langfuse_client`, Task 2) bufferise en
+    # arrière-plan (OTel `BatchSpanProcessor`) — sans `flush()` explicite à
+    # l'arrêt, les spans du dernier lot (fin de vie du process : redéploiement,
+    # `--reload`, arrêt normal) sont perdus avant le prochain cycle
+    # d'auto-export périodique. Même raison que `LangfuseSink.close()` côté
+    # gate CI (`mlops/cli.py`), appliquée ici au client partagé plutôt qu'à un
+    # sink par tour.
+    client = get_langfuse_client()
+    if client is not None:
+        client.flush()
 
 # Échoue tôt si une intégration Azure est à moitié configurée (endpoint sans
 # clé ou l'inverse) — avant que le process ne serve du trafic, pas à la
@@ -38,6 +55,7 @@ app = FastAPI(
     title="Velmo 2.0 API",
     description="API pour l'agent de support Velmo 2.0 (boutique de maillots de foot collector).",
     version="2.0.0",
+    lifespan=_lifespan,
 )
 
 # Outil de démo interne sans authentification (cf. spec) : le frontend Nuxt

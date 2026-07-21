@@ -73,19 +73,29 @@ def main() -> None:
         _run_purge()
         return
 
-    from velmo.mlops.observability import traced_reply
+    from velmo.mlops.observability import get_langfuse_client, traced_reply
 
     agent = _build_traced_agent()
     print(f"Velmo 2.0 prêt (client {args.user}). Posez votre question (Ctrl+C pour quitter).")
-    while True:
-        try:
-            message = input("\nVous : ").strip()
-            if not message:
-                continue
-            print(f"\nVelmo : {traced_reply(agent, args.user, message)}")
-        except (KeyboardInterrupt, EOFError):
-            print("\nÀ bientôt !")
-            break
+    try:
+        while True:
+            try:
+                message = input("\nVous : ").strip()
+                if not message:
+                    continue
+                print(f"\nVelmo : {traced_reply(agent, args.user, message)}")
+            except (KeyboardInterrupt, EOFError):
+                print("\nÀ bientôt !")
+                break
+    finally:
+        # REPL courte durée de vie (sortie sur Ctrl+C/EOF) : sans `flush()`
+        # explicite, le client Langfuse partagé (`get_langfuse_client`, Task 2)
+        # peut perdre les derniers spans bufferisés avant le prochain cycle
+        # d'auto-export périodique — même raison que `_lifespan` côté API
+        # (`api.py`) et `LangfuseSink.close()` côté gate CI (`mlops/cli.py`).
+        client = get_langfuse_client()
+        if client is not None:
+            client.flush()
 
 
 if __name__ == "__main__":
