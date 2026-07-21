@@ -8,6 +8,7 @@ n'est jamais exposée comme outil au LLM — elle encadre l'appel LLM côté
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -312,7 +313,11 @@ class MemoryManager:
             session.close()
 
         future = _BACKGROUND_EXECUTOR.submit(
-            self._extract_and_persist, user_id, user_message, assistant_message
+            contextvars.copy_context().run,
+            self._extract_and_persist,
+            user_id,
+            user_message,
+            assistant_message,
         )
         try:
             return future.result(timeout=_EXTRACTION_WAIT_S if background else None)

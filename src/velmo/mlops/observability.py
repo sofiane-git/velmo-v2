@@ -15,6 +15,7 @@ acceptent déjà ces composants en injection de constructeur.
 
 from __future__ import annotations
 
+import contextvars
 import time
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Protocol
@@ -80,6 +81,27 @@ class NullSink:
 
     def run_url(self, run_id: str) -> str | None:
         return None
+
+
+_current_sink: contextvars.ContextVar[ObservabilitySink] = contextvars.ContextVar(
+    "velmo_current_observability_sink", default=NullSink()
+)
+
+
+def set_current_sink(sink: ObservabilitySink) -> "contextvars.Token[ObservabilitySink]":
+    """Pose le sink pour tout `Instrumented*` construit avec `sink=None` dans
+    le contexte courant — utilisé par `traced_respond` (Task 5) pour donner
+    à l'agent un sink différent à chaque tour de conversation sans
+    reconstruire `MemoryManager`/`GuardrailEngine` (coûteux, singletons)."""
+    return _current_sink.set(sink)
+
+
+def reset_current_sink(token: "contextvars.Token[ObservabilitySink]") -> None:
+    _current_sink.reset(token)
+
+
+def _resolve_sink(explicit: ObservabilitySink | None) -> ObservabilitySink:
+    return explicit if explicit is not None else _current_sink.get()
 
 
 class CostAccumulatingSink:
@@ -262,7 +284,9 @@ class InstrumentedLLM:
     `MemoryManager.llm`, tous deux injectables par constructeur) pour émettre
     un `on_llm_call` par appel."""
 
-    def __init__(self, inner: "LLM", sink: ObservabilitySink, component: str, model: str) -> None:
+    def __init__(
+        self, inner: "LLM", sink: ObservabilitySink | None, component: str, model: str
+    ) -> None:
         self._inner = inner
         self._sink = sink
         self._component = component
@@ -274,7 +298,7 @@ class InstrumentedLLM:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(system, context, message, result)
         cost = estimate_cost(tokens, self._model)
-        self._sink.on_llm_call(
+        _resolve_sink(self._sink).on_llm_call(
             self._component, tokens, latency_ms, cost,
             input=message, output=result, model=self._model,
         )
@@ -286,7 +310,7 @@ class InstrumentedExtractor:
     composant "extracteur mémoire" de l'instrumentation locale."""
 
     def __init__(
-        self, inner: "FactExtractor", sink: ObservabilitySink, component: str, model: str
+        self, inner: "FactExtractor", sink: ObservabilitySink | None, component: str, model: str
     ) -> None:
         self._inner = inner
         self._sink = sink
@@ -299,7 +323,7 @@ class InstrumentedExtractor:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(user_message, assistant_message)
         cost = estimate_cost(tokens, self._model)
-        self._sink.on_llm_call(
+        _resolve_sink(self._sink).on_llm_call(
             self._component, tokens, latency_ms, cost,
             input=user_message, output=str(result), model=self._model,
         )
@@ -313,7 +337,7 @@ class InstrumentedClassifier:
     Ollama/lexique) n'est pas facturé au token Azure."""
 
     def __init__(
-        self, inner: "ModerationClassifier", sink: ObservabilitySink, component: str
+        self, inner: "ModerationClassifier", sink: ObservabilitySink | None, component: str
     ) -> None:
         self._inner = inner
         self._sink = sink
@@ -323,7 +347,7 @@ class InstrumentedClassifier:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(text)
         cost = estimate_cost(tokens, "local-classifier")
-        self._sink.on_llm_call(
+        _resolve_sink(self._sink).on_llm_call(
             self._component, tokens, latency_ms, cost,
             input=text, output=str(output), model="local-classifier",
         )
@@ -345,7 +369,9 @@ class InstrumentedJudge:
     """Enveloppe un `Judge` (`GuardrailEngine.judge`, injectable) — composant
     "LLM-juge Ch.2" de l'instrumentation locale."""
 
-    def __init__(self, inner: "Judge", sink: ObservabilitySink, component: str, model: str) -> None:
+    def __init__(
+        self, inner: "Judge", sink: ObservabilitySink | None, component: str, model: str
+    ) -> None:
         self._inner = inner
         self._sink = sink
         self._component = component
@@ -357,7 +383,7 @@ class InstrumentedJudge:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(text, agent_response or "")
         cost = estimate_cost(tokens, self._model)
-        self._sink.on_llm_call(
+        _resolve_sink(self._sink).on_llm_call(
             self._component, tokens, latency_ms, cost,
             input=text, output=str(result), model=self._model,
         )

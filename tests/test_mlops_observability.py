@@ -211,3 +211,36 @@ def test_get_langfuse_client_falls_back_to_none_without_config(monkeypatch) -> N
     monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
     get_langfuse_client.cache_clear()
     assert get_langfuse_client() is None
+
+
+def test_instrumented_llm_resolves_sink_from_context_when_none_given() -> None:
+    from velmo.mlops.observability import reset_current_sink, set_current_sink
+
+    sink = _RecordingSink()
+    token = set_current_sink(sink)
+    try:
+        llm = InstrumentedLLM(_FakeLLM(), None, "agent", "gpt-5-mini")
+        llm.invoke("system", "context", "message")
+    finally:
+        reset_current_sink(token)
+    assert len(sink.calls) == 1
+
+
+def test_instrumented_llm_explicit_sink_wins_over_context() -> None:
+    from velmo.mlops.observability import reset_current_sink, set_current_sink
+
+    context_sink = _RecordingSink()
+    explicit_sink = _RecordingSink()
+    token = set_current_sink(context_sink)
+    try:
+        llm = InstrumentedLLM(_FakeLLM(), explicit_sink, "agent", "gpt-5-mini")
+        llm.invoke("system", "context", "message")
+    finally:
+        reset_current_sink(token)
+    assert len(explicit_sink.calls) == 1
+    assert len(context_sink.calls) == 0
+
+
+def test_instrumented_llm_defaults_to_null_sink_outside_any_context() -> None:
+    llm = InstrumentedLLM(_FakeLLM(), None, "agent", "gpt-5-mini")
+    assert llm.invoke("system", "context", "message") == "reponse"  # ne doit pas lever

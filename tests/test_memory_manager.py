@@ -407,9 +407,37 @@ def test_concurrent_writes_do_not_corrupt_shared_checkpointer() -> None:
     for t in threads:
         t.join(timeout=30)
 
+
     assert not errors, f"écriture(s) concurrente(s) en échec : {errors}"
 
     contents = [content for _, content in mm.read(user, "recap ?").history]
     for i in range(n):
         assert f"message numero {i}" in contents
         assert f"reponse numero {i}" in contents
+
+
+def test_write_background_extraction_sees_contextvars_set_by_caller() -> None:
+    """`_BACKGROUND_EXECUTOR.submit` ne propage pas les ContextVar par défaut
+    (stdlib) — sans le fix `contextvars.copy_context().run(...)`, un sink
+    d'observabilité posé par l'appelant (API live, un par tour) ne serait
+    jamais vu par l'extraction mémoire en arrière-plan et retomberait
+    silencieusement sur NullSink."""
+    import contextvars
+
+    from velmo.memory.extractor import ExtractionResult
+
+    probe: contextvars.ContextVar[str] = contextvars.ContextVar("probe", default="missing")
+    seen: list[str] = []
+
+    class _ProbeExtractor:
+        def extract(self, user_message, assistant_message):
+            seen.append(probe.get())
+            return ExtractionResult()
+
+    mm = _mm(extractor=_ProbeExtractor())
+    token = probe.set("set-by-caller")
+    try:
+        mm.write("user-ctx-probe", "bonjour", "bonjour a vous", background=False)
+    finally:
+        probe.reset(token)
+    assert seen == ["set-by-caller"]
