@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import statistics
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -51,6 +52,17 @@ class Scores:
     false_positive_rate: float
     latency_ms: float
     cost: float
+
+
+@dataclass(frozen=True)
+class GateEvent:
+    """Un pas de `run_eval_steps` : une suite qui vient de finir
+    (`stage="suite_done"`), ou l'agrégat final (`stage="final"`). `payload`
+    reste un `dict` JSON-serialisable (pas de `Scores` imbriqué) — c'est ce
+    que l'API `/mlops/gate/run` sérialise directement en SSE."""
+
+    stage: Literal["suite_done", "final"]
+    payload: dict[str, object]
 
 
 class DeliveryBlocked(Exception):
@@ -100,40 +112,66 @@ def _fetch_previous_quality_scores(session: Session) -> list[float]:
     return [c.score for c in cases]
 
 
-def run_eval(
+def run_eval_steps(
     agent: Evaluable,
     *,
     db_url: str | None = None,
     triggered_by: str = "manual",
     sink: ObservabilitySink | None = None,
-) -> Scores:
+) -> Iterator[GateEvent]:
     """Exécute les trois suites (mémoire, garde-fous, qualité), calcule les
-    notes, persiste `AgentVersion`/`EvalRun`/`EvalCaseResult`.
+    notes, persiste `AgentVersion`/`EvalRun`/`EvalCaseResult` — même
+    comportement que l'ancien `run_eval` (Task 6 d'origine), refactorisé en
+    générateur pour que l'API `/mlops/gate/run` (chantier GUI) puisse
+    diffuser la progression en direct. `run_eval()` ci-dessous consomme ce
+    générateur jusqu'au bout et reste inchangé en signature/comportement pour
+    tous ses appelants existants (CLI, tests d'acceptance).
 
     `db_url=None` est transmis tel quel aux suites et à `make_mlops_engine` —
-    chacun résout alors `Settings.db_url` indépendamment (Postgres si
-    joignable, sinon repli SQLite fichier). Ne jamais forcer un `:memory:` par
-    défaut ici : un appel `run_eval(agent)` en CI/nightly réelle doit
-    respecter la base configurée, pas une base éphémère silencieuse.
-
-    Si `sink` est déjà un `CostAccumulatingSink` (cas du CLI — Task 8 —, qui
-    en construit un pour instrumenter l'agent évalué lui-même AVANT
-    d'appeler `run_eval`), il est réutilisé tel quel plutôt que ré-enveloppé :
-    un double-wrap créerait un second accumulateur qui ne verrait jamais les
-    appels LLM de l'agent (câblés sur le premier), sous-comptant le coût réel
-    — c'est justement le bug que ce partage évite (voir `mlops.cli`)."""
+    chacun résout alors `Settings.db_url` indépendamment. Si `sink` est déjà
+    un `CostAccumulatingSink` (cas du CLI/API, qui en construisent un pour
+    instrumenter l'agent évalué AVANT d'appeler ceci), il est réutilisé tel
+    quel plutôt que ré-enveloppé."""
     sink = sink or NullSink()
     cost_sink = sink if isinstance(sink, CostAccumulatingSink) else CostAccumulatingSink(sink)
 
     memory_results = run_memory_suite(db_url=db_url, sink=cost_sink)
-    guardrails_results = run_guardrails_suite(db_url=db_url, sink=cost_sink)
-    quality_results = run_quality_suite(agent, db_url=db_url)
-
     note_memory = _pass_rate(memory_results)
+    yield GateEvent(
+        "suite_done",
+        {
+            "suite": "memory",
+            "cases": len(memory_results),
+            "passed": sum(1 for r in memory_results if r.passed),
+            "note": note_memory,
+        },
+    )
+
+    guardrails_results = run_guardrails_suite(db_url=db_url, sink=cost_sink)
     recall, fpr = guardrails_confusion_matrix(guardrails_results)
     note_guardrails = 0.6 * recall + 0.4 * (1 - fpr)
+    yield GateEvent(
+        "suite_done",
+        {
+            "suite": "guardrails",
+            "cases": len(guardrails_results),
+            "passed": sum(1 for r in guardrails_results if r.passed),
+            "note": note_guardrails,
+        },
+    )
+
+    quality_results = run_quality_suite(agent, db_url=db_url)
     quality_scores = [r.score for r in quality_results]
     note_quality = statistics.mean(quality_scores) if quality_scores else 0.0
+    yield GateEvent(
+        "suite_done",
+        {
+            "suite": "quality",
+            "cases": len(quality_results),
+            "passed": sum(1 for r in quality_results if r.passed),
+            "note": note_quality,
+        },
+    )
 
     note_globale = 0.4 * note_memory + 0.4 * note_guardrails + 0.2 * note_quality
 
@@ -141,15 +179,6 @@ def run_eval(
     latencies = sorted(r.latency_ms for r in all_results)
     latency_p50 = _percentile(latencies, 0.5)
     latency_p95 = _percentile(latencies, 0.95)
-    # Coût : `cost_sink` (Task 5, `CostAccumulatingSink`) additionne chaque
-    # `on_llm_call(..., cost=...)` émis par les composants instrumentés des
-    # suites — `0.0` seulement si les composants sont restés en repli local
-    # (`EchoLLM`/`LexicalClassifier`, coût nul par construction, cf.
-    # `estimate_cost`), jamais un placeholder inconditionnel. Le SLO
-    # (conception §Gates non-fonctionnels) est un coût **par conversation**
-    # (0,05 €), pas un total sur l'ensemble des cas des 3 suites : diviser par
-    # le nombre de conversations évaluées est nécessaire pour que le gate
-    # compare des grandeurs homogènes (voir aussi `EvalRun.cost_per_conv`).
     cost = cost_sink.total_cost / len(all_results) if all_results else 0.0
 
     hashes = compute_version_hashes()
@@ -161,11 +190,6 @@ def run_eval(
     session = session_factory()
     try:
         baseline_quality_scores = _fetch_previous_quality_scores(session)
-        # Qualité : dimension bruitée (jugement LLM) — le gate ne compare pas
-        # `note_quality` brute au plancher, mais son delta à la baseline
-        # (2σ, M4). Sans baseline (1er run), rien à comparer : la dimension
-        # ne peut pas encore échouer pour "régression" (mais reste soumise au
-        # `min()` comme les 2 autres dimensions).
         quality_gate_score = note_quality
         if baseline_quality_scores and quality_scores:
             if not non_regression_ok(baseline_quality_scores, quality_scores):
@@ -215,15 +239,52 @@ def run_eval(
     finally:
         session.close()
 
+    yield GateEvent(
+        "final",
+        {
+            "note_memory": note_memory,
+            "note_guardrails": note_guardrails,
+            "note_quality": note_quality,
+            "note_globale": note_globale,
+            "global_gate": global_gate,
+            "gate_passed": global_gate >= 0.80,
+            "block_rate": recall,
+            "false_positive_rate": fpr,
+            "latency_p50_ms": latency_p50,
+            "latency_p95_ms": latency_p95,
+            "cost_per_conv": cost,
+            "run_id": run_id,
+            "version_tag": version_tag,
+        },
+    )
+
+
+def run_eval(
+    agent: Evaluable,
+    *,
+    db_url: str | None = None,
+    triggered_by: str = "manual",
+    sink: ObservabilitySink | None = None,
+) -> Scores:
+    """Comportement et signature inchangés — consomme `run_eval_steps`
+    jusqu'à son événement `final` et reconstruit `Scores` à l'identique.
+    Voir `run_eval_steps` pour le détail étape par étape (utilisé par l'API
+    `/mlops/gate/run` pour diffuser la progression en direct)."""
+    final_payload: dict[str, object] | None = None
+    for event in run_eval_steps(agent, db_url=db_url, triggered_by=triggered_by, sink=sink):
+        if event.stage == "final":
+            final_payload = event.payload
+    assert final_payload is not None  # run_eval_steps yields exactly one "final" event
+
     return Scores(
-        memory=note_memory,
-        guardrails=note_guardrails,
-        quality=note_quality,
-        global_=global_gate,
-        block_rate=recall,
-        false_positive_rate=fpr,
-        latency_ms=latency_p95,
-        cost=cost,
+        memory=final_payload["note_memory"],  # type: ignore[arg-type]
+        guardrails=final_payload["note_guardrails"],  # type: ignore[arg-type]
+        quality=final_payload["note_quality"],  # type: ignore[arg-type]
+        global_=final_payload["global_gate"],  # type: ignore[arg-type]
+        block_rate=final_payload["block_rate"],  # type: ignore[arg-type]
+        false_positive_rate=final_payload["false_positive_rate"],  # type: ignore[arg-type]
+        latency_ms=final_payload["latency_p95_ms"],  # type: ignore[arg-type]
+        cost=final_payload["cost_per_conv"],  # type: ignore[arg-type]
     )
 
 

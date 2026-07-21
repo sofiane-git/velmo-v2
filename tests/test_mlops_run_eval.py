@@ -63,3 +63,33 @@ def test_run_eval_degraded_agent_scores_lower_than_reference() -> None:
     good = run_eval(build_reference_agent())
     degraded = run_eval(build_degraded_agent())
     assert degraded.global_ < good.global_
+
+
+def test_run_eval_steps_yields_ordered_suite_then_final_events(tmp_path) -> None:
+    from velmo.mlops import run_eval_steps
+
+    db_url = f"sqlite:///{tmp_path}/mlops_steps.db"
+    events = list(run_eval_steps(build_reference_agent(), db_url=db_url))
+    assert [e.stage for e in events] == ["suite_done", "suite_done", "suite_done", "final"]
+    assert [e.payload["suite"] for e in events[:3]] == ["memory", "guardrails", "quality"]
+    for event in events[:3]:
+        assert event.payload["cases"] > 0
+        assert 0.0 <= event.payload["note"] <= 1.0
+
+
+def test_run_eval_steps_final_event_matches_run_eval_scores(tmp_path) -> None:
+    from velmo.mlops import run_eval, run_eval_steps
+
+    db_url_a = f"sqlite:///{tmp_path}/mlops_steps_a.db"
+    db_url_b = f"sqlite:///{tmp_path}/mlops_steps_b.db"
+    scores = run_eval(build_reference_agent(), db_url=db_url_a)
+    events = list(run_eval_steps(build_reference_agent(), db_url=db_url_b))
+    final = events[-1].payload
+
+    assert final["note_memory"] == scores.memory
+    assert final["note_guardrails"] == scores.guardrails
+    assert final["note_quality"] == scores.quality
+    assert final["global_gate"] == scores.global_
+    assert final["gate_passed"] == (scores.global_ >= 0.80)
+    assert isinstance(final["run_id"], str)
+    assert isinstance(final["version_tag"], str)
