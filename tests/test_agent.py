@@ -231,3 +231,19 @@ def test_respond_delegates_to_respond_traced_and_returns_final_answer():
     direct_answer = agent.respond("trace-3", "Bonjour")
     assert direct_answer  # non vide
     assert isinstance(traced_answer, str)
+
+
+def test_build_default_agent_accepts_component_overrides() -> None:
+    from velmo.agent import Agent, build_default_agent
+    from velmo.guardrails import GuardrailEngine
+    from velmo.llm import EchoLLM
+    from velmo.memory import MemoryManager
+
+    llm = EchoLLM()
+    memory = MemoryManager(db_url="sqlite:///:memory:", llm=llm)
+    guardrails = GuardrailEngine(db_url="sqlite:///:memory:")
+    agent = build_default_agent(llm=llm, memory=memory, guardrails=guardrails)
+    assert isinstance(agent, Agent)
+    assert agent.llm is llm
+    assert agent.memory is memory
+    assert agent.guardrails is guardrails

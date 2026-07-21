@@ -503,8 +503,21 @@ class Agent:
         return f"D'après notre FAQ ({top['source']}) : {top['snippet']}"
 
 
-def build_default_agent(session: Session | None = None, kb: KnowledgeBase | None = None) -> Agent:
-    """Assemble un agent avec composants par défaut, base et FAQ."""
+def build_default_agent(
+    session: Session | None = None,
+    kb: KnowledgeBase | None = None,
+    llm: LLM | None = None,
+    memory: MemoryManager | None = None,
+    guardrails: GuardrailEngine | None = None,
+) -> Agent:
+    """Assemble un agent avec composants par défaut, base et FAQ.
+
+    `llm`/`memory`/`guardrails` : overrides optionnels (même convention
+    d'injection que `MemoryManager`/`GuardrailEngine` elles-mêmes) — sans
+    argument, comportement strictement identique à avant. Utilisé par
+    `mlops.cli` (Chantier 3, Task 8) pour instrumenter chaque composant sans
+    coupler ce module à `velmo.mlops` (la dépendance reste `mlops → agent`,
+    jamais l'inverse)."""
     from .db import session_factory
     from .kb_store import get_kb
     from .memory.extractor import LLMExtractor
@@ -513,11 +526,10 @@ def build_default_agent(session: Session | None = None, kb: KnowledgeBase | None
         session = session_factory()()
     if kb is None:
         kb = get_kb()
-    llm = get_llm()
-    return Agent(
-        llm=llm,
-        memory=MemoryManager(extractor=LLMExtractor(llm)),
-        guardrails=GuardrailEngine(),
-        session=session,
-        kb=kb,
-    )
+    if llm is None:
+        llm = get_llm()
+    if memory is None:
+        memory = MemoryManager(extractor=LLMExtractor(llm))
+    if guardrails is None:
+        guardrails = GuardrailEngine()
+    return Agent(llm=llm, memory=memory, guardrails=guardrails, session=session, kb=kb)
