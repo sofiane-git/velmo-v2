@@ -45,8 +45,9 @@ az group create --name "$RG" --location "$LOCATION"
 ## 1. Région : pourquoi `francecentral` (ou toute région UE)
 
 Décision de conception : tout déploiement traitant du contenu client en clair (conversations,
-donc PII réelle) doit être en **région UE**, cohérent avec le choix Langfuse self-host EU
-(Chantier 3). `francecentral` ou `westeurope` conviennent — vérifier au moment du déploiement
+donc PII réelle) doit être en **région UE**. `francecentral` ou `westeurope` conviennent —
+Langfuse (Cloud, région EU — voir §10) suit la même logique côté observabilité, même si ce
+n'est plus une ressource Azure. Vérifier au moment du déploiement
 que le service visé (Azure OpenAI, Azure AI Inference, Content Safety, Language) y est bien
 disponible : la disponibilité par service et par région varie et change avec le temps.
 
@@ -549,25 +550,62 @@ qui révèle une dérive de tarif à corriger dans `token_pricing`.
 
 ---
 
-## 10. Langfuse self-host — module Terraform officiel Azure (décision Ch.3)
+## 10. Langfuse Cloud (décision Ch.3, révisée)
 
-Rappel de la décision : self-host obligatoire (jamais Langfuse Cloud — conversations client =
-PII réelle, région UE). Docker Compose n'est pas recommandé en production par Langfuse
-lui-même (pas de haute dispo, pas de sauvegarde) — on utilise leur module Terraform officiel :
+Décision révisée : projet pédagogique, pas de vraies conversations client en prod → **Langfuse
+Cloud, région EU** plutôt que self-host. Aucune ressource Azure à provisionner ici — voir
+`deploy/langfuse/README.md` pour la procédure (compte, projet, clés API). Self-host (module
+Terraform officiel `langfuse/langfuse-terraform-azure`, région UE) resterait la bonne pratique
+si ce projet traitait un jour de vraies données client — voir conception §Gouvernance RGPD.
 
-    git clone https://github.com/langfuse/langfuse-terraform-azure.git
-    cd langfuse-terraform-azure
-    # Consulter le README du module pour les variables exactes (nom du module,
-    # inputs Terraform) au moment de l'implémentation — module maintenu par
-    # Langfuse, évolue indépendamment de ce tutoriel.
-    terraform init
-    terraform apply -var="location=francecentral" -var="resource_group_name=$RG"
-
-Le module provisionne l'architecture complète (containers web/worker + Postgres + ClickHouse +
-Redis + stockage objet) dans `$RG`, région UE — cohérent avec §1. Récupérer les clés API du
-projet Langfuse créé (headless init, comme en local — voir `deploy/langfuse/README.md`) et les
-stocker dans Key Vault (§4) : `langfuse-public-key`, `langfuse-secret-key`. Alimentent
+Les clés API du projet Langfuse Cloud (`langfuse-public-key`, `langfuse-secret-key`) peuvent
+être stockées dans Key Vault (§4) comme les autres secrets. Alimentent
 `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL` côté application.
+
+---
+
+## 11. Azure AI Language + Azure AI Content Safety — garde-fous Chantier 2
+
+Deux ressources distinctes, lues respectivement par `pii_redaction.py`
+(`TextAnalyticsClient`) et `prompt_shields.py` (appel REST `text:shieldPrompt`) —
+voir `src/velmo/guardrails/`.
+
+```bash
+# PII redaction en texte libre — Azure AI Language
+az cognitiveservices account create \
+  --name "lang-${SUFFIX}" \
+  --resource-group "$RG" \
+  --location "$LOCATION" \
+  --kind TextAnalytics \
+  --sku S \
+  --custom-domain "lang-${SUFFIX}"
+
+# Prompt Shields — Azure AI Content Safety
+az cognitiveservices account create \
+  --name "cs-${SUFFIX}" \
+  --resource-group "$RG" \
+  --location "$LOCATION" \
+  --kind ContentSafety \
+  --sku S0 \
+  --custom-domain "cs-${SUFFIX}"
+
+# Récupération clé + endpoint (identique pour les deux ressources)
+az cognitiveservices account keys list --name "lang-${SUFFIX}" --resource-group "$RG"
+az cognitiveservices account show --name "lang-${SUFFIX}" --resource-group "$RG" --query properties.endpoint -o tsv
+```
+
+**Via le portail** : **Create a resource** → rechercher « Language service » (pour PII) ou
+« Content Safety » → `Name` = `lang-velmo-prod` / `cs-velmo-prod`, `Pricing tier` = **S**
+(Language) / **S0** (Content Safety) → **Review + create**. Une fois créée : page de la
+ressource → menu de gauche **Resource Management** → **Keys and Endpoint**.
+
+Les valeurs récupérées alimentent `AZURE_LANGUAGE_ENDPOINT`/`AZURE_LANGUAGE_KEY` et
+`AZURE_CONTENT_SAFETY_ENDPOINT`/`AZURE_CONTENT_SAFETY_KEY` (voir `.env.example`,
+`src/velmo/config.py`). Contrairement à `AZURE_AI_INFERENCE_*` (§2.4), ces deux intégrations
+restent **optionnelles par conception** — absence des deux variables d'un couple = repli
+gracieux (`pii_redaction.py`/`prompt_shields.py` en no-op), y compris en production.
+`validate_startup()` (`src/velmo/config.py`) échoue seulement sur un couple à moitié
+renseigné (typo, oubli d'une des deux variables) — pas sur l'absence complète.
 
 ---
 
@@ -581,4 +619,6 @@ stocker dans Key Vault (§4) : `langfuse-public-key`, `langfuse-secret-key`. Ali
 | `psql-${SUFFIX}`              | PostgreSQL + `pgvector` — mémoire, audit, éval, PITR     |
 | `kv-${SUFFIX}`                | Secrets (par environnement : staging/prod séparés)       |
 | `ollama-${SUFFIX}`            | Llama Guard 3 auto-hébergé (CPU, 8B par défaut)          |
+| `lang-${SUFFIX}`              | PII redaction texte libre (Azure AI Language)            |
+| `cs-${SUFFIX}`                | Prompt Shields (Azure AI Content Safety)                 |
 | Logic App `escalade-guardrails` | Notification d'escalade (canal gratuit)                |
