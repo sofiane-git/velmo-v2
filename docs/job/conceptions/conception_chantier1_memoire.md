@@ -16,8 +16,8 @@
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **LangGraph** _(dep à ajouter : `langgraph`, `langgraph-checkpoint-postgres`)_ | Orchestration du tour comme un `StateGraph` ; **persistance de l'état de thread** (messages + résumé + budget) via le checkpointer **`PostgresSaver`**. Remplace les classes `*Memory` supprimées. C'est **la** source de vérité du court terme — pas de table `MESSAGE` doublon. |
 | **LangChain 1.x** (`langchain-core`, `langchain-azure-ai`) | Réduit à ce qui existe et sert : **client LLM Azure**, **sortie structurée** (`with_structured_output` + Pydantic pour l'extracteur), calcul d'embeddings. Pas d'abstraction mémoire. |
-| **PostgreSQL** | Stockage relationnel cloisonné : **faits** sémantiques, **règles** procédurales, **métadonnées d'épisodes**, **en-tête de thread**, **journal d'audit RGPD**. Les checkpoints LangGraph vivent aussi en Postgres (tables gérées par la lib). |
-| **ChromaDB** (client natif `chromadb`) | Index vectoriel de la mémoire épisodique : embeddings + recherche par similarité, **filtrés par `user_id` en metadata** (client enveloppé pour rendre le filtre non-contournable, voir §Robustesse). Accédé directement, pas via un retriever LangChain (dep absente). |
+| **PostgreSQL** (extension **`pgvector`**) | Stockage relationnel cloisonné : **faits** sémantiques, **règles** procédurales, **métadonnées + embeddings d'épisodes**, **en-tête de thread**, **journal d'audit RGPD**. Les checkpoints LangGraph vivent aussi en Postgres (tables gérées par la lib). L'index vectoriel de la mémoire épisodique (embeddings + recherche par similarité HNSW) vit **dans la même base**, via `pgvector` — voir §Store épisodique. |
+| **`EpisodicVectorStore`** (interface interne, implémentation `pgvector` par défaut) | Port d'accès à la recherche par similarité, **filtré par `user_id`** de façon non-contournable (client enveloppé, voir §R3). Découple le code appelant du store concret — une implémentation dédiée (ex. Chroma, Qdrant) reste substituable sans réécrire l'appelant, si un volume mesuré le justifie un jour (voir §Store épisodique). |
 
 ---
 
@@ -40,15 +40,15 @@
 | ------------------------------ | ------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | **Travail (working)**          | Le tour courant           | État transitoire : résumé glissant recomposé, souvenirs rappelés, budget tokens | En mémoire, dans le state LangGraph du tour — non persisté au-delà du checkpoint |
 | **Court terme (conversation)** | Une session/thread        | Fil des tours (user/assistant/tool) + résumé + budget                 | **LangGraph checkpointer `PostgresSaver`** (état de thread persisté en Postgres) |
-| **Long terme (persistant)**    | Illimitée (jusqu'à oubli) | Faits durables + règles procédurales + épisodes marquants             | **PostgreSQL** (faits + règles + métadonnées) + **ChromaDB** (embeddings épisodes) |
+| **Long terme (persistant)**    | Illimitée (jusqu'à oubli) | Faits durables + règles procédurales + épisodes marquants             | **PostgreSQL** (faits + règles + métadonnées + embeddings d'épisodes via `pgvector`) |
 
 <!-- **Lecture directe des exigences :**
 
 - **R1** → court terme : tant que le thread tient dans le budget, l'info du tour 1 est littéralement présente. Au dépassement (30 tours), la mémoire de travail (résumé glissant + rappel long terme) prend le relais → **R4**.
 - **R2** → long terme sémantique : préférences (« tutoie-moi », « client pro », n° de contrat) extraites en fin de session, rechargées à la session suivante via `user_id`.
-- **R3** → propriété transverse : filtrage `user_id` sur PostgreSQL **et** ChromaDB (§5).
-- **R4** → court terme + travail : résumé glissant (nœud LangGraph) + top-k recall Chroma (§4).
-- **R5** → long terme : `DELETE` PostgreSQL + `collection.delete()` ChromaDB + audit (§5).
+- **R3** → propriété transverse : filtrage `user_id` sur PostgreSQL (toutes les tables, y compris les embeddings) (§5).
+- **R4** → court terme + travail : résumé glissant (nœud LangGraph) + top-k recall pgvector (§4).
+- **R5** → long terme : `DELETE` PostgreSQL (transaction unique, embeddings inclus) + audit (§5).
 - **R6** → inspection listant tout le long terme d'un `user_id` (§5). -->
 
 ---
@@ -58,7 +58,7 @@
 Trois natures de mémoire long terme :
 
 - **Sémantique** — _faits durables_ (le « quoi ») : pointure, statut pro, n° de contrat, équipes suivies. Modélisés en **faits typés** dans PostgreSQL (`fact`), requêtés en direct (déterministe), tous réinjectés dans le prompt (petit volume).
-- **Épisodique** — _ce qui s'est passé_ (le « quand/comment ») : « le 12/06 a signalé un défaut d'authenticité sur #A1832, escaladé ». Résumé stocké dans PostgreSQL (`episode`) + embedding dans **ChromaDB**, rappelé par similarité (top-k) au tour courant.
+- **Épisodique** — _ce qui s'est passé_ (le « quand/comment ») : « le 12/06 a signalé un défaut d'authenticité sur #A1832, escaladé ». Résumé **et** embedding stockés dans la **même table** PostgreSQL (`episode`, colonne `embedding` via `pgvector`), rappelé par similarité (top-k) au tour courant.
 - **Procédurale** — _comment agir avec ce client_ (le « comment ») : une règle de comportement apprise, pas un fait sur lui ni un événement passé — ex. « proposer un avoir plutôt qu'un remboursement », « toujours reformuler les tailles en cm ». Modélisée en **règle typée** dans PostgreSQL (`procedure`), injectée comme instruction dans le prompt système avant que l'agent ne réponde (elle change le *comment répondre*, pas le contenu factuel réinjecté).
 
 On retient **faits/règles typés + embeddings + métadonnées**, pas un simple clé-valeur nu : `type`, `confidence`, `source_thread_id` rendent R5/R6 réalisables.
@@ -87,10 +87,8 @@ flowchart TB
         PROC["<b>PROCEDURE</b> — règle de comportement<br/>🔑 id (PK)<br/>🔗 user_id (FK)<br/>trigger — contexte d'application<br/>rule — instruction (ex. avoir > remboursement)<br/>confidence (0..1) · active<br/>source_thread_id (R6)<br/>UNIQUE(user_id, trigger)"]
     end
 
-    subgraph LTE["🟩 PostgreSQL + ChromaDB — événements · épisodique (R2)"]
-        direction LR
-        EPI["<b>EPISODE</b> — résumé d'un événement<br/>🔑 id (PK)<br/>🔗 user_id (FK)<br/>summary<br/>chroma_id — pont vers ChromaDB<br/>source_thread_id (R6) · occurred_at"]
-        VEC["<b>CHROMA_VECTOR</b> — côté ChromaDB<br/>🔑 chroma_id (PK)<br/>embedding — index ANN<br/>user_id — metadata filter (R3)<br/>summary (document)"]
+    subgraph LTE["🟩 PostgreSQL (pgvector) — événements · épisodique (R2)"]
+        EPI["<b>EPISODE</b> — résumé d'un événement + embedding<br/>🔑 id (PK)<br/>🔗 user_id (FK)<br/>summary<br/>embedding — vector(pgvector), index HNSW<br/>embedding_model_id — modèle pinné<br/>source_thread_id (R6) · occurred_at"]
     end
 
     USER -->|"1 → N · possède"| THREAD
@@ -99,13 +97,12 @@ flowchart TB
     USER -->|"1 → N · possède"| EPI
     USER -->|"1 → N · trace"| AUDIT
     THREAD ===|"1 → N · persiste"| CKPT
-    EPI  ===|"1 → 1 · indexe"| VEC
 
     classDef ctNode fill:#bbdefb,stroke:#1565c0,color:#0d47a1;
     classDef ltNode fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
     classDef trNode fill:#eeeeee,stroke:#616161,color:#212121;
     class THREAD,CKPT ctNode;
-    class FACT,PROC,EPI,VEC ltNode;
+    class FACT,PROC,EPI ltNode;
     class USER,AUDIT trNode;
 
     style CT  fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
@@ -124,7 +121,6 @@ Lecture des flèches :
 - `USER → THREAD / FACT / PROCEDURE / EPISODE` (**possède**, 1 → N) → un **utilisateur** possède 0 à N de chacun ; chaque enfant appartient à un seul utilisateur (colonne `user_id`).
 - `USER → MEMORY_AUDIT` (**trace**, 1 → N) → chaque action mémoire laisse une ligne de journal.
 - `THREAD = LANGGRAPH_CHECKPOINT` (**persiste**, 1 → N, trait double) → l'en-tête de thread (Postgres) ↔ ses checkpoints d'état gérés par `PostgresSaver` ; **le fil des messages vit dans le checkpoint**, pas dans une table `MESSAGE` maison (on évite deux sources de vérité).
-- `EPISODE = CHROMA_VECTOR` (**indexe**, 1 → 1, trait double) → un épisode (texte, PostgreSQL) ↔ exactement un vecteur (ChromaDB), reliés par `chroma_id`.
 
 ### Explication table par table (rattachée au type de mémoire)
 
@@ -169,12 +165,12 @@ Objectif : survivre **entre sessions** (jours plus tard). Trois sous-natures, d'
   - `source_thread_id` : d'où vient ce fait → **traçabilité R6**.
   - `created_at` / `updated_at` : contrainte `UNIQUE(user_id, key)` → un fait par clé, mis à jour (upsert) plutôt que dupliqué.
 
-> **Pourquoi une table classique (PostgreSQL) et non un index vectoriel (ChromaDB) pour les faits ?**
+> **Pourquoi une table classique et non une recherche par similarité vectorielle pour les faits ?**
 >
-> Un fait, c'est une information **nette et courte** (« pointure = 42 »). Pas besoin de « chercher par ressemblance » comme pour un épisode : on sait exactement quoi demander. Trois raisons de rester sur une table classique :
+> Un fait, c'est une information **nette et courte** (« pointure = 42 »). Pas besoin de « chercher par ressemblance » comme pour un épisode : on sait exactement quoi demander. Trois raisons de rester sur une requête exacte plutôt qu'un index vectoriel :
 >
 > - **Peu nombreux.** Un client a une poignée de faits, pas des milliers. On peut donc **tous les réinjecter** dans le prompt à chaque tour, sans trier.
-> - **Réponse exacte et prévisible.** `SELECT ... WHERE user_id = X` renvoie **toujours** la bonne valeur, mot pour mot. Un index vectoriel, lui, renvoie « ce qui ressemble le plus » — approximatif, inutile ici et risqué (il pourrait rater le fait exact).
+> - **Réponse exacte et prévisible.** `SELECT ... WHERE user_id = X` renvoie **toujours** la bonne valeur, mot pour mot. Une recherche par similarité, elle, renvoie « ce qui ressemble le plus » — approximatif, inutile ici et risqué (elle pourrait rater le fait exact).
 > - **Facile à cibler.** Comme chaque fait a une **clé** (`shoe_size`, `order_number`…), on peut en supprimer **un seul** proprement (**R5**, « oublie mon numéro de commande ») ou **tout lister** pour inspection (**R6**). Avec des vecteurs, viser une info précise serait bien plus fragile.
 >
 > Bonus : puisqu'un fait est stocké à part et toujours réinjecté, il **n'est jamais noyé dans un résumé** → l'info du tour 1 est protégée même à 30 tours (**R1**).
@@ -191,29 +187,26 @@ Objectif : survivre **entre sessions** (jours plus tard). Trois sous-natures, d'
 
 > **Pourquoi une table à part, et pas un `FACT` de plus ?** `FACT` décrit un **état** du client (« il fait du 42 ») ; `PROCEDURE` décrit une **consigne pour l'agent** (« dans ce cas, fais ceci »). La distinction compte au moment de construire le prompt : les faits sont des **données** réinjectées dans le contexte utilisateur, les règles sont des **instructions** injectées côté système. Les confondre risquerait de faire lire à l'agent une consigne de comportement comme une simple donnée client (ou l'inverse).
 >
-> **Pourquoi pas dans ChromaDB, comme un épisode ?** Une règle, comme un fait, est **peu nombreuse et précise** — on ne « cherche » pas la règle qui ressemble le plus, on applique **la** règle valable pour ce `trigger`. Table classique, `SELECT ... WHERE user_id = X AND active = true`, réponse déterministe.
+> **Pourquoi pas un embedding, comme un épisode ?** Une règle, comme un fait, est **peu nombreuse et précise** — on ne « cherche » pas la règle qui ressemble le plus, on applique **la** règle valable pour ce `trigger`. Table classique, `SELECT ... WHERE user_id = X AND active = true`, réponse déterministe.
 
 **Épisodique = ce qui s'est passé (le « quand/comment ») :**
 
-- **`EPISODE`** = le résumé d'un événement marquant d'une session (« le 12/06 litige d'authenticité sur #A1832, escaladé »).
-  - `id` (PK), `user_id` (FK) : propriété + **isolation R3**.
+- **`EPISODE`** = le résumé d'un événement marquant d'une session (« le 12/06 litige d'authenticité sur #A1832, escaladé »), **et son embedding, dans la même ligne**.
+  - `id` (PK), `user_id` (FK) : propriété + **isolation R3** — même mécanisme (`WHERE user_id = :current_user`) que `FACT`/`PROCEDURE`, pas un filtre à part.
   - `summary` : le texte lisible de l'épisode.
-  - `chroma_id` : le pont vers son vecteur dans ChromaDB (relation `indexe`).
+  - `embedding` : le vecteur (type `vector` de `pgvector`, index **HNSW**) servant à la **recherche par similarité** (retrouver les épisodes proches du message courant → top-k).
+  - `embedding_model_id` : identifiant + version du modèle d'embeddings ayant produit ce vecteur (voir §Versioning du modèle d'embeddings).
   - `source_thread_id` : traçabilité **R6**. `occurred_at` : quand ça s'est passé.
-- **`CHROMA_VECTOR`** = le **même** épisode, mais côté ChromaDB, sous forme de vecteur.
-  - `chroma_id` (PK) : lié 1-1 à `EPISODE.chroma_id`.
-  - `embedding` : le vecteur numérique servant à la **recherche par similarité** (retrouver les épisodes proches du message courant → top-k).
-  - `user_id` (en **metadata**) : le filtre d'**isolation R3** côté vectoriel — sans lui, une recherche pourrait remonter l'épisode d'un autre client.
-  - `summary` : copie du texte stockée comme « document » Chroma.
 
-> **Pourquoi un épisode vit dans DEUX endroits à la fois (PostgreSQL + ChromaDB) ?**
+> **Pourquoi une seule table (PostgreSQL + `pgvector`) plutôt qu'un store vectoriel séparé (ex. ChromaDB) ?**
 >
-> Parce que les deux ne servent pas à la même chose. Image simple : PostgreSQL est **le classeur**, ChromaDB est **le moteur de recherche**.
+> Texte et embedding d'un épisode sont **la même donnée sous deux formes** (lisible / vectorisée) — les séparer en deux stores n'apporte rien ici et coûte cher :
 >
-> - **PostgreSQL garde la vérité.** Le texte exact de l'épisode, ses dates, ses liens, et surtout une suppression **fiable** (R5). C'est la référence.
-> - **ChromaDB sert à retrouver.** Il stocke l'épisode sous forme de **vecteur** (une empreinte numérique du sens). Quand le client repose une question, on cherche « les épisodes qui **ressemblent** » à sa demande et on ne remonte que les plus proches (top-k), au lieu de tout relire.
+> - **Atomicité native.** Texte et vecteur vivent dans la **même ligne, même transaction** : un `DELETE` ou un `INSERT` ne peut pas réussir d'un côté et échouer de l'autre. Pas de risque de vecteur orphelin porteur de PII, pas de job de réconciliation à construire/opérer pour ce cas (voir §R5).
+> - **Un seul périmètre de sécurité et d'exploitation.** Pas de 2ᵉ service réseau à exposer, authentifier, patcher, sauvegarder séparément — la mémoire épisodique hérite du même durcissement (accès, réseau, PITR) que le reste des données mémoire.
+> - **Volume adapté au profil du projet.** L'index HNSW de `pgvector` tient aisément des dizaines de millions de vecteurs — largement suffisant pour une mémoire par client d'une boutique, pas un moteur de recherche à l'échelle du web.
 >
-> Les deux sont toujours **écrits ensemble et supprimés ensemble** (reliés par `chroma_id`), donc jamais désynchronisés. Résultat : l'agent garde le fil relationnel d'une session à l'autre (**R2**) **sans** entasser tout l'historique dans le prompt.
+> **Le choix n'est pas figé dans le code appelant.** L'accès passe par l'interface `EpisodicVectorStore` (§Stack) : si un projet dérivé de ce template atteint un volume où `pgvector` montre des signes de dégradation mesurés (latence de recherche p95, saturation mémoire de l'index), une implémentation dédiée (Chroma, Qdrant…) devient substituable **derrière la même interface**, sans réécrire l'appelant. Le choix se fait sur mesure réelle, pas sur un volume hypothétique anticipé.
 
 #### ⬜ Transverse — « pas un souvenir, mais l'ossature »
 
@@ -230,10 +223,9 @@ La mémoire de **travail** (résumé recomposé, top-k épisodes rappelés, budg
 | ---------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `possede`  | **Relation 1-N par clé étrangère** (`USER.user_id` → FK dans la table enfant)                   | La table enfant porte `user_id` référençant `USER`. Association de propriété : chaque ligne enfant appartient à un et un seul utilisateur. Support de l'**isolation multi-tenant** (R3) : tout accès est filtré `WHERE user_id = :current_user`.                               |
 | `persiste` | **Persistance d'état par checkpointer** (`THREAD.thread_id` ↔ `LANGGRAPH_CHECKPOINT`, PostgresSaver) | Le fil des messages est l'état du graphe persisté par `thread_id` (LangGraph) ; supprimé avec le thread (R5 : purge des checkpoints).                                                                                                                               |
-| `indexe`   | **Indexation vectorielle 1-1** (embedding ANN, `EPISODE.chroma_id` ↔ `CHROMA_VECTOR.chroma_id`) | Le texte de l'épisode (PostgreSQL) est vectorisé et stocké dans ChromaDB pour la **recherche par similarité** (approximate nearest neighbors). Correspondance biunivoque via `chroma_id` ; les deux enregistrements sont écrits et supprimés ensemble (cohérence cross-store). |
 | `trace`    | **Journalisation / audit trail** (append-only, `MEMORY_AUDIT.user_id`)                          | Chaque opération mémoire (write/update/recall/delete) écrit une entrée immuable horodatée. Table **append-only** servant de piste d'audit RGPD pour la traçabilité (R6) et la preuve de suppression (R5).                                                                      |
 
-**Séparation PostgreSQL / ChromaDB :** `EPISODE` (PostgreSQL) porte le texte + métadonnées + `chroma_id` ; le vecteur vit dans **ChromaDB** avec `user_id` en metadata. Les deux sont liés par `chroma_id` et supprimés ensemble (R5).
+**Store épisodique (`pgvector`) :** `EPISODE` (PostgreSQL) porte le texte + métadonnées + l'embedding, dans la **même ligne** — plus de relation cross-store à documenter (voir §Store épisodique).
  -->
 
 ---
@@ -247,7 +239,7 @@ Trois leviers combinés :
 
    > **Précision de mise en œuvre :** le résumé est calculé par un appel LLM dédié dans le nœud, puis écrit **dans l'état du graphe** (donc persisté par le checkpointer) **et** recopié dans `THREAD.summary` (miroir SQL interrogeable). Il survit ainsi au redémarrage et à la reprise. **Le résumé est un cache, pas la vérité** : les tours bruts restent dans les checkpoints tant qu'ils n'ont pas été élagués ; on **borne la profondeur de re-résumé** (pas de résumé-de-résumé-de-résumé) pour limiter la perte cumulative.
 
-3. **Sélection par pertinence** — faits et règles procédurales actives : tous réinjectés (déterministe, `SELECT ... WHERE user_id` sur PostgreSQL). Épisodes : **top-k** proches du message courant via retriever **ChromaDB** filtré `user_id`.
+3. **Sélection par pertinence** — faits et règles procédurales actives : tous réinjectés (déterministe, `SELECT ... WHERE user_id` sur PostgreSQL). Épisodes : **top-k** proches du message courant via `EpisodicVectorStore` (implémentation `pgvector`) filtré `user_id`.
 
 **Éviter de perdre l'info critique en résumant :**
 
@@ -263,36 +255,39 @@ Trois leviers combinés :
 
 ### R3 — Isolation stricte
 
-- `user_id` **obligatoire et indexé** sur `thread`, `fact`, `procedure`, `episode` (PostgreSQL) ; porté aussi en metadata sur chaque vecteur **ChromaDB**. Le fil court terme est isolé via l'**appartenance du thread** (`THREAD.user_id`) : on ne charge un checkpoint que pour un `thread_id` appartenant à l'utilisateur courant.
-- **Filtre non-contournable, pas seulement recommandé.** ChromaDB **n'a aucune isolation tenant côté serveur** : le filtre applicatif est **la seule** garantie R3 côté vectoriel. On **enveloppe le client** (Postgres et Chroma) de sorte qu'une requête sans `WHERE user_id = :current_user` / `where={"user_id": …}` soit **impossible à émettre** (méthode d'accès unique qui exige le `user_id`), plutôt qu'une convention qu'un futur appel pourrait oublier. Un filtre oublié = fuite inter-clients.
+- `user_id` **obligatoire et indexé** sur `thread`, `fact`, `procedure`, `episode` (PostgreSQL, y compris la colonne `embedding`) — **un seul mécanisme d'isolation** pour toute la mémoire long terme, pas un filtre séparé côté vectoriel. Le fil court terme est isolé via l'**appartenance du thread** (`THREAD.user_id`) : on ne charge un checkpoint que pour un `thread_id` appartenant à l'utilisateur courant.
+- **Filtre non-contournable, pas seulement recommandé.** Le client d'accès (`EpisodicVectorStore` comme les accès `FACT`/`PROCEDURE`) est **enveloppé** de sorte qu'une requête sans `WHERE user_id = :current_user` soit **impossible à émettre** (méthode d'accès unique qui exige le `user_id`), plutôt qu'une convention qu'un futur appel pourrait oublier. Un filtre oublié = fuite inter-clients.
+  - **Renforcement du non-contournable, pas seulement une convention de code review** : un import direct du driver Postgres brut (hors du wrapper) est **interdit en CI** (règle `import-linter`/Ruff dédiée bloquant l'import hors du module d'accès) — détecté avant merge, indépendamment de la vigilance du relecteur. Le client brut vit dans un sous-module non exporté (`_internal`), jamais dans le namespace public du module mémoire.
 - `user_id` vient de la **session authentifiée**, **jamais du contenu du message** (sinon injection « je suis l'utilisateur X » — voir le cas d'acceptance dédié §Couverture).
-- Défense en profondeur : **Row-Level Security PostgreSQL** (couvre aussi les tables de checkpoint si on force la clé). Côté Chroma, **une seule collection filtrée par metadata** ; la « collection par `user_id` » est écartée (surcoût par collection, ingérable à l'échelle) sauf exigence d'isolation physique explicite.
+- **Row-Level Security PostgreSQL : recommandée si l'infrastructure le permet, pas une garantie dure.** RLS suppose que chaque requête porte le `user_id` courant au niveau de la session Postgres (`SET LOCAL` par transaction) — avec un pool de connexions partagé (pgbouncer en mode transaction, pool applicatif), un `SET` mal isolé peut fuiter vers la requête suivante servie par la même connexion, ce qui **inverserait** l'objectif recherché. Le filtre applicatif enveloppé ci-dessus est donc la **seule garantie dure** de R3, testée et déterministe ; RLS reste une défense en profondeur optionnelle, à activer seulement si le mode de pooling la rend sûre.
 
 ### R5 — Droit à l'oubli (effectif et vérifiable)
 
 | Demande                           | Action                                                                                                                                                                                                     |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| « oublie mon numéro de commande » | `DELETE FROM fact WHERE user_id=:u AND key='order_number'` + suppression des épisodes le mentionnant (PostgreSQL) + `collection.delete(ids=[chroma_id])` (ChromaDB) + scrub du fil court terme (voir plus bas) |
-| « arrête de me proposer un avoir » | `DELETE FROM procedure WHERE user_id=:u AND trigger='refund_offer'` (PostgreSQL) + `memory_audit(action='delete')`                                                                                        |
-| Effacement total                  | `DELETE` en cascade `thread`/`fact`/`procedure`/`episode` + purge des **checkpoints** du thread (`PostgresSaver.delete_thread`) + `collection.delete(where={"user_id": u})` (ChromaDB)                    |
+| « oublie mon numéro de commande » | `DELETE FROM fact WHERE user_id=:u AND key='order_number'` + suppression des épisodes le mentionnant (texte **et** embedding, même ligne) + scrub du fil court terme (voir plus bas) — **une seule transaction Postgres** |
+| « arrête de me proposer un avoir » | `DELETE FROM procedure WHERE user_id=:u AND trigger='refund_offer'` + `memory_audit(action='delete')` — même transaction                                                                                  |
+| Effacement total                  | `DELETE` en cascade `thread`/`fact`/`procedure`/`episode` (embeddings inclus) + purge des **checkpoints** du thread (`PostgresSaver.delete_thread`) — **une seule transaction Postgres**                  |
 
 - **Effective :** suppression **physique** (DELETE), pas un flag.
-- **Atomicité cross-store — le vrai risque RGPD.** Postgres et ChromaDB ne partagent pas une
-  transaction : un échec partiel (fait supprimé en Postgres, vecteur non supprimé en Chroma)
-  laisse un **vecteur orphelin porteur de PII = violation RGPD**. Donc : (1) `memory_audit`
-  écrit **l'intention** de suppression **avant** d'agir ; (2) les deletes sont **idempotents et
-  rejoués** ; (3) un **job de réconciliation** relit les intentions non confirmées et **finit**
-  les suppressions échouées. La suppression est réputée close seulement quand les deux stores
-  ont confirmé. _(Note : `pgvector` rendrait ce delete atomique en une seule transaction —
-  écarté car Chroma est imposé par la stack ; la réconciliation est le prix de deux stores.)_
+- **Atomicité native.** Toutes les données mémoire (faits, règles, épisodes **et leurs
+  embeddings**, checkpoints) vivent dans **une seule base Postgres** — la suppression est **une
+  transaction unique**, pas de risque de désynchronisation cross-store, pas de job de
+  réconciliation à opérer. C'est un bénéfice direct du choix `pgvector` plutôt qu'un store
+  vectoriel séparé (§Store épisodique) : la complexité d'un delete cross-store n'existe
+  simplement pas ici.
 - **Scrub du fil court terme.** Effacer un identifiant cité en **texte libre** dans les
   messages est flou : le défaut prod est de **purger le(s) checkpoint(s) du thread concerné**
   (suppression nette) plutôt qu'un scrub regex fragile. Un scrub partiel n'est retenu que si la
   session doit continuer, avec un mécanisme explicite et ses limites documentées.
-- **Course oubli ↔ écriture tardive (RGPD).** L'extracteur écrit en **asynchrone après le
-  tour** : un write extracteur arrivant **après** un `DELETE` R5 **ressusciterait** la donnée.
-  Parade : l'oubli pose un **tombstone** (`memory_audit` + clé bloquée) que l'extracteur
-  **consulte avant tout write** — une clé/trigger sous tombstone récent n'est jamais réécrite.
+- **Course oubli ↔ écriture tardive (RGPD) — indépendante du choix de store.** L'extracteur
+  écrit en **asynchrone après le tour** : un write extracteur arrivant **après** un `DELETE` R5
+  **ressusciterait** la donnée, que le store soit unique ou cross-store — ce risque tient à
+  l'asynchronie de l'extracteur, pas à l'architecture de stockage. Parade : l'oubli pose un
+  **tombstone** (`memory_audit` + clé bloquée) que l'extracteur **consulte avant tout write** —
+  une clé/trigger sous tombstone reste bloquée **tant que l'écriture qui l'a posé n'est pas
+  confirmée résolue des deux côtés du flux** (pas de TTL calendaire fixe : le tombstone se ferme
+  quand l'état est confirmé, point).
 - **Vérifiable :** chaque suppression écrit `memory_audit(action='delete')` ; le test rejoue la
   question après oubli et vérifie que l'info **ne ressort plus** (cas d'acceptance R5).
 
@@ -314,7 +309,19 @@ Trois leviers combinés :
 
 Point clé : le « juge » de la mémoire long terme n'est **ni l'agent principal, ni un humain**, mais un **composant LLM dédié** qui tourne en post-traitement. On sépare _répondre_ (agent) et _mémoriser_ (extracteur) pour que le jugement de rétention n'interfère pas avec la réponse au client.
 
-> **Quel modèle pour l'extracteur ?** Pas le modèle de chat (Mistral-Large-3) — tâche étroite et structurée (JSON court, faits/règles), pas de génération conversationnelle : un modèle **plus petit/moins cher suffit**, même logique que le split classifieur-local/LLM-juge-cloud du _[chantier 2](conception_chantier2_guardrails.md)_. Décision : **réutiliser le modèle effectivement déployé pour le LLM-juge guardrails — `gpt-5-mini` (Azure OpenAI, version d'API pinnée)** — plutôt qu'un 3ᵉ modèle à déployer, ce qui éviterait de multiplier endpoints/credentials. Le modèle est **pinné explicitement** (id + version d'API) et sa justification **doit rester synchronisée** avec le modèle réel du chantier 2 (ne pas laisser traîner un ancien nom). Contrepartie assumée : couple légèrement le déploiement mémoire (Ch.1) à celui des guardrails (Ch.2) sur le même modèle. Sans lien avec `get_llm()` par défaut (Mistral-Large-3, hors-ligne = `EchoLLM`) : l'extracteur reçoit son **propre client `LLM` injecté** au constructeur, indépendant du modèle de réponse client et du résumé glissant.
+> **Quel modèle pour l'extracteur ?** Pas le modèle de chat (Mistral-Large-3) — tâche étroite et structurée (JSON court, faits/règles), pas de génération conversationnelle : un modèle **plus petit/moins cher suffit**, même logique que le split classifieur-local/LLM-juge-cloud du _[chantier 2](conception_chantier2_guardrails.md)_. Décision : **réutiliser le modèle `gpt-5-mini` (Azure OpenAI, version d'API pinnée)** déployé pour le LLM-juge guardrails — plutôt qu'un 3ᵉ modèle à qualifier. Le modèle est **pinné explicitement** (id + version d'API) et sa justification **doit rester synchronisée** avec le modèle réel du chantier 2 (ne pas laisser traîner un ancien nom).
+>
+> **Déploiement Azure : partagé avec DeepEval (Ch.3), mais séparé du juge garde-fous.**
+> L'extracteur et le juge DeepEval sont tous deux **asynchrones/best-effort** — ils peuvent
+> partager un même déploiement Azure (même quota) sans risque mutuel. Le juge garde-fous, lui,
+> est sur le **chemin bloquant synchrone** (chaque message) : il a son **propre déploiement**,
+> quota isolé, pour qu'un pic d'extraction ou une nuit de suite DeepEval ne throttle jamais le
+> garde-fou (détail au [chantier 2](conception_chantier2_guardrails.md#stack)). Contrepartie
+> assumée : le déploiement mémoire (Ch.1) reste couplé à celui de DeepEval (Ch.3) sur le même
+> modèle/quota — acceptable car les deux usages partagent le même profil de criticité (async,
+> tolérant à la latence). Sans lien avec `get_llm()` par défaut (Mistral-Large-3, hors-ligne =
+> `EchoLLM`) : l'extracteur reçoit son **propre client `LLM` injecté** au constructeur,
+> indépendant du modèle de réponse client et du résumé glissant.
 
 ### Le flux de décision (à chaque fin de tour)
 
@@ -338,7 +345,7 @@ flowchart LR
     G --> H
     F2 --> H
     G2 --> H
-    A -.->|"fin de session"| I["Résumer l'échange<br/>EPISODE + embedding ChromaDB"]
+    A -.->|"fin de session"| I["Résumer l'échange<br/>EPISODE + embedding (pgvector)"]
     I --> H
 
     classDef store fill:#c8e6c9,stroke:#2e7d32;
@@ -364,7 +371,7 @@ flowchart LR
 
 L'extracteur suit cinq règles simples. À l'oral, on peut les résumer ainsi : **« quand analyser, quoi garder, quoi jeter, éviter les erreurs, éviter les doublons. »**
 
-- **1. Quand il travaille.** L'extracteur ne tourne pas pendant que l'agent parle, mais **après** : en fin de tour (pour repérer un fait ou une règle de comportement) et en fin de session (pour résumer l'échange en un épisode envoyé dans ChromaDB). On sépare _répondre_ et _mémoriser_.
+- **1. Quand il travaille.** L'extracteur ne tourne pas pendant que l'agent parle, mais **après** : en fin de tour (pour repérer un fait ou une règle de comportement) et en fin de session (pour résumer l'échange en un épisode, embeddé et stocké via `pgvector`). On sépare _répondre_ et _mémoriser_.
 
 - **2. Ce qu'il garde (durable).** Tout ce qui sera **encore utile dans une future session**, sous deux formes :
   - des **faits** (`FACT`) : identité/statut (client pro, n° de contrat), contraintes stables (pointure, équipes suivies), litiges et engagements ouverts. Règle mentale : _« est-ce vrai encore demain ? » → oui = on garde._
@@ -420,6 +427,24 @@ L'extracteur suit cinq règles simples. À l'oral, on peut les résumer ainsi : 
 
 ## Robustesse & paramètres tranchés (prod-ready)
 
+### Contrat de démarrage — pas de repli silencieux vers un LLM mock
+
+`get_llm()` bascule sur `EchoLLM` (mock hors-ligne) dès que la configuration Azure est
+absente — comportement voulu en dev/CI local, **inacceptable en production** si rien ne le
+distingue explicitement : un déploiement mal configuré (variable d'environnement manquante,
+secret non injecté) démarrerait normalement et servirait du contenu mock à de vrais clients,
+sans log ni alerte.
+
+Contrat **non négociable** :
+
+- En environnement de **production**, l'absence de configuration LLM (Azure ou tout autre
+  provider retenu) **empêche le démarrage** (fail-fast), plutôt que de retomber sur `EchoLLM`.
+  La distinction d'environnement (`ENVIRONMENT=production` vs dev/CI) vit dans la config
+  centralisée (`velmo.config`).
+- Si `EchoLLM` est malgré tout instancié (dev/CI volontaire), un **warning explicite** est
+  loggé à chaque instanciation — pour qu'un repli non voulu soit visible immédiatement, pas
+  découvert après coup.
+
 ### Contrat d'échec de l'extracteur
 
 L'extracteur est un appel LLM distant qui **échouera** parfois (timeout, content-filter,
@@ -435,16 +460,63 @@ service down — cf. incidents réels du chantier). Contrat **non négociable** 
 
 Le `seuil = 0,7` est un **point de départ, pas une vérité** : la confidence **auto-déclarée**
 par un LLM est **mal calibrée** (un modèle peut être « sûr » et faux). Donc : le seuil sert de
-**filtre grossier**, et on le **valide sur un petit set labellisé** (une poignée d'échanges
-annotés « à retenir / à jeter ») — même démarche que la calibration des seuils du _chantier 3_.
-On documente la valeur retenue **dans la config** (donc hashée dans la version d'agent).
+**filtre grossier**, et on le **valide sur un petit set labellisé** — même démarche que la
+calibration des seuils du _chantier 3_. On documente la valeur retenue **dans la config** (donc
+hashée dans la version d'agent).
 
-### Rétention & purge des épisodes (RGPD — minimisation)
+**Le set labellisé lui-même** (`eval/memory_confidence_cases.jsonl`) : une trentaine d'échanges
+fabriqués à la main, même format que `guardrail_cases.jsonl`, annotés « à retenir / à jeter » —
+couvrant les cas limites déjà listés en exemple (§Quoi retenir vs jeter). **Propriétaire** :
+même rôle que l'owner de `guardrails/scope_policy.yaml` (Ch.2) — un seul responsable arbitre les
+seuils métier mémoire et garde-fous. **Refresh** : dès que du vrai trafic existe, le jeu
+synthétique est progressivement remplacé par des cas réels anonymisés (même logique anti-
+overfitting/hold-out que le Chantier 3).
 
-La mémoire épisodique accumule de la PII indéfiniment si rien ne l'expire. Bonne pratique de
-minimisation : **TTL sur les épisodes** (défaut **24 mois**, configurable) + **job de purge**
-audité qui supprime épisode Postgres **et** vecteur Chroma ensemble (même chemin idempotent
-que R5). À inscrire au **registre de traitement RGPD**.
+### Rétention & purge — deux finalités RGPD distinctes, deux durées
+
+Deux données différentes, deux buts, donc **deux durées de rétention** — les confondre
+reviendrait à garder le verbatim complet aussi longtemps que sa version minimisée, ce qui
+défait l'intérêt même d'avoir résumé :
+
+- **Épisodes (résumé + embedding)** — servent la **personnalisation entre sessions** (R2), un
+  usage légitimement long et déjà minimisé par construction. **TTL 24 mois** (configurable) +
+  **job de purge** audité, `DELETE` unique (texte + embedding, même ligne — atomique par
+  construction, cf. §Store épisodique).
+- **Fil brut (`THREAD` + checkpoints LangGraph)** — sert à soutenir **la conversation en cours**
+  et, après clôture, une fenêtre de **preuve/litige** (authenticité, chargeback carte) : un
+  usage plus court et plus ponctuel que la personnalisation. **TTL 90 jours d'inactivité**
+  (pas un âge absolu — un thread actif à J+91 n'est pas purgé), purge via
+  `PostgresSaver.delete_thread` (même chemin idempotent que R5). À inscrire comme un **2ᵉ usage
+  distinct** au registre de traitement RGPD, à côté de celui des épisodes.
+
+### Versioning du modèle d'embeddings
+
+Le modèle d'embeddings est **pinné** (id + version), comme tout autre modèle de la stack : un
+changement de modèle rend les vecteurs déjà stockés **incompatibles** avec les nouvelles
+requêtes (distances non comparables entre générations d'embeddings) — un top-k mélangeant
+ancien et nouveau modèle renverrait des scores de similarité incohérents entre eux,
+silencieusement. `embedding_model_id` est stocké sur chaque `EPISODE` (§Modèle de données). En
+cas de changement de modèle : **ré-embedding batch** de tous les épisodes existants avant
+bascule (job explicite, jamais un mélange de deux générations dans la même recherche).
+
+### Secrets, sauvegarde, accès — fondations opérationnelles
+
+- **Secrets** : variables d'environnement en dev/CI (jamais committées) ; en production, secrets
+  injectés par la plateforme de déploiement, jamais un fichier. Azure Key Vault en option future
+  si le budget le permet (cohérent avec l'écosystème Azure déjà utilisé). **Séparation stricte
+  staging/production** : credentials distincts, jamais partagés. `validate_startup()` doit
+  refuser un secret vide/par défaut en environnement de production.
+- **Sauvegarde / PITR.** Postgres est la **source de vérité unique** de toute la mémoire
+  (faits, règles, épisodes, checkpoints, audit) — sa perte est la perte simultanée de tout.
+  **Point-In-Time Recovery activé** (Azure Database for PostgreSQL), rétention des sauvegardes
+  alignée sur la contrainte la plus longue du projet (24 mois), **test de restauration**
+  périodique (avant mise en prod, puis annuel). Une restauration peut ressusciter un utilisateur
+  « oublié » R5 : risque documenté, pas ignoré.
+- **Accès interne (RBAC léger).** R3 protège un client d'un autre ; rien ne distingue en interne
+  qui, côté équipe, peut lire quoi. Principe documenté dès maintenant (rôles Postgres séparés :
+  applicatif complet vs lecture restreinte pour du support/debug futur), sans construire
+  l'outillage complet tant que l'équipe reste solo — juste ne pas bâtir une architecture qui
+  empêcherait de l'étendre plus tard.
 
 ### Paramètres tranchés (ex-« questions ouvertes »)
 
@@ -454,9 +526,10 @@ Un doc prod-ready ne laisse pas de TODO de conception. Valeurs de départ :
 | --------------------------------- | ---------------------------------------- | ------------- |
 | Budget de tokens (portion historique) | **8 000 tokens**                     | Marge sous la fenêtre du modèle, laisse la place aux faits/épisodes/système. |
 | Taille N de la fenêtre brute conservée | **10 derniers tours**                | Assez pour la cohérence locale ; au-delà → résumé. |
-| Seuil `confidence` d'écriture      | **0,7** (à calibrer, cf. ci-dessus)      | Filtre grossier, affiné sur set labellisé. |
-| Stratégie collection Chroma        | **1 collection, filtre metadata `user_id`** | Une collection par user = surcoût ingérable ; filtre non-contournable (§R3). |
-| Rétention épisodes                 | **TTL 24 mois + purge auto audité**      | Minimisation RGPD. |
+| Seuil `confidence` d'écriture      | **0,7** (à calibrer sur `memory_confidence_cases.jsonl`) | Filtre grossier, affiné sur set labellisé. |
+| Store épisodique                   | **`pgvector`** (index HNSW, filtre `user_id` non-contournable) | Une seule base, atomicité native ; interface `EpisodicVectorStore` substituable si le volume le justifie un jour. |
+| Rétention épisodes                 | **TTL 24 mois + purge auto audité**      | Minimisation RGPD (personnalisation entre sessions). |
+| Rétention fil brut (thread/checkpoints) | **TTL 90 jours d'inactivité**        | Minimisation RGPD (soutien conversation + fenêtre de preuve/litige, usage plus court que les épisodes). |
 | Profondeur max de re-résumé        | **bornée**                               | Évite la perte cumulative (résumé de résumé). |
 
 ---
@@ -466,10 +539,10 @@ Un doc prod-ready ne laisse pas de TODO de conception. Valeurs de départ :
 | Exigence | Mécanisme (stack)                                                                                                                                                                   | Test d'acceptance                                              |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | **R1**   | État LangGraph renvoyé tel quel sous budget + faits PostgreSQL réinjectés                                                                                                           | Info tour 1 restituée au tour 30                               |
-| **R2**   | Faits + règles procédurales (PostgreSQL) + épisodes (ChromaDB) rechargés par `user_id`                                                                                              | Retour plus tard, agent se souvient                            |
-| **R3**   | `user_id` filtré partout (accès Postgres + Chroma **non-contournable**) + RLS + `user_id` = session, jamais le message | Deux users, aucune fuite **+ injection « je suis X » repoussée** |
-| **R4**   | Budget dépassé → nœud de résumé LangGraph (persisté dans l'état + `THREAD.summary`) + top-k épisodes (ChromaDB) + extraction des faits/règles **avant** compression | Conversation **franchissant le budget** : info critique du tour 1 restituée **après** résumé |
-| **R5**   | `DELETE` Postgres + purge checkpoints + `collection.delete` Chroma + intention auditée + réconciliation + tombstone | « oublie mon n° » → ne ressort plus, même après write extracteur tardif |
+| **R2**   | Faits + règles procédurales + épisodes (embeddings `pgvector`), tous PostgreSQL, rechargés par `user_id`                                                                            | Retour plus tard, agent se souvient                            |
+| **R3**   | `user_id` filtré partout (accès Postgres **non-contournable**, un seul mécanisme) + `user_id` = session, jamais le message | Deux users, aucune fuite **+ injection « je suis X » repoussée** |
+| **R4**   | Budget dépassé → nœud de résumé LangGraph (persisté dans l'état + `THREAD.summary`) + top-k épisodes (`pgvector`) + extraction des faits/règles **avant** compression | Conversation **franchissant le budget** : info critique du tour 1 restituée **après** résumé |
+| **R5**   | `DELETE` Postgres en **transaction unique** (faits, règles, épisodes+embeddings, checkpoints) + tombstone anti-résurrection | « oublie mon n° » → ne ressort plus, même après write extracteur tardif |
 | **R6**   | `inspect_memory` + `memory_audit` (PostgreSQL)                                                                                                                                      | Inspection du contenu retenu (fait + `source_thread_id` + horodatage) |
 
 > **Trous de couverture R4/R6 comblés.** `eval/memory_cases.jsonl` n'avait aucun cas R4 ni R6.
@@ -485,11 +558,16 @@ Un doc prod-ready ne laisse pas de TODO de conception. Valeurs de départ :
 | Orchestration mémoire : abstractions LangChain ou LangGraph ? | **LangGraph** (`StateGraph` + checkpointer `PostgresSaver`)                                                        | En LangChain 1.x le module `langchain.memory` est **supprimé** ; LangGraph persiste nativement l'état de thread (reprise après crash gratuite). |
 | Fil des messages : table `MESSAGE` maison ou checkpointer ?   | **Checkpointer** (source de vérité unique), table légère `THREAD` pour l'appartenance/métadonnées seulement        | Une table `MESSAGE` en parallèle du checkpoint = deux sources de vérité à garder cohérentes, pour rien. |
 | `FACT` et `PROCEDURE` : une table ou deux ?                   | **Deux tables**                                                                                                     | Un fait est une **donnée** réinjectée dans le contexte ; une règle est une **instruction** injectée au système — les confondre rend le prompt ambigu. |
-| Faits/règles : PostgreSQL ou ChromaDB ?                        | **PostgreSQL** (requête exacte)                                                                                     | Peu nombreux, précis, à réponse déterministe et ciblable (R5/R6) — un index vectoriel renverrait « ce qui ressemble », approximatif et risqué. |
-| Store des épisodes ?                                           | **PostgreSQL (vérité) + ChromaDB (recherche ANN)**                                                                  | Deux rôles : le classeur (texte exact, suppression fiable) et le moteur de similarité. `pgvector` (store unique, R5 atomique) écarté car **Chroma est imposé** par le brief. |
-| Qui décide de mémoriser en long terme ?                       | Un **extracteur LLM dédié** (`gpt-5-mini`), séparé de l'agent, en **post-traitement best-effort**                   | Séparer *répondre* et *mémoriser* ; son échec ne bloque jamais la réponse (contrat d'échec). Modèle réutilisé du juge Ch.2 → un seul endpoint. |
-| Isolation R3 : convention ou garantie ?                       | **Filtre `user_id` non-contournable** (client enveloppé) + **RLS PostgreSQL** + `user_id` = session               | Chroma n'a aucune isolation serveur ; le filtre applicatif est la seule garantie côté vectoriel — il doit être impossible à oublier, pas juste recommandé. |
-| Oubli R5 : flag ou suppression physique ?                     | **Suppression physique** + atomicité cross-store (intention auditée + réconciliation) + **tombstone** anti-résurrection | Effectif et vérifiable (RGPD) ; deux stores ≠ transaction atomique → réconciliation ; l'extracteur async ne doit pas ressusciter une donnée effacée. |
-| Seuil de confidence d'écriture ?                              | **Filtre grossier (0,7) calibré sur set labellisé**, valeur dans la config (hashée dans la version)                | La confidence auto-déclarée par un LLM est mal calibrée ; un seuil deviné mémoriserait des bêtises ou jetterait du vrai. |
-| Rétention des épisodes ?                                      | **TTL 24 mois + purge auto audité**                                                                                 | Minimisation RGPD : sans expiration, la mémoire épisodique accumule de la PII indéfiniment. |
+| Faits/règles : requête exacte ou recherche par similarité ?   | **Table classique PostgreSQL** (requête exacte)                                                                     | Peu nombreux, précis, à réponse déterministe et ciblable (R5/R6) — une recherche par similarité renverrait « ce qui ressemble », approximatif et risqué. |
+| Store des épisodes ?                                           | **`pgvector`** — une seule base, atomicité native, interface `EpisodicVectorStore` substituable                     | Texte et embedding sont la même donnée sous deux formes : les séparer (ex. Chroma) coûte un service réseau, une surface de sécurité et une réconciliation en plus, pour un volume (mémoire par client) que `pgvector` couvre largement. Migration possible derrière l'interface si le volume mesuré le justifie un jour. |
+| Qui décide de mémoriser en long terme ?                       | Un **extracteur LLM dédié** (`gpt-5-mini`), séparé de l'agent, en **post-traitement best-effort**                   | Séparer *répondre* et *mémoriser* ; son échec ne bloque jamais la réponse (contrat d'échec). Déploiement Azure **partagé avec DeepEval (Ch.3)**, séparé du juge garde-fous (Ch.2) — profils de criticité différents. |
+| Isolation R3 : convention ou garantie ?                       | **Filtre `user_id` non-contournable** (client enveloppé + import direct interdit en CI) ; RLS **rétrogradée en option** | Un seul mécanisme, testé et déterministe ; RLS suppose un `SET` par session compatible avec le pooling de connexions — pas garanti, donc pas une garantie dure. |
+| Oubli R5 : flag ou suppression physique ?                     | **Suppression physique**, **transaction Postgres unique** (bénéfice direct de `pgvector`) + **tombstone** anti-résurrection | Effectif et vérifiable (RGPD) ; plus de risque cross-store à réconcilier. Le tombstone reste nécessaire pour une autre raison : la course avec l'extracteur asynchrone, indépendante du store. |
+| Seuil de confidence d'écriture ?                              | **Filtre grossier (0,7) calibré sur `memory_confidence_cases.jsonl`** (~30 cas synthétiques), valeur dans la config | La confidence auto-déclarée par un LLM est mal calibrée ; un seuil deviné mémoriserait des bêtises ou jetterait du vrai. |
+| Rétention des épisodes vs du fil brut ?                       | **24 mois (épisodes) / 90 jours d'inactivité (thread+checkpoints)** — deux durées distinctes                       | Deux finalités RGPD différentes (personnalisation vs preuve/litige) ; les confondre garderait le verbatim aussi longtemps que sa version minimisée. |
+| Versioning du modèle d'embeddings ?                           | **`embedding_model_id` pinné** par épisode, ré-embedding batch si changement de modèle                             | Mélanger deux générations d'embeddings dans une même recherche de similarité produit des scores incohérents, silencieusement. |
+| Config LLM absente en prod : repli mock ou refus de démarrer ? | **Fail-fast en production** (pas de repli `EchoLLM` silencieux) ; warning explicite si `EchoLLM` instancié en dev/CI | Un repli mock non distingué de la prod servirait du contenu factice à de vrais clients sans qu'aucune alerte ne se déclenche. |
+| Secrets : où et comment ?                                     | **Env vars** (dev/CI et injection plateforme en prod), Key Vault en option future, séparation stricte staging/prod | Éviter le commit accidentel d'une clé et le partage de credentials entre environnements. |
+| Sauvegarde de Postgres (source de vérité unique) ?            | **PITR activé** (Azure Database for PostgreSQL), rétention alignée sur 24 mois, test de restauration périodique     | Une perte de cette base perd simultanément mémoire, preuve RGPD et journal de sécurité — aucun des 3 docs ne l'adressait initialement. |
+| Accès interne aux données sensibles (équipe, pas client) ?    | **Principe RBAC documenté** (rôle applicatif vs lecture restreinte), pas d'outillage lourd construit tant que solo | Proportionné à une équipe d'une personne aujourd'hui, sans bloquer une extension future. |
 

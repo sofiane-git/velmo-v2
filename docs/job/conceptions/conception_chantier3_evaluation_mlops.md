@@ -318,6 +318,14 @@ réponse. Donc :
 Ces deux SLO sont **recalculés localement** (instrumentation) et stockés dans `eval_run` —
 ils gatent, donc ne dépendent pas de Langfuse.
 
+> **Le tarif Azure n'est pas codé en dur.** Les prix Azure changent dans le temps ; une
+> constante figée dans le calcul ferait dériver silencieusement le gate (faux blocages si le
+> tarif réel a baissé, coûts réels non détectés s'il a augmenté). Le tarif vit dans une **table
+> de la config versionnée** (donc hashée dans la version d'agent, comme tout le reste), avec une
+> date de dernière vérification. Vérification **périodique** (trimestrielle, ou déclenchée si la
+> facture Azure réelle diverge du coût calculé) — pas d'automatisation de scraping des prix,
+> juste éviter un chiffre oublié depuis des années.
+
 ---
 
 ## Observabilité : interface pluggable, Langfuse self-host
@@ -436,6 +444,12 @@ flowchart TB
    `EVAL_CASE_RESULT`. Seuil raté → **CI rouge**, correctif via `feature/*` → `main` → re-tag.
 7. **Approbation manuelle** via **GitHub Environment `production`** (required reviewers) — le
    seul geste humain du cycle normal.
+
+   > **SPOF assumé en équipe solo.** Avec un seul reviewer configuré, son absence bloque toute
+   > release — y compris un hotfix urgent. Risque accepté et **documenté explicitement**
+   > (pas un oubli) tant que l'équipe reste une seule personne : dès qu'une 2ᵉ personne rejoint
+   > le projet, elle est ajoutée aux required reviewers. Pas de système de rotation
+   > d'astreinte à construire pour une équipe d'une personne.
 8. **Promotion staging → production** — **pas de rebuild** : même artefact taggé déjà validé.
 9. **Prod tracée en continu** (Langfuse) + suites rejouées chaque nuit (`triggered_by=nightly`).
 10. **Rollback** si régression : re-promotion du **tag précédent** (immuable), pas de
@@ -445,6 +459,13 @@ flowchart TB
 `develop`/`hotfix` séparé ni de double-merge. Un correctif urgent = une **branche courte off
 `main`** → suites réduites (garde-fous + mémoire, la qualité étant bruitée et non bloquante en
 urgence) → tag patch → promotion. Zéro cérémonie de synchronisation de branches.
+
+> **La suite Qualité sautée n'est pas oubliée pour autant.** Sauter la qualité au moment du
+> hotfix évite de bloquer un correctif urgent sur une dimension bruitée — mais un prompt modifié
+> à la hâte peut dégrader le ton/la pertinence sans que rien ne le détecte avant le prochain tag
+> normal. La suite Qualité complète est donc rejouée **juste après la promotion**, en
+> **asynchrone, non bloquant** (comme le nightly) : ne retarde pas le déploiement, mais ferme le
+> trou de détection. Coût quasi nul (même run que le nightly suivant, avancé).
 
 ### Pourquoi trunk-based plutôt que GitFlow
 
@@ -481,8 +502,15 @@ Les 3 suites (DeepEval) coûtent des appels LLM — pas question de les lancer �
 | Merge dans `main`          | Fréquent      | Build + déploiement staging auto (pas de suites LLM)      | Build seul              |
 | Tag semver (release)       | Rare          | 3 suites LLM contre staging + approbation manuelle        | Cher, mais peu fréquent |
 | Promotion production       | Rare          | Aucun rebuild — promotion de l'artefact validé            | Quasi gratuit           |
-| Nightly                    | Quotidien     | 3 suites contre le tag production                         | Cher, cadencé           |
-| `hotfix/*`                 | Exceptionnel  | Garde-fous + mémoire seulement (skip qualité)             | Réduit, prioritaire     |
+| Nightly                    | **Conditionnel** (1ʳᵉ nuit après un nouveau tag, puis hebdomadaire sur version stable) | 3 suites contre le tag production | Cher, mais pas gaspillé sur une version inchangée |
+| `hotfix/*`                 | Exceptionnel  | Garde-fous + mémoire (bloquant) + Qualité en async après promotion | Réduit, prioritaire     |
+
+> **Pourquoi le nightly n'est pas quotidien inconditionnellement ?** Rejouer les 3 suites
+> (dont DeepEval en N=5 runs, cf. M4) chaque nuit sur une version qui n'a pas bougé dépense un
+> budget Azure pour zéro information nouvelle. Le nightly ne tourne systématiquement que la
+> **première nuit suivant un nouveau tag** (détecter une régression immédiate) ; sur une version
+> stable et inchangée, un cadencement **hebdomadaire** suffit à détecter une dérive externe
+> (dérive du modèle Azure lui-même) sans gaspiller le budget.
 
 ---
 
@@ -560,6 +588,10 @@ critère est explicite, pas « à l'appréciation ».
 | Rollback ?                                                  | **Re-promotion du tag précédent** (artefacts immuables)                                                            | Tags immuables ⇒ rollback = changement de cible quasi instantané, pas un nouveau build. |
 | Robustesse du harness ?                                     | **Échec infra non compté** (`error_kind`), runs partiels non notés, retries tracés                                 | Un timeout Azure ne doit jamais être compté comme une régression agent (cf. incidents Ch.1). |
 | Gates non-fonctionnels ?                                    | **Latence p95 et coût/conv peuvent bloquer** (SLO)                                                                 | Un changement qui double la latence ou le coût ne doit pas passer en silence. |
+| Tarif Azure pour le calcul du coût : codé en dur ou config ? | **Table de tarifs dans la config versionnée**, vérification périodique                                             | Un tarif figé dérive silencieusement (Azure change ses prix) ; hashé dans la version comme le reste. |
+| Nightly : quotidien systématique ou conditionnel ?          | **Conditionnel** : systématique la 1ʳᵉ nuit après un tag, hebdomadaire sur version stable                          | Rejouer 3 suites LLM chaque nuit sur une version inchangée dépense un budget Azure pour zéro information nouvelle. |
+| Hotfix : la suite Qualité est-elle simplement sautée ?      | **Sautée du gate, mais rejouée en async non bloquant juste après promotion**                                       | Un correctif urgent peut dégrader le ton/la pertinence sans que le gate (garde-fous + mémoire seulement) ne le détecte. |
+| Approbation production : combien de reviewers ?             | **Un seul (SPOF assumé)** en équipe solo, documenté explicitement                                                  | Pas de système d'astreinte à construire pour une personne ; 2ᵉ reviewer ajouté dès qu'une 2ᵉ personne rejoint le projet. |
 
 ---
 

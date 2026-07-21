@@ -6,7 +6,7 @@
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Regex / motifs déterministes**   | Détection **exacte** : PII structurées (cartes, mots de passe, secrets internes), motifs d'injection connus                                                                            |
 | **Classifieur de modération**      | Détection **sémantique** haine/violence/sexuel — **Llama Guard 3 (Ollama, local, auto-hébergé)**, séparé de l'agent qui répond. **Taille pinnée : 8B déployé** (`llama-guard3:8b`, multilingue FR) ; le 1B est un **levier de latence CPU** si la mesure le justifie (cf. §Repli). Ollama = service à opérer (dispo/latence, cf. matrice de repli). |
-| **LLM-juge**                       | Second appel LLM, **Azure OpenAI `gpt-5-mini` (version d'API pinnée), API cloud**, séparé de l'agent principal, dédié à : cohérence aux consignes (anti-injection), respect du périmètre (hors-sujet juridique/médical), détection de fuite subtile. Repli déterministe `RuleBasedJudge` si Azure indisponible. |
+| **LLM-juge**                       | Second appel LLM, **Azure OpenAI `gpt-5-mini` (version d'API pinnée), API cloud**, séparé de l'agent principal, dédié à : cohérence aux consignes (anti-injection), respect du périmètre (hors-sujet juridique/médical), détection de fuite subtile. **Déploiement Azure dédié** (quota/rate-limit isolé de l'extracteur mémoire Ch.1 et du juge DeepEval Ch.3), **région UE**, quota standard au démarrage. Repli déterministe `RuleBasedJudge` si Azure indisponible. |
 | **Azure AI Content Safety — Prompt Shields** _(feature-flag, activation mesurée)_ | Détection cloud **dédiée** injection/jailbreak, en **complément** du LLM-juge sur **G6**. **Non baseline** : activé seulement si son rappel incrémental (vs juge+regex) est prouvé sur `guardrail_cases.jsonl` (Ch.3). Ajoute une dépendance cloud sur le hot path → soumis à la matrice de repli. |
 | **Azure AI Language — PII redaction (conversation)** _(feature-flag, activation mesurée)_ | Détection de PII en **texte libre** (noms, adresses, e-mails) au-delà des motifs structurés — étend **G4** en sortie. **Non baseline** : risque de faux positifs sur noms de joueurs/clubs → activé seulement si le gain (vs regex + cross-check `user_id`) est mesuré, taux de FP sous contrôle. |
 | **`guardrails/scope_policy.yaml`** | Config versionnée listant les sujets hors périmètre (G5), source de vérité pour l'entrée (intention) et le LLM-juge (sortie)                                                           |
@@ -15,6 +15,19 @@
 > **Pourquoi séparer regex / classifieur / LLM-juge plutôt qu'un seul grand classifieur LLM ?** Même logique qu'au Chantier 1 (`FACT` vs `PROCEDURE` vs `EPISODE`) : chaque nature de risque appelle la méthode la moins chère et la plus fiable qui suffit. Un numéro de carte se détecte **à coup sûr** par motif — inutile de payer un appel LLM, faillible, pour ça. Une tentative d'injection reformulée, elle, échappe à tout motif fixe et exige un **jugement contextuel**. Empiler les trois costs peu (le regex/classifieur filtrent tôt et vite, le LLM-juge ne traite que le résiduel ambigu).
 
 > **Pourquoi un choix hybride — classifieur local, LLM-juge cloud ?** Les deux briques n'ont pas les mêmes exigences. Le classifieur (G1/G2/G3) traite du texte court, la tâche est bien cernée : **Llama Guard 3 (Ollama, local)** (multilingue FR, aucune clé/coût) suffit, pas besoin de payer un appel cloud pour ça. Le LLM-juge, lui, doit **comprendre le contexte** (reformulations, injections indirectes, fuite subtile) — une tâche où la qualité du modèle compte le plus, et où un petit modèle local (type Mistral 7B) présente un vrai risque de faux négatifs/positifs. Accès **Azure AI inclus dans la formation** (coût déjà couvert) → plus d'arbitrage coût à faire, on prend le modèle le plus fiable pour la partie la plus critique du pipeline. Contrepartie assumée : dépendance à un service externe pour le juge (disponibilité, latence réseau), gérée par la **matrice de repli par catégorie** (§Repli & robustesse) — le juge bascule sur `RuleBasedJudge` déterministe si Azure est indisponible, la politique fail-open/fail-closed étant tranchée catégorie par catégorie.
+
+> **Pourquoi un déploiement Azure dédié pour ce juge, séparé de l'extracteur mémoire (Ch.1) et
+> du juge DeepEval (Ch.3) ?** Les trois consommateurs partagent le même modèle (`gpt-5-mini`)
+> mais pas la même criticité : le juge garde-fous est sur le **chemin bloquant synchrone**
+> (chaque message), l'extracteur et DeepEval sont **asynchrones/best-effort**. Un seul
+> déploiement partagé ferait consommer le même quota de rate-limit par des usages non
+> bloquants et un usage bloquant — un pic sur l'extraction mémoire ou une nuit de suite
+> DeepEval pourrait throttler le juge garde-fous au pire moment. Déploiement séparé (même
+> modèle, quota isolé) : coût d'un 2ᵉ déploiement Azure à provisionner, pas d'un 2ᵉ modèle à
+> qualifier. **Région UE** pour tout déploiement traitant du contenu client en clair (cohérence
+> RGPD avec Langfuse self-host EU, Ch.3). **Quota standard (pay-as-you-go)** au démarrage —
+> Provisioned Throughput Unit (PTU, capacité réservée, coût plus élevé) envisagé seulement si
+> le taux de throttling réel mesuré en prod le justifie, pas en prévention.
 
 > **Pourquoi ajouter Prompt Shields et PII redaction plutôt que Content Safety en bloc ?** Content Safety regroupe modération (haine/violence/sexuel) et Prompt Shields (injection) dans un seul service — mais seul le second comble un manque réel : le LLM-juge fait déjà le jugement contextuel sur G6, Prompt Shields lui ajoute une détection **spécialisée et moins chère** (pas un appel LLM complet) sur les motifs d'injection connus/reformulés, **en parallèle** du juge plutôt qu'à sa place. La partie modération de Content Safety, elle, ferait doublon avec Llama Guard 3 (Ollama, local, déjà gratuit, déjà jugé suffisant sur G1/G2/G3) — pas de raison de payer un appel cloud pour une catégorie déjà couverte. PII redaction comble un vrai trou : la regex/Luhn (G4) ne détecte que des formats **structurés** (carte, mot de passe, token) — un nom ou une adresse d'un autre client en texte libre lui échappe entièrement ; le service Azure couvre cet angle mort (déjà signalé dans le tableau _[Méthode par catégorie](#méthode-par-catégorie--avantages-et-angles-morts)_, ligne Regex).
 
@@ -163,6 +176,25 @@ Même logique de **seuil de confiance** qu'au Chantier 1 (`FACT`/`PROCEDURE` : `
 
 ---
 
+## Protocole d'activation des features cloud optionnelles (Prompt Shields, PII redaction)
+
+« Activation mesurée » n'est pas un critère implémentable tel quel — un protocole concret est
+nécessaire pour ne pas trancher « à l'instinct » :
+
+- **Pré-requis** : le jeu `guardrail_cases.jsonl` doit être **enrichi** sur les catégories
+  concernées avant toute mesure — trop peu de cas aujourd'hui (G6/G7, et le déséquilibre
+  entrée/sortie déjà noté) pour qu'un delta de rappel soit statistiquement significatif.
+- **Critère d'activation** : gain de rappel mesuré **≥ 5 points** sur les cas concernés (G6 pour
+  Prompt Shields, PII texte-libre pour PII redaction) **et** taux de faux positifs qui ne se
+  dégrade pas sur les cas légitimes.
+- **Décision tracée** : l'activation (date, mesure, delta observé) est consignée dans
+  `mlops/report.md` ou un changelog de config au moment du bascule — jamais un flag qui change
+  un jour sans trace, cohérent avec le principe « tout repli/dégradation est journalisé ».
+- **Propriétaire** : même rôle que `scope_policy.yaml` (owner produit/support) — un seul
+  responsable arbitre les seuils métier et l'activation des features de sécurité.
+
+---
+
 ## Modèle de données : journal de sécurité (`guardrail_audit`)
 
 ```mermaid
@@ -210,7 +242,21 @@ flowchart LR
    - **Un seul hit à haute confiance** sur une catégorie `block_escalate` (menace concrète et ciblée G2, fuite de secret confirmée G7) → escalade immédiate, même isolé.
    - **Récidive** : plusieurs hits `block` du **même `user_id`** sur une fenêtre glissante (typiquement G6, signal d'attaque active) — l'audit `guardrail_audit` est relu pour compter les hits `block`/`block_escalate` récents.
 
-   Le reste (G1/G3 isolés, G4/G5 filtrés proprement) ne remonte pas à un humain, juste au log — cohérent avec les seuils d'escalade des actions métier (remboursement > 50 €, litige d'authenticité). Escalade **vers** : file de traitement humain + notification ; la fenêtre de récidive et le seuil `ESCALATE_THRESHOLD` sont dans la config versionnée (donc hashés dans la version d'agent, Ch.3).
+   Le reste (G1/G3 isolés, G4/G5 filtrés proprement) ne remonte pas à un humain, juste au log — cohérent avec les seuils d'escalade des actions métier (remboursement > 50 €, litige d'authenticité). La fenêtre de récidive et le seuil `ESCALATE_THRESHOLD` sont dans la config versionnée (donc hashés dans la version d'agent, Ch.3).
+
+   **Deux canaux séparés, pas une file unique** — la nature du risque diffère, donc le
+   destinataire et le SLA diffèrent :
+   - **G2 (menace concrète)** → canal **support/modération humaine** (le même que tout
+     signalement client grave), SLA court (accusé de prise en charge sous 1h ouvrée) — risque
+     humain, pas technique.
+   - **G7 (fuite confirmée) + récidive G6** → canal **sécurité/ops** (ticket incident, file
+     distincte du support client) — risque technique/sécurité, destinataire différent.
+
+   Les deux se déclenchent en **effet de bord** sur l'insertion d'une ligne
+   `guardrail_audit(action='block_escalate')` (source unique de vérité), pas via un système de
+   notification parallèle à maintenir. Aucun outil de ticketing dédié à ce stade (solo,
+   contrainte budget) : notification par le canal gratuit déjà en place (email/webhook), à
+   remplacer par un vrai outil (Zendesk, PagerDuty…) si l'équipe grandit.
 
 ---
 
@@ -226,12 +272,41 @@ du support. La politique est donc **par catégorie**, pas globale.
 | Catégorie | En cas de panne du détecteur | Justification |
 | --------- | ---------------------------- | ------------- |
 | **G1 · G2 · G3** (modération) | **Fail-closed** : refus/repli déterministe (heuristiques regex minimales) | Contenu toxique explicite : le risque de laisser passer > le coût d'un refus. |
-| **G6** (injection) | **Fail-closed** : repli sur motifs regex + `RuleBasedJudge` déterministe | Une injection qui passe peut détourner l'agent — on ne laisse pas la fenêtre ouverte. |
-| **G4 · G5 · G7** (filtrage sortie) | **Fail-open toléré** : on laisse passer **en loggant** (`guardrail_audit`, `action='flag'`, `method='fallback'`) | Catégories à *filtrage* (masquage), pas à blocage dur ; la regex/Luhn (G4) et `scope_policy.yaml` (G5) offrent déjà un filet déterministe local. |
+| **G5 · G6** (hors-périmètre, injection) | **Fail-closed** : repli `RuleBasedJudge` (voir spec ci-dessous) | G6 : une injection qui passe peut détourner l'agent. **G5** : un avis juridique/médical hors mandat émis par erreur est un risque de **responsabilité légale** pour Velmo, pas seulement un flag manqué — disproportionné face au coût d'un refus temporaire. |
+| **G4 · G7** (filtrage sortie) | **Fail-open toléré** : on laisse passer **en loggant** (`guardrail_audit`, `action='flag'`, `method='fallback'`) | Catégories à *filtrage* (masquage), pas à blocage dur ; la regex/Luhn (G4) offre déjà un filet déterministe local. |
 
 - **Timeout par service** : chaque appel (Ollama, juge, Prompt Shields, PII) a un **timeout borné** ; un dépassement = panne → applique la ligne de matrice correspondante. Le budget de latence total est un **SLO** mesuré au Chantier 3 (p95 par composant).
 - **Étages 2 et 3 en parallèle** (déjà acté) → la latence de la porte = `max` des appels, pas leur somme ; un service en feature-flag désactivé n'ajoute rien.
 - **Dégradation journalisée, jamais silencieuse** : tout repli écrit `method='fallback'` dans `guardrail_audit` — un pic de replis est un signal d'incident, pas un trou noir.
+
+### Seuil de bascule Llama Guard 3 : 8B → 1B
+
+Déploiement **CPU d'abord** (Ollama auto-hébergé, cohérent avec le choix « gratuit »), pas de
+GPU provisionné par anticipation. Le 8B reste le défaut (meilleur recall, multilingue FR) tant
+que sa latence isolée (mesurée par composant, Ch.3) ne menace pas le SLO global. **Seuil de
+bascule explicite** : si la latence p95 de Llama Guard 3 isolée dépasse **800 ms** (fraction
+dédiée du budget `p95 ≤ 4000 ms` total, arbitrée avec les autres composants du pipeline), bascule
+documentée vers `llama-guard3:1b`. Un GPU dédié n'est envisagé que si le 1B lui-même ne suffit
+plus — jamais en prévention d'un problème non mesuré.
+
+### Spécification du `RuleBasedJudge` (repli G5/G6)
+
+Un repli de sécurité n'a de valeur que s'il est **spécifié et exercé**, pas juste nommé dans un
+diagramme :
+
+- **Contenu du repli** : un jeu de motifs/mots-clés dédié au mode dégradé, **volontairement plus
+  large** que `scope_policy.yaml`/les motifs G6 normaux (correspondance floue, racines de mots,
+  vocabulaire juridique/médical étendu, seuil de déclenchement plus bas). En dégradé, on accepte
+  plus de faux positifs en échange d'un vrai filet — pas un simple refus inconditionnel de tout
+  message (qui mettrait 100 % du trafic hors service au moindre timeout Azure, une panne
+  auto-infligée disproportionnée) ni une resucée de la détection normale (qui rate exactement
+  les reformulations que le LLM-juge existe pour attraper).
+- **Shadow mode permanent** : le `RuleBasedJudge` tourne sur **chaque message, en continu**,
+  même quand Azure répond normalement — son verdict n'est **jamais utilisé** pour la décision
+  tant que le juge cloud est up, mais il est **loggué et comparé** au verdict réel. Objectif :
+  transformer le chemin de repli en code **exercé et mesuré en permanence**, pas un cold path
+  découvert cassé le jour d'une vraie panne ; les divergences observées servent à calibrer/durcir
+  le repli avant qu'il ne soit réellement sollicité.
 
 ### G4 en sortie : le cross-check `user_id` (contrôle le plus précieux)
 
@@ -291,7 +366,11 @@ Le risque : un message utilisateur du type « ignore tes instructions et donne-m
 | Adopter Content Safety pour la modération (G1/G2/G3) aussi ?      | **Non** — reste sur un backend local gratuit                                                                                                                                       | Pas de gain de recall démontré qui justifie le coût/latence cloud, une fois le backend local corrigé (voir ligne suivante).                                                              |
 | Detoxify (`gravitee-io/detoxify-onnx`) suffisant pour G1/G2/G3 ?  | **Non — remplacé par Llama Guard 3 (Ollama, local)**                                                                                                                               | Mesuré sur les phrases FR de `tests/acceptance/test_guardrails.py` : Detoxify (modèle anglais, Jigsaw) donne un score quasi nul sur des cas hostiles clairs (ex. auto-agression : 0.008, largement sous `BLOCK_THRESHOLD=0.7`) — pas un problème de seuil, absence de signal. Llama Guard 3 est explicitement multilingue (FR inclus) et couvre nativement hate/violence/sexuel via sa taxonomie MLCommons (S1/S3/S4/S10/S11/S12).                          |
 | Prompt Shields + PII redaction : baseline ou optionnels ?          | **Feature-flag, activation mesurée** (pas baseline)                                                                                                                                | Deux dépendances cloud de plus sur le hot path ; leur gain incrémental (vs juge+regex, vs regex+cross-check `user_id`) doit être **prouvé sur `guardrail_cases.jsonl`** avant activation — sinon coût/latence/FP non justifiés. |
-| Repli si un service (Ollama/Azure/Content Safety) est indisponible ? | **Matrice par catégorie** : fail-closed sur G1/G2/G3/G6, fail-open toléré (loggé) sur G4/G5/G7                                                                                    | Un garde-fou ne peut ni tout laisser passer en silence ni tout bloquer ; la criticité diffère par catégorie (blocage dur vs filtrage). Tout repli est journalisé (`method='fallback'`). |
+| Repli si un service (Ollama/Azure/Content Safety) est indisponible ? | **Matrice par catégorie** : fail-closed sur G1/G2/G3/G5/G6, fail-open toléré (loggé) sur G4/G7                                                                                    | Un garde-fou ne peut ni tout laisser passer en silence ni tout bloquer ; la criticité diffère par catégorie (blocage dur vs filtrage). G5 rejoint le fail-closed : un avis juridique/médical hors mandat émis par erreur est un risque de responsabilité légale disproportionné. Tout repli est journalisé (`method='fallback'`). |
+| Repli G5/G6 en panne : refus systématique ou `RuleBasedJudge` ? | **`RuleBasedJudge` élargi, en shadow mode permanent** (jamais un refus inconditionnel de tout) | Un refus systématique mettrait 100 % du trafic hors service au moindre timeout — panne auto-infligée. Le shadow mode continu exerce le repli en permanence, pas seulement le jour où il sert vraiment. |
+| Déploiement Azure du juge garde-fous : partagé ou dédié ?      | **Dédié**, quota/rate-limit isolé de l'extracteur mémoire (Ch.1) et du juge DeepEval (Ch.3), région UE, quota standard au démarrage | Le juge est sur le chemin **bloquant synchrone** ; un déploiement partagé avec des usages async (extraction, éval nightly) risquerait de le throttler au pire moment. |
+| Escalade humaine : file unique ou canaux séparés ?             | **Deux canaux** : support humain (G2), ticket sécurité (G7/récidive G6), chacun avec son SLA | La nature du risque diffère (humain vs technique) ; un canal unique dilue la responsabilité et le délai de prise en charge. |
+| Activation Prompt Shields/PII redaction : critère concret ?    | **Protocole écrit** : jeu de cas enrichi d'abord, gain de rappel ≥ 5 points sans dégradation du FPR, décision tracée | « Activation mesurée » sans seuil ni jeu de cas suffisant n'est pas un critère implémentable. |
 | Taille du classifieur Llama Guard 3 ?                              | **8B déployé** (`llama-guard3:8b`) ; 1B = levier de latence si mesuré nécessaire                                                                                                    | Le 8B (multilingue FR, meilleur recall) est aligné au déploiement réel ; la latence CPU du 8B est le risque à surveiller (SLO Ch.3), le 1B le repli latence. |
 | Messages de refus : génériques ou par catégorie ?                 | **Par catégorie sauf G6** (qui reste neutre)                                                                                                                                       | Un refus par catégorie aide le client légitime, mais confirmer une détection G6 aide l'attaquant → G6 générique. |
 | Ajouter Azure AI Language — PII redaction (conversation) ?        | **Feature-flag, en complément de regex/Luhn + cross-check `user_id` sur G4 (sortie)**                                                                                              | La regex ne couvre que les formats structurés ; le service comble l'angle mort du texte libre, mais FP sur noms de joueurs/clubs → activé sous mesure seulement. |
