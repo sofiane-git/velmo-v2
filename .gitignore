@@ -59,6 +59,11 @@ archives/
 docs/superpowers/
 .worktrees/
 
-
 # Playwright
 .playwright-mcp/
+
+docs/job/conceptions/agnostic/
+
+# Langfuse self-host (Chantier 3, Task 10) : secrets locaux + vendor cloné
+deploy/langfuse/.env
+.vendor/
