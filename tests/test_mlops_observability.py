@@ -29,12 +29,46 @@ def test_estimate_cost_unknown_model_returns_zero_not_error() -> None:
     assert cost == 0.0
 
 
+def test_mask_sensitive_data_redacts_pii_and_secrets() -> None:
+    from velmo.mlops.observability import mask_sensitive_data
+
+    assert "4242" not in mask_sensitive_data(data="ma carte est 4242 4242 4242 4242")
+    assert "sk-" not in mask_sensitive_data(data="voici sk-abcdef1234567890abcdef1234567890")
+
+
+def test_mask_sensitive_data_recurses_into_dict_and_list() -> None:
+    from velmo.mlops.observability import mask_sensitive_data
+
+    masked = mask_sensitive_data(
+        data={"messages": ["carte 4242 4242 4242 4242", {"nested": "ok"}]}
+    )
+    assert "4242" not in masked["messages"][0]
+    assert masked["messages"][1]["nested"] == "ok"
+
+
+def test_mask_sensitive_data_passthrough_for_non_strings() -> None:
+    from velmo.mlops.observability import mask_sensitive_data
+
+    assert mask_sensitive_data(data=42) == 42
+    assert mask_sensitive_data(data=None) is None
+
+
 class _RecordingSink:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, int, float, float]] = []
+        self.calls: list[tuple[str, int, float, float, str | None, str | None, str | None]] = []
 
-    def on_llm_call(self, component: str, tokens: int, latency_ms: float, cost: float) -> None:
-        self.calls.append((component, tokens, latency_ms, cost))
+    def on_llm_call(
+        self,
+        component: str,
+        tokens: int,
+        latency_ms: float,
+        cost: float,
+        *,
+        input: str | None = None,
+        output: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        self.calls.append((component, tokens, latency_ms, cost, input, output, model))
 
     def run_url(self, run_id: str) -> str | None:
         return None
@@ -73,11 +107,14 @@ def test_instrumented_llm_forwards_result_and_emits_one_call() -> None:
     result = llm.invoke("system", "context", "message")
     assert result == "reponse"
     assert len(sink.calls) == 1
-    component, tokens, latency_ms, cost = sink.calls[0]
+    component, tokens, latency_ms, cost, input_, output, model = sink.calls[0]
     assert component == "agent"
     assert tokens > 0
     assert latency_ms >= 0.0
     assert cost >= 0.0
+    assert input_ == "message"
+    assert output == "reponse"
+    assert model == "gpt-5-mini"
 
 
 def test_instrumented_extractor_forwards_result_and_emits_one_call() -> None:
@@ -85,7 +122,8 @@ def test_instrumented_extractor_forwards_result_and_emits_one_call() -> None:
     extractor = InstrumentedExtractor(_FakeExtractor(), sink, "memory_extractor", "gpt-5-mini")
     extractor.extract("bonjour", "bonjour a vous")
     assert len(sink.calls) == 1
-    assert sink.calls[0][0] == "memory_extractor"
+    component, tokens, latency_ms, cost, *_ = sink.calls[0]
+    assert component == "memory_extractor"
 
 
 def test_instrumented_classifier_emits_one_call_per_score_call() -> None:
@@ -103,7 +141,8 @@ def test_instrumented_judge_forwards_result_and_emits_one_call() -> None:
     verdict = judge.evaluate("texte", "reponse agent")
     assert verdict["manipulation"] == 0.0
     assert len(sink.calls) == 1
-    assert sink.calls[0][0] == "guardrails_judge"
+    component, tokens, latency_ms, cost, *_ = sink.calls[0]
+    assert component == "guardrails_judge"
 
 
 def test_cost_accumulating_sink_sums_costs_and_forwards_to_inner() -> None:

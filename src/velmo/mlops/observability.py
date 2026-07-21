@@ -1,7 +1,6 @@
 """Observabilité : interface pluggable (`ObservabilitySink`), implémentation
 par défaut no-op (`NullSink`), implémentation réelle (`LangfuseSink`, Langfuse
-self-host — voir docs/job/tuto_azure_deploiement.md pour la partie
-déploiement du serveur). `eval_run` ne stocke qu'un pointeur
+Cloud EU — voir deploy/langfuse/README.md pour la config). `eval_run` ne stocke qu'un pointeur
 (`langfuse_trace_url`), jamais la donnée de décision — voir
 conception_chantier3_evaluation_mlops.md §Observabilité.
 
@@ -17,7 +16,7 @@ acceptent déjà ces composants en injection de constructeur.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from velmo.guardrails.classifier import ClassifierResult, ModerationClassifier
@@ -26,8 +25,34 @@ if TYPE_CHECKING:
     from velmo.memory.extractor import ExtractionResult, FactExtractor
 
 
+def mask_sensitive_data(*, data: Any, **_: Any) -> Any:
+    """Hook Langfuse legacy `mask=` (couvre `start_observation()`/`update()`,
+    tout ce que ce module envoie) — réutilise les mêmes règles que le
+    guardrail G4/G7 (`redact_pii`/`redact_secret_leak`) plutôt que dupliquer
+    des regex : la définition de ce qui est sensible reste unique."""
+    from velmo.guardrails import redact_pii, redact_secret_leak
+
+    if isinstance(data, str):
+        return redact_secret_leak(redact_pii(data))
+    if isinstance(data, dict):
+        return {key: mask_sensitive_data(data=value) for key, value in data.items()}
+    if isinstance(data, list):
+        return [mask_sensitive_data(data=item) for item in data]
+    return data
+
+
 class ObservabilitySink(Protocol):
-    def on_llm_call(self, component: str, tokens: int, latency_ms: float, cost: float) -> None: ...
+    def on_llm_call(
+        self,
+        component: str,
+        tokens: int,
+        latency_ms: float,
+        cost: float,
+        *,
+        input: str | None = None,
+        output: str | None = None,
+        model: str | None = None,
+    ) -> None: ...
     def run_url(self, run_id: str) -> str | None: ...
 
 
@@ -37,7 +62,17 @@ class NullSink:
     Chantier 3) — un vrai sink Langfuse serait branché ici sans changer
     l'appelant."""
 
-    def on_llm_call(self, component: str, tokens: int, latency_ms: float, cost: float) -> None:
+    def on_llm_call(
+        self,
+        component: str,
+        tokens: int,
+        latency_ms: float,
+        cost: float,
+        *,
+        input: str | None = None,
+        output: str | None = None,
+        model: str | None = None,
+    ) -> None:
         return None
 
     def run_url(self, run_id: str) -> str | None:
@@ -56,17 +91,31 @@ class CostAccumulatingSink:
         self._inner = inner
         self.total_cost = 0.0
 
-    def on_llm_call(self, component: str, tokens: int, latency_ms: float, cost: float) -> None:
+    def on_llm_call(
+        self,
+        component: str,
+        tokens: int,
+        latency_ms: float,
+        cost: float,
+        *,
+        input: str | None = None,
+        output: str | None = None,
+        model: str | None = None,
+    ) -> None:
         self.total_cost += cost
-        self._inner.on_llm_call(component, tokens, latency_ms, cost)
+        self._inner.on_llm_call(
+            component, tokens, latency_ms, cost, input=input, output=output, model=model
+        )
 
     def run_url(self, run_id: str) -> str | None:
         return self._inner.run_url(run_id)
 
 
 class LangfuseSink:
-    """Sink réel — Langfuse self-host (conception §Observabilité : jamais
-    Langfuse Cloud, conversations client = PII/RGPD). Un trace_id est généré
+    """Sink réel — Langfuse Cloud, région EU (conception §Observabilité —
+    projet pédagogique, pas de vraies conversations client en prod ;
+    self-host resterait la bonne pratique sinon, voir §Gouvernance RGPD).
+    Un trace_id est généré
     à l'instanciation (`create_trace_id()`, aléatoire) et réutilisé pour
     **chaque** `on_llm_call` via `trace_context={"trace_id": ...}` — pas via
     le contexte OTel "actif" du thread courant : l'extraction mémoire tourne
@@ -79,7 +128,7 @@ class LangfuseSink:
     Langfuse est down, `on_llm_call` peut lever — c'est `run_eval` (Task 6)
     qui décide comment isoler ça, pas cette classe elle-même."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None) -> None:
         from langfuse import Langfuse
 
         from velmo.config import get_settings, require
@@ -89,14 +138,29 @@ class LangfuseSink:
             public_key=require(settings.langfuse_public_key, "LANGFUSE_PUBLIC_KEY"),
             secret_key=require(settings.langfuse_secret_key, "LANGFUSE_SECRET_KEY"),
             base_url=require(settings.langfuse_base_url, "LANGFUSE_BASE_URL"),
+            mask=mask_sensitive_data,
         )
         self._trace_id: str = self._client.create_trace_id()
+        self._model = model
 
-    def on_llm_call(self, component: str, tokens: int, latency_ms: float, cost: float) -> None:
+    def on_llm_call(
+        self,
+        component: str,
+        tokens: int,
+        latency_ms: float,
+        cost: float,
+        *,
+        input: str | None = None,
+        output: str | None = None,
+        model: str | None = None,
+    ) -> None:
         generation = self._client.start_observation(
             trace_context={"trace_id": self._trace_id},
             name=component,
             as_type="generation",
+            input=input,
+            output=output,
+            model=model,
             usage_details={"total": tokens},
             cost_details={"total": cost},
             metadata={"latency_ms": latency_ms},
@@ -170,7 +234,10 @@ class InstrumentedLLM:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(system, context, message, result)
         cost = estimate_cost(tokens, self._model)
-        self._sink.on_llm_call(self._component, tokens, latency_ms, cost)
+        self._sink.on_llm_call(
+            self._component, tokens, latency_ms, cost,
+            input=message, output=result, model=self._model,
+        )
         return result
 
 
@@ -192,7 +259,10 @@ class InstrumentedExtractor:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(user_message, assistant_message)
         cost = estimate_cost(tokens, self._model)
-        self._sink.on_llm_call(self._component, tokens, latency_ms, cost)
+        self._sink.on_llm_call(
+            self._component, tokens, latency_ms, cost,
+            input=user_message, output=str(result), model=self._model,
+        )
         return result
 
 
@@ -209,22 +279,25 @@ class InstrumentedClassifier:
         self._sink = sink
         self._component = component
 
-    def _record(self, text: str, start: float) -> None:
+    def _record(self, text: str, start: float, output: dict[str, float] | "ClassifierResult" | None = None) -> None:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(text)
         cost = estimate_cost(tokens, "local-classifier")
-        self._sink.on_llm_call(self._component, tokens, latency_ms, cost)
+        self._sink.on_llm_call(
+            self._component, tokens, latency_ms, cost,
+            input=text, output=str(output), model="local-classifier",
+        )
 
     def score(self, text: str) -> dict[str, float]:
         start = time.monotonic()
         result = self._inner.score(text)
-        self._record(text, start)
+        self._record(text, start, result)
         return result
 
     def score_detailed(self, text: str) -> "ClassifierResult":
         start = time.monotonic()
         result = self._inner.score_detailed(text)
-        self._record(text, start)
+        self._record(text, start, result)
         return result
 
 
@@ -244,5 +317,8 @@ class InstrumentedJudge:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(text, agent_response or "")
         cost = estimate_cost(tokens, self._model)
-        self._sink.on_llm_call(self._component, tokens, latency_ms, cost)
+        self._sink.on_llm_call(
+            self._component, tokens, latency_ms, cost,
+            input=text, output=str(result), model=self._model,
+        )
         return result
