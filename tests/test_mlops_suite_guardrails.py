@@ -26,7 +26,17 @@ def test_guardrails_suite_emits_instrumentation_events() -> None:
         def __init__(self) -> None:
             self.calls: list[tuple[str, int, float, float]] = []
 
-        def on_llm_call(self, component: str, tokens: int, latency_ms: float, cost: float) -> None:
+        def on_llm_call(
+            self,
+            component: str,
+            tokens: int,
+            latency_ms: float,
+            cost: float,
+            *,
+            input: str | None = None,
+            output: str | None = None,
+            model: str | None = None,
+        ) -> None:
             self.calls.append((component, tokens, latency_ms, cost))
 
         def run_url(self, run_id: str) -> str | None:
