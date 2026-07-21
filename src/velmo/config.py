@@ -91,6 +91,29 @@ class Settings(BaseSettings):
     # constante gravée : voir aussi le seuil équivalent des garde-fous (Ch.2).
     memory_confidence_threshold: float = 0.7
 
+    # Tarif €/1000 tokens par modèle — config versionnée, pas codée en dur
+    # (conception_chantier3_evaluation_mlops.md §Seuils : tarif Azure).
+    # Vérification périodique recommandée (trimestrielle, ou si la facture
+    # réelle diverge du coût recalculé) — voir hash de version (mlops).
+    token_pricing: dict[str, float] = {
+        "gpt-5-mini": 0.0015,
+        "Mistral-Large-3": 0.003,
+    }
+
+    # Version d'API Azure OpenAI pinnée pour le juge DeepEval (déploiement
+    # async, cf. Task 4) — un juge non pinné dérive silencieusement d'une
+    # version d'API à l'autre (conception_chantier3_evaluation_mlops.md
+    # §Déterminisme : "modèle Azure pinné (id + version d'API)").
+    azure_openai_async_api_version: str = "2024-08-01-preview"
+
+    # Langfuse self-host (jamais Langfuse Cloud — conversations client =
+    # PII, conception §Observabilité/Gouvernance RGPD). `None` par défaut :
+    # `get_sink()` retombe sur `NullSink` tant que les 3 sont absents, même
+    # convention de repli gracieux que le reste du codebase.
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_base_url: str | None = None
+
 
 def get_settings() -> Settings:
     return Settings()

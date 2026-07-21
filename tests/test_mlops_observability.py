@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+from velmo.mlops.observability import (
+    InstrumentedClassifier,
+    InstrumentedExtractor,
+    InstrumentedJudge,
+    InstrumentedLLM,
+    NullSink,
+    estimate_cost,
+)
+
+
+def test_null_sink_does_nothing_and_returns_no_url() -> None:
+    sink = NullSink()
+    sink.on_llm_call("agent", 100, 50.0, 0.001)  # ne doit pas lever
+    assert sink.run_url("run-1") is None
+
+
+def test_estimate_cost_uses_configured_pricing(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "TOKEN_PRICING", '{"gpt-5-mini": 0.002, "Mistral-Large-3": 0.004}'
+    )
+    cost = estimate_cost(tokens=1000, model="gpt-5-mini")
+    assert cost == 0.002
+
+
+def test_estimate_cost_unknown_model_returns_zero_not_error() -> None:
+    cost = estimate_cost(tokens=1000, model="modele-inconnu")
+    assert cost == 0.0
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, float, float]] = []
+
+    def on_llm_call(self, component: str, tokens: int, latency_ms: float, cost: float) -> None:
+        self.calls.append((component, tokens, latency_ms, cost))
+
+    def run_url(self, run_id: str) -> str | None:
+        return None
+
+
+class _FakeLLM:
+    def invoke(self, system: str, context: str, message: str) -> str:
+        return "reponse"
+
+
+class _FakeExtractor:
+    def extract(self, user_message: str, assistant_message: str):  # type: ignore[no-untyped-def]
+        from velmo.memory.extractor import ExtractionResult
+
+        return ExtractionResult()
+
+
+class _FakeClassifier:
+    def score(self, text: str) -> dict[str, float]:
+        return {"hate": 0.0}
+
+    def score_detailed(self, text: str):  # type: ignore[no-untyped-def]
+        from velmo.guardrails.classifier import ClassifierResult
+
+        return ClassifierResult(scores={"hate": 0.0}, reasoning={})
+
+
+class _FakeJudge:
+    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+        return {"manipulation": 0.0, "secret_interne": 0.0, "hors_role": 0.0, "reasoning": "ok"}
+
+
+def test_instrumented_llm_forwards_result_and_emits_one_call() -> None:
+    sink = _RecordingSink()
+    llm = InstrumentedLLM(_FakeLLM(), sink, "agent", "gpt-5-mini")
+    result = llm.invoke("system", "context", "message")
+    assert result == "reponse"
+    assert len(sink.calls) == 1
+    component, tokens, latency_ms, cost = sink.calls[0]
+    assert component == "agent"
+    assert tokens > 0
+    assert latency_ms >= 0.0
+    assert cost >= 0.0
+
+
+def test_instrumented_extractor_forwards_result_and_emits_one_call() -> None:
+    sink = _RecordingSink()
+    extractor = InstrumentedExtractor(_FakeExtractor(), sink, "memory_extractor", "gpt-5-mini")
+    extractor.extract("bonjour", "bonjour a vous")
+    assert len(sink.calls) == 1
+    assert sink.calls[0][0] == "memory_extractor"
+
+
+def test_instrumented_classifier_emits_one_call_per_score_call() -> None:
+    sink = _RecordingSink()
+    classifier = InstrumentedClassifier(_FakeClassifier(), sink, "guardrails_classifier")
+    classifier.score("texte")
+    classifier.score_detailed("texte")
+    assert len(sink.calls) == 2
+    assert all(c[0] == "guardrails_classifier" for c in sink.calls)
+
+
+def test_instrumented_judge_forwards_result_and_emits_one_call() -> None:
+    sink = _RecordingSink()
+    judge = InstrumentedJudge(_FakeJudge(), sink, "guardrails_judge", "gpt-5-mini")
+    verdict = judge.evaluate("texte", "reponse agent")
+    assert verdict["manipulation"] == 0.0
+    assert len(sink.calls) == 1
+    assert sink.calls[0][0] == "guardrails_judge"
+
+
+def test_cost_accumulating_sink_sums_costs_and_forwards_to_inner() -> None:
+    from velmo.mlops.observability import CostAccumulatingSink
+
+    inner = _RecordingSink()
+    acc = CostAccumulatingSink(inner)
+    acc.on_llm_call("agent", 100, 10.0, 0.01)
+    acc.on_llm_call("memory_extractor", 50, 5.0, 0.02)
+    assert acc.total_cost == 0.03
+    assert len(inner.calls) == 2  # relayé au sink réel (Langfuse/NullSink)
+
+
+def test_get_sink_falls_back_to_null_sink_without_langfuse_config(monkeypatch) -> None:
+    """Comme `get_llm`/`get_classifier`/`get_judge`/`get_quality_scorer` : sans
+    config, repli déterministe, hors-ligne — jamais d'appel réseau réel en
+    test (Global Constraints)."""
+    from velmo.mlops.observability import NullSink, get_sink
+
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
+    assert isinstance(get_sink(), NullSink)

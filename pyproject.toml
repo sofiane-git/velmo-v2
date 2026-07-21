@@ -44,6 +44,11 @@ graph = [
     "langgraph-checkpoint-postgres>=3.1,<3.2",
     "langgraph-checkpoint-sqlite>=3.1,<3.2",
 ]
+# Observabilité (Chantier 3) : Langfuse self-host, hors chemin de gate —
+# optionnel, repli NullSink sans config (voir Task 5, get_sink()).
+observability = [
+    "langfuse>=4,<5",
+]
 
 [dependency-groups]
 dev = [
