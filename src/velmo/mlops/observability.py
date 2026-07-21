@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import contextvars
 import time
+from collections.abc import Iterator
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
     from langfuse import Langfuse
 
+    from velmo.agent import Agent
     from velmo.guardrails.classifier import ClassifierResult, ModerationClassifier
     from velmo.guardrails.judge import Judge
     from velmo.llm import LLM
@@ -258,6 +260,84 @@ def get_langfuse_client() -> "Langfuse | None":
         )
     except Exception:
         return None
+
+
+_STAGE_EVENTS = ("input_guardrail", "memory_read", "routing", "tool_result", "output_guardrail", "memory_write")
+
+
+def _stage_as_type(event_type: str) -> Literal[
+    "generation", "embedding", "span", "agent", "tool", "chain", "retriever", "evaluator", "guardrail"
+]:
+    if event_type in ("input_guardrail", "output_guardrail"):
+        return "guardrail"
+    if event_type == "memory_read":
+        return "retriever"
+    if event_type == "tool_result":
+        return "tool"
+    return "span"
+
+
+def traced_respond(
+    agent: "Agent", user_id: str, message: str
+) -> "Iterator[tuple[str, dict[str, Any]]]":
+    """Enveloppe `Agent.respond_traced` (déjà émetteur d'événements par étape
+    — `src/velmo/agent.py`) pour produire un vrai arbre de spans Langfuse par
+    tour de conversation : un tour = un trace_id frais, chaque étape émise par
+    `respond_traced` devient un span enfant de la racine `chat-turn`, chaque
+    appel LLM (via `Instrumented*`, résolu dynamiquement — Task 3) devient lui
+    aussi un enfant direct de la racine via le `LangfuseSink` posé dans le
+    contexte pour la durée du tour. Passthrough pur si Langfuse n'est pas
+    configuré (`get_langfuse_client()` renvoie `None`)."""
+    client = get_langfuse_client()
+    if client is None:
+        yield from agent.respond_traced(user_id, message)
+        return
+
+    trace_id = client.create_trace_id()
+    root = client.start_observation(
+        trace_context={"trace_id": trace_id},
+        name="chat-turn",
+        as_type="span",
+        input={"message": message},
+        metadata={"user_id": user_id},
+    )
+    turn_sink = LangfuseSink(client=client, trace_id=trace_id, parent_span_id=root.id)
+    token = set_current_sink(turn_sink)
+    answer = ""
+    status = "error"
+    try:
+        for event_type, payload in agent.respond_traced(user_id, message):
+            if event_type in _STAGE_EVENTS:
+                span_name = event_type.replace("_", "-")
+                if event_type == "tool_result":
+                    tool_name = payload.get("name")
+                    if isinstance(tool_name, str):
+                        span_name = tool_name
+                child = client.start_observation(  # type: ignore[call-overload]
+                    trace_context={"trace_id": trace_id, "parent_span_id": root.id},
+                    name=span_name,
+                    as_type=_stage_as_type(event_type),
+                    output=payload,
+                )
+                child.end()
+            elif event_type == "final":
+                answer = str(payload.get("answer", ""))
+                status = str(payload.get("status", "ok"))
+            yield event_type, payload
+    finally:
+        reset_current_sink(token)
+        root.update(output={"answer": answer}, metadata={"status": status})
+        root.end()
+
+
+def traced_reply(agent: "Agent", user_id: str, message: str) -> str:
+    """Équivalent bloquant de `traced_respond`, même contrat que
+    `Agent.respond` (draine le générateur, ne garde que la réponse finale)."""
+    answer = ""
+    for event_type, payload in traced_respond(agent, user_id, message):
+        if event_type == "final":
+            answer = str(payload["answer"])
+    return answer
 
 
 def estimate_cost(tokens: int, model: str) -> float:

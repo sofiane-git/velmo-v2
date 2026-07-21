@@ -244,3 +244,63 @@ def test_instrumented_llm_explicit_sink_wins_over_context() -> None:
 def test_instrumented_llm_defaults_to_null_sink_outside_any_context() -> None:
     llm = InstrumentedLLM(_FakeLLM(), None, "agent", "gpt-5-mini")
     assert llm.invoke("system", "context", "message") == "reponse"  # ne doit pas lever
+
+
+def test_traced_respond_passthrough_without_langfuse_configured(monkeypatch) -> None:
+    """Sans Langfuse configuré, `traced_respond` doit se comporter exactement
+    comme `agent.respond_traced` — aucun effet de bord, aucune exception."""
+    from velmo.mlops import observability as obs
+
+    monkeypatch.setattr(obs, "get_langfuse_client", lambda: None)
+
+    class _FakeAgent:
+        def respond_traced(self, user_id: str, message: str):
+            yield "final", {"answer": "ok", "status": "ok", "latency_ms": 1}
+
+    events = list(obs.traced_respond(_FakeAgent(), "u1", "salut"))  # type: ignore[arg-type]
+    assert events == [("final", {"answer": "ok", "status": "ok", "latency_ms": 1})]
+
+
+def test_traced_respond_emits_root_and_stage_spans(monkeypatch) -> None:
+    from velmo.mlops import observability as obs
+
+    class _FakeObservation:
+        def __init__(self, obs_id: str) -> None:
+            self.id = obs_id
+            self.updates: list[dict[str, object]] = []
+            self.ended = False
+
+        def update(self, **kwargs: object) -> None:
+            self.updates.append(kwargs)
+
+        def end(self) -> None:
+            self.ended = True
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.started: list[dict[str, object]] = []
+
+        def create_trace_id(self) -> str:
+            return "trace-xyz"
+
+        def start_observation(self, **kwargs: object) -> _FakeObservation:
+            self.started.append(kwargs)
+            return _FakeObservation(f"obs-{len(self.started)}")
+
+    fake_client = _FakeClient()
+    monkeypatch.setattr(obs, "get_langfuse_client", lambda: fake_client)
+
+    class _FakeAgent:
+        def respond_traced(self, user_id: str, message: str):
+            yield "input_guardrail", {"allowed": True}
+            yield "final", {"answer": "reponse", "status": "ok", "latency_ms": 3}
+
+    events = list(obs.traced_respond(_FakeAgent(), "u1", "salut"))  # type: ignore[arg-type]
+    assert [e[0] for e in events] == ["input_guardrail", "final"]
+
+    names = [call["name"] for call in fake_client.started]
+    assert names[0] == "chat-turn"
+    assert "input_guardrail" in names or "input-guardrail" in names
+    root = fake_client.started[0]
+    assert root["as_type"] == "span"
+    assert root["input"] == {"message": "salut"}
