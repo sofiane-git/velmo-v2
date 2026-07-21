@@ -268,13 +268,27 @@ def test_traced_respond_emits_root_and_stage_spans(monkeypatch) -> None:
         def __init__(self, obs_id: str) -> None:
             self.id = obs_id
             self.updates: list[dict[str, object]] = []
+            self.trace_io: dict[str, object] | None = None
             self.ended = False
 
         def update(self, **kwargs: object) -> None:
             self.updates.append(kwargs)
 
+        def set_trace_io(self, **kwargs: object) -> None:
+            self.trace_io = kwargs
+
         def end(self) -> None:
             self.ended = True
+
+    class _FakeCurrentObservation:
+        def __init__(self, observation: _FakeObservation) -> None:
+            self._observation = observation
+
+        def __enter__(self) -> _FakeObservation:
+            return self._observation
+
+        def __exit__(self, *exc_info: object) -> None:
+            self._observation.end()
 
     class _FakeClient:
         def __init__(self) -> None:
@@ -286,6 +300,10 @@ def test_traced_respond_emits_root_and_stage_spans(monkeypatch) -> None:
         def start_observation(self, **kwargs: object) -> _FakeObservation:
             self.started.append(kwargs)
             return _FakeObservation(f"obs-{len(self.started)}")
+
+        def start_as_current_observation(self, **kwargs: object) -> _FakeCurrentObservation:
+            self.started.append(kwargs)
+            return _FakeCurrentObservation(_FakeObservation(f"obs-{len(self.started)}"))
 
     fake_client = _FakeClient()
     monkeypatch.setattr(obs, "get_langfuse_client", lambda: fake_client)

@@ -287,47 +287,71 @@ def traced_respond(
     appel LLM (via `Instrumented*`, résolu dynamiquement — Task 3) devient lui
     aussi un enfant direct de la racine via le `LangfuseSink` posé dans le
     contexte pour la durée du tour. Passthrough pur si Langfuse n'est pas
-    configuré (`get_langfuse_client()` renvoie `None`)."""
+    configuré (`get_langfuse_client()` renvoie `None`).
+
+    Racine créée via `start_as_current_observation` (pas `start_observation`)
+    délibérément : les enfants sont créés hors du contexte OTel ambiant
+    (`trace_context={"trace_id":, "parent_span_id":}` explicite, seule option
+    fiable pour l'extraction mémoire — tourne sur `_BACKGROUND_EXECUTOR`, un
+    thread différent), donc aucune observation n'est jamais "current" au sens
+    OTel — sans `start_as_current_observation`, Langfuse ne sait pas laquelle
+    des observations d'un même trace_id en est la racine "officielle"
+    (`is_app_root`), et dérive le nom/input/output affichés au niveau trace de
+    l'observation arrivée en premier à l'ingestion — un ordre réseau/async,
+    pas l'ordre de création. Constaté en pratique (audit Task 6) : la
+    génération `memory_extractor`, émise sur le thread d'arrière-plan,
+    devançait parfois `chat-turn` côté ingestion et le trace entier
+    s'affichait sous son nom. `start_as_current_observation` marque
+    explicitement `chat-turn` comme racine, indépendamment de tout ordre
+    d'arrivée."""
     client = get_langfuse_client()
     if client is None:
         yield from agent.respond_traced(user_id, message)
         return
 
     trace_id = client.create_trace_id()
-    root = client.start_observation(
+    with client.start_as_current_observation(
         trace_context={"trace_id": trace_id},
         name="chat-turn",
         as_type="span",
         input={"message": message},
         metadata={"user_id": user_id},
-    )
-    turn_sink = LangfuseSink(client=client, trace_id=trace_id, parent_span_id=root.id)
-    token = set_current_sink(turn_sink)
-    answer = ""
-    status = "error"
-    try:
-        for event_type, payload in agent.respond_traced(user_id, message):
-            if event_type in _STAGE_EVENTS:
-                span_name = event_type.replace("_", "-")
-                if event_type == "tool_result":
-                    tool_name = payload.get("name")
-                    if isinstance(tool_name, str):
-                        span_name = tool_name
-                child = client.start_observation(  # type: ignore[call-overload]
-                    trace_context={"trace_id": trace_id, "parent_span_id": root.id},
-                    name=span_name,
-                    as_type=_stage_as_type(event_type),
-                    output=payload,
-                )
-                child.end()
-            elif event_type == "final":
-                answer = str(payload.get("answer", ""))
-                status = str(payload.get("status", "ok"))
-            yield event_type, payload
-    finally:
-        reset_current_sink(token)
-        root.update(output={"answer": answer}, metadata={"status": status})
-        root.end()
+    ) as root:
+        turn_sink = LangfuseSink(client=client, trace_id=trace_id, parent_span_id=root.id)
+        token = set_current_sink(turn_sink)
+        answer = ""
+        status = "error"
+        try:
+            for event_type, payload in agent.respond_traced(user_id, message):
+                if event_type in _STAGE_EVENTS:
+                    span_name = event_type.replace("_", "-")
+                    if event_type == "tool_result":
+                        tool_name = payload.get("name")
+                        if isinstance(tool_name, str):
+                            span_name = tool_name
+                    child = client.start_observation(  # type: ignore[call-overload]
+                        trace_context={"trace_id": trace_id, "parent_span_id": root.id},
+                        name=span_name,
+                        as_type=_stage_as_type(event_type),
+                        output=payload,
+                    )
+                    child.end()
+                elif event_type == "final":
+                    answer = str(payload.get("answer", ""))
+                    status = str(payload.get("status", "ok"))
+                yield event_type, payload
+        finally:
+            reset_current_sink(token)
+            root.update(output={"answer": answer}, metadata={"status": status})
+            # `root.update()` seul ne suffit pas : le nom/input/output affichés
+            # au niveau *trace* (pas de l'observation) sont dérivés par
+            # Langfuse de l'observation traitée en dernier à l'ingestion — un
+            # ordre réseau/async, pas l'ordre de création (constaté en
+            # pratique, audit Task 6 : `memory_extractor`, sur le thread
+            # d'arrière-plan, l'emportait souvent sur `chat-turn`).
+            # `set_trace_io` fixe explicitement le résumé du trace,
+            # indépendamment de cette course.
+            root.set_trace_io(input={"message": message}, output={"answer": answer})
 
 
 def traced_reply(agent: "Agent", user_id: str, message: str) -> str:
