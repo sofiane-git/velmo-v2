@@ -1,7 +1,7 @@
 """Orchestration du pipeline garde-fous : étage 1 (regex, séquentiel,
 court-circuit) puis étages 2/3 (classifieur + juge + Prompt Shields [+ PII
 redaction en sortie]) en vraie concurrence — `ThreadPoolExecutor`, parce que
-tous les SDK sous-jacents (detoxify, openai, azure-ai-*) sont synchrones.
+tous les SDK sous-jacents (ollama, openai, azure-ai-*) sont synchrones.
 """
 
 from __future__ import annotations
