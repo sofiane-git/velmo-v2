@@ -71,3 +71,22 @@ def current_git_commit() -> str:
         return commit if commit else "unknown"
     except Exception:
         return "unknown"
+
+
+def current_git_tag() -> str | None:
+    """Tag semver exact du commit courant (`v1.2.3`), ou `None` si HEAD n'est
+    pas exactement sur un tag — utilisé par `current_version()` pour que la
+    version persistée d'un run `release.yml` (déclenché par `push: tags:
+    v*.*.*`) reflète le tag réel, pas seulement le commit."""
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--exact-match"],
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).resolve().parents[3],
+            timeout=5,
+        )
+        tag = result.stdout.strip()
+        return tag if result.returncode == 0 and tag else None
+    except Exception:
+        return None

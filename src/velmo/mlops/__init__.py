@@ -20,7 +20,7 @@ from velmo.mlops.stats import non_regression_ok
 from velmo.mlops.suites.guardrails import guardrails_confusion_matrix, run_guardrails_suite
 from velmo.mlops.suites.memory import run_memory_suite
 from velmo.mlops.suites.quality import run_quality_suite
-from velmo.mlops.versioning import compute_version_hashes, current_git_commit
+from velmo.mlops.versioning import compute_version_hashes, current_git_commit, current_git_tag
 
 # Seuils SLO non-fonctionnels (conception §Gates non-fonctionnels : latence et
 # coût peuvent bloquer). Constantes de module (pas un magic number inline
@@ -58,9 +58,12 @@ class DeliveryBlocked(Exception):
 
 
 def current_version() -> str:
-    """Version courante : tag git si présent, sinon `dev-<commit court>` — ne
-    lève jamais, une évaluation locale sans tag doit rester exécutable."""
-    return f"dev-{current_git_commit()}"
+    """Version courante : tag git si HEAD y est exactement (ex. run
+    `release.yml` déclenché par `push: tags: v*.*.*`), sinon
+    `dev-<commit court>` — ne lève jamais, une évaluation locale sans tag
+    doit rester exécutable."""
+    tag = current_git_tag()
+    return tag if tag is not None else f"dev-{current_git_commit()}"
 
 
 def _persist_version(
@@ -111,9 +114,16 @@ def run_eval(
     chacun résout alors `Settings.db_url` indépendamment (Postgres si
     joignable, sinon repli SQLite fichier). Ne jamais forcer un `:memory:` par
     défaut ici : un appel `run_eval(agent)` en CI/nightly réelle doit
-    respecter la base configurée, pas une base éphémère silencieuse."""
+    respecter la base configurée, pas une base éphémère silencieuse.
+
+    Si `sink` est déjà un `CostAccumulatingSink` (cas du CLI — Task 8 —, qui
+    en construit un pour instrumenter l'agent évalué lui-même AVANT
+    d'appeler `run_eval`), il est réutilisé tel quel plutôt que ré-enveloppé :
+    un double-wrap créerait un second accumulateur qui ne verrait jamais les
+    appels LLM de l'agent (câblés sur le premier), sous-comptant le coût réel
+    — c'est justement le bug que ce partage évite (voir `mlops.cli`)."""
     sink = sink or NullSink()
-    cost_sink = CostAccumulatingSink(sink)
+    cost_sink = sink if isinstance(sink, CostAccumulatingSink) else CostAccumulatingSink(sink)
 
     memory_results = run_memory_suite(db_url=db_url, sink=cost_sink)
     guardrails_results = run_guardrails_suite(db_url=db_url, sink=cost_sink)

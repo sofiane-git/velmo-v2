@@ -91,16 +91,20 @@ def main() -> None:
     parser.add_argument("--triggered-by", default="ci")
     args = parser.parse_args()
 
-    from velmo.mlops.observability import get_sink
+    from velmo.mlops.observability import CostAccumulatingSink, get_sink
 
     # `LangfuseSink` réel si `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/
     # `LANGFUSE_BASE_URL` sont configurés (Task 5), sinon `NullSink` — même
-    # repli gracieux que `get_llm`/`get_classifier`/`get_judge`. `run_eval`
-    # enveloppe quand même ce sink dans un `CostAccumulatingSink` en interne,
-    # donc le coût gate correctement même sans Langfuse configuré.
-    sink = get_sink()
-    agent = _build_instrumented_agent(sink)
-    scores = run_eval(agent, triggered_by=args.triggered_by, sink=sink)
+    # repli gracieux que `get_llm`/`get_classifier`/`get_judge`. Le
+    # `CostAccumulatingSink` est construit ICI (pas dans `run_eval`) et
+    # partagé entre l'agent évalué et `run_eval` : sans ce partage, le coût
+    # des appels LLM de l'agent lui-même (le plus gros poste de coût réel)
+    # échapperait totalement au gate — `run_eval` le détecte déjà construit
+    # (`isinstance`) et le réutilise au lieu de le ré-envelopper.
+    raw_sink = get_sink()
+    cost_sink = CostAccumulatingSink(raw_sink)
+    agent = _build_instrumented_agent(cost_sink)
+    scores = run_eval(agent, triggered_by=args.triggered_by, sink=cost_sink)
 
     report_path = Path("mlops") / "report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,8 +112,10 @@ def main() -> None:
 
     # Process court-vécu (CLI) : force l'envoi des événements Langfuse
     # bufferisés avant sortie (doc SDK §Client lifecycle & flushing).
-    # `NullSink` n'a pas de `close()` — pas dans le Protocol, optionnel.
-    close = getattr(sink, "close", None)
+    # `close()` est appelé sur le sink réel (Langfuse), pas sur
+    # `CostAccumulatingSink` qui ne le proxifie pas — `NullSink` n'a pas de
+    # `close()` non plus (pas dans le Protocol, optionnel).
+    close = getattr(raw_sink, "close", None)
     if close is not None:
         close()
 
