@@ -50,12 +50,19 @@ observability = [
     "langfuse>=4,<5",
 ]
 # Suite Qualité (Chantier 3) : DeepEval, cadré (métriques qualité seule, juge
-# Azure pinné) — optionnel, repli déterministe (SubstringScorer) sans Azure.
+# Claude via Azure AI Foundry pinné) — optionnel, repli déterministe
+# (SubstringScorer) sans Foundry configuré.
 # >=4 requis : deepeval 2.x/3.x importent `langchain.schema` (API supprimée
 # dans langchain 1.x, déjà pinné par l'extra `llm`) ; deepeval 4.x a retiré
-# la dépendance langchain (AzureOpenAIModel utilise openai.AzureOpenAI direct).
+# la dépendance langchain.
 eval = [
     "deepeval>=4,<5",
+]
+# Extracteur mémoire (Chantier 1) + juge DeepEval Qualité (Chantier 3) :
+# claude-opus-4-5 via Azure AI Foundry (`AnthropicFoundry`), déploiement
+# partagé — voir Settings.anthropic_foundry_endpoint.
+anthropic = [
+    "anthropic>=0.60,<1",
 ]
 
 [dependency-groups]

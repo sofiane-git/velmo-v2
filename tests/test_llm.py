@@ -34,8 +34,12 @@ def test_settings_default_environment_is_development() -> None:
     assert Settings().environment == "development"
 
 
-def test_azure_openai_llm_implements_llm_protocol() -> None:
-    from velmo.llm import AzureOpenAILLM, LLM
+def test_anthropic_llm_implements_llm_protocol() -> None:
+    from velmo.llm import LLM, AnthropicLLM
 
-    llm = AzureOpenAILLM(endpoint="https://fake.openai.azure.com", api_key="fake", deployment="gpt-5-mini")
+    llm = AnthropicLLM(
+        endpoint="https://fake.services.ai.azure.com/anthropic",
+        api_key="fake",
+        model="claude-opus-4-5",
+    )
     assert isinstance(llm, LLM)

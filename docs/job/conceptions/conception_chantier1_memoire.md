@@ -309,19 +309,20 @@ Trois leviers combinés :
 
 Point clé : le « juge » de la mémoire long terme n'est **ni l'agent principal, ni un humain**, mais un **composant LLM dédié** qui tourne en post-traitement. On sépare _répondre_ (agent) et _mémoriser_ (extracteur) pour que le jugement de rétention n'interfère pas avec la réponse au client.
 
-> **Quel modèle pour l'extracteur ?** Pas le modèle de chat (Mistral-Large-3) — tâche étroite et structurée (JSON court, faits/règles), pas de génération conversationnelle : un modèle **plus petit/moins cher suffit**, même logique que le split classifieur-local/LLM-juge-cloud du _[chantier 2](conception_chantier2_guardrails.md)_. Décision : **réutiliser le modèle `gpt-5-mini` (Azure OpenAI, version d'API pinnée)** déployé pour le LLM-juge guardrails — plutôt qu'un 3ᵉ modèle à qualifier. Le modèle est **pinné explicitement** (id + version d'API) et sa justification **doit rester synchronisée** avec le modèle réel du chantier 2 (ne pas laisser traîner un ancien nom).
+> **Quel modèle pour l'extracteur ?** Pas le modèle de chat (Mistral-Large-3) — tâche étroite et structurée (JSON court, faits/règles), pas de génération conversationnelle. Décision **révisée** : **`claude-opus-4-5` via Azure AI Foundry**, partagé avec le juge DeepEval Qualité (Ch.3) — un **3ᵉ modèle/vendor**, distinct de Mistral-Large-3 (agent) et `gpt-5-mini` (juge garde-fous, Ch.2). Écart assumé par rapport à la décision initiale (réutiliser `gpt-5-mini` pour éviter un 3ᵉ modèle à qualifier, cf. [`schemas/04-outils.md`](../schemas/04-outils.md)) : le juge DeepEval Qualité **gate la release** (`--min-score 0.8`, Ch.3) — sa fiabilité pèse plus lourd que l'économie d'un endpoint en moins, et l'extracteur en hérite via le déploiement partagé plutôt que de qualifier un 4ᵉ modèle pour lui seul.
 >
-> **Déploiement Azure : partagé avec DeepEval (Ch.3), mais séparé du juge garde-fous.**
+> **Déploiement Azure AI Foundry : partagé avec DeepEval (Ch.3), mais séparé du juge garde-fous.**
 > L'extracteur et le juge DeepEval sont tous deux **asynchrones/best-effort** — ils peuvent
-> partager un même déploiement Azure (même quota) sans risque mutuel. Le juge garde-fous, lui,
-> est sur le **chemin bloquant synchrone** (chaque message) : il a son **propre déploiement**,
-> quota isolé, pour qu'un pic d'extraction ou une nuit de suite DeepEval ne throttle jamais le
-> garde-fou (détail au [chantier 2](conception_chantier2_guardrails.md#stack)). Contrepartie
-> assumée : le déploiement mémoire (Ch.1) reste couplé à celui de DeepEval (Ch.3) sur le même
-> modèle/quota — acceptable car les deux usages partagent le même profil de criticité (async,
-> tolérant à la latence). Sans lien avec `get_llm()` par défaut (Mistral-Large-3, hors-ligne =
-> `EchoLLM`) : l'extracteur reçoit son **propre client `LLM` injecté** au constructeur,
-> indépendant du modèle de réponse client et du résumé glissant.
+> partager un même déploiement (même quota) sans risque mutuel. Le juge garde-fous, lui,
+> est sur le **chemin bloquant synchrone** (chaque message) : il a son **propre déploiement**
+> Azure OpenAI (`gpt-5-mini`), quota isolé, pour qu'un pic d'extraction ou une nuit de suite
+> DeepEval ne throttle jamais le garde-fou (détail au
+> [chantier 2](conception_chantier2_guardrails.md#stack)). Contrepartie assumée : le déploiement
+> mémoire (Ch.1) reste couplé à celui de DeepEval (Ch.3) sur le même modèle/quota — acceptable
+> car les deux usages partagent le même profil de criticité (async, tolérant à la latence). Sans
+> lien avec `get_llm()` par défaut (Mistral-Large-3, hors-ligne = `EchoLLM`) : l'extracteur
+> reçoit son **propre client `LLM` injecté** au constructeur, indépendant du modèle de réponse
+> client et du résumé glissant.
 
 ### Le flux de décision (à chaque fin de tour)
 
@@ -560,7 +561,7 @@ Un doc prod-ready ne laisse pas de TODO de conception. Valeurs de départ :
 | `FACT` et `PROCEDURE` : une table ou deux ?                   | **Deux tables**                                                                                                     | Un fait est une **donnée** réinjectée dans le contexte ; une règle est une **instruction** injectée au système — les confondre rend le prompt ambigu. |
 | Faits/règles : requête exacte ou recherche par similarité ?   | **Table classique PostgreSQL** (requête exacte)                                                                     | Peu nombreux, précis, à réponse déterministe et ciblable (R5/R6) — une recherche par similarité renverrait « ce qui ressemble », approximatif et risqué. |
 | Store des épisodes ?                                           | **`pgvector`** — une seule base, atomicité native, interface `EpisodicVectorStore` substituable                     | Texte et embedding sont la même donnée sous deux formes : les séparer (ex. Chroma) coûte un service réseau, une surface de sécurité et une réconciliation en plus, pour un volume (mémoire par client) que `pgvector` couvre largement. Migration possible derrière l'interface si le volume mesuré le justifie un jour. |
-| Qui décide de mémoriser en long terme ?                       | Un **extracteur LLM dédié** (`gpt-5-mini`), séparé de l'agent, en **post-traitement best-effort**                   | Séparer *répondre* et *mémoriser* ; son échec ne bloque jamais la réponse (contrat d'échec). Déploiement Azure **partagé avec DeepEval (Ch.3)**, séparé du juge garde-fous (Ch.2) — profils de criticité différents. |
+| Qui décide de mémoriser en long terme ?                       | Un **extracteur LLM dédié** (`claude-opus-4-5`, Azure AI Foundry), séparé de l'agent, en **post-traitement best-effort**                   | Séparer *répondre* et *mémoriser* ; son échec ne bloque jamais la réponse (contrat d'échec). Déploiement **partagé avec DeepEval (Ch.3)**, séparé du juge garde-fous (Ch.2, Azure OpenAI `gpt-5-mini`) — profils de criticité différents. |
 | Isolation R3 : convention ou garantie ?                       | **Filtre `user_id` non-contournable** (client enveloppé + import direct interdit en CI) ; RLS **rétrogradée en option** | Un seul mécanisme, testé et déterministe ; RLS suppose un `SET` par session compatible avec le pooling de connexions — pas garanti, donc pas une garantie dure. |
 | Oubli R5 : flag ou suppression physique ?                     | **Suppression physique**, **transaction Postgres unique** (bénéfice direct de `pgvector`) + **tombstone** anti-résurrection | Effectif et vérifiable (RGPD) ; plus de risque cross-store à réconcilier. Le tombstone reste nécessaire pour une autre raison : la course avec l'extracteur asynchrone, indépendante du store. |
 | Seuil de confidence d'écriture ?                              | **Filtre grossier (0,7) calibré sur `memory_confidence_cases.jsonl`** (~30 cas synthétiques), valeur dans la config | La confidence auto-déclarée par un LLM est mal calibrée ; un seuil deviné mémoriserait des bêtises ou jetterait du vrai. |

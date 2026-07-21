@@ -228,21 +228,21 @@ class LLMExtractor:
 
 
 def get_extractor() -> FactExtractor:
-    """`LLMExtractor` (Azure OpenAI, déploiement async) si
-    `AZURE_OPENAI_ASYNC_ENDPOINT`/`AZURE_OPENAI_ASYNC_API_KEY` sont définis,
-    sinon repli `RuleBasedExtractor` — même convention que
-    `get_llm`/`get_classifier`/`get_judge`. Le repli ne produit jamais de
-    procédure (cf. docstring `RuleBasedExtractor`) : c'est un dégradé toléré,
-    pas un équivalent fonctionnel complet."""
+    """`LLMExtractor` (Claude via Azure AI Foundry, déploiement async) si
+    `ANTHROPIC_FOUNDRY_ENDPOINT`/`ANTHROPIC_API_KEY` sont définis, sinon repli
+    `RuleBasedExtractor` — même convention que `get_llm`/`get_classifier`/
+    `get_judge`. Le repli ne produit jamais de procédure (cf. docstring
+    `RuleBasedExtractor`) : c'est un dégradé toléré, pas un équivalent
+    fonctionnel complet."""
     from velmo.config import get_settings
-    from velmo.llm import AzureOpenAILLM
+    from velmo.llm import AnthropicLLM
 
     settings = get_settings()
-    if settings.azure_openai_async_endpoint and settings.azure_openai_async_api_key:
-        llm = AzureOpenAILLM(
-            endpoint=settings.azure_openai_async_endpoint,
-            api_key=settings.azure_openai_async_api_key,
-            deployment=settings.azure_openai_async_deployment,
+    if settings.anthropic_foundry_endpoint and settings.anthropic_api_key:
+        llm = AnthropicLLM(
+            endpoint=settings.anthropic_foundry_endpoint,
+            api_key=settings.anthropic_api_key,
+            model=settings.anthropic_async_model,
         )
         return LLMExtractor(llm)
     return RuleBasedExtractor()

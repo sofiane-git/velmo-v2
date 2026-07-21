@@ -15,9 +15,9 @@ def test_substring_scorer_scores_zero_when_absent() -> None:
     assert scorer.score("q", "aucune information", "J+2") == 0.0
 
 
-def test_get_quality_scorer_falls_back_to_substring_without_azure(monkeypatch) -> None:
-    monkeypatch.delenv("AZURE_OPENAI_ASYNC_ENDPOINT", raising=False)
-    monkeypatch.delenv("AZURE_OPENAI_ASYNC_API_KEY", raising=False)
+def test_get_quality_scorer_falls_back_to_substring_without_anthropic_foundry(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_FOUNDRY_ENDPOINT", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     scorer = get_quality_scorer()
     assert isinstance(scorer, SubstringScorer)
 

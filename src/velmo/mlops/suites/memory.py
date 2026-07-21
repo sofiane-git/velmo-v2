@@ -30,7 +30,7 @@ def _load_cases() -> list[dict[str, Any]]:
 def _instrumented_extractor(sink: ObservabilitySink) -> FactExtractor:
     settings = get_settings()
     return InstrumentedExtractor(
-        get_extractor(), sink, "memory_extractor", settings.azure_openai_async_deployment
+        get_extractor(), sink, "memory_extractor", settings.anthropic_async_model
     )
 
 

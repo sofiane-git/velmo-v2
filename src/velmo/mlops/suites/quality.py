@@ -1,7 +1,7 @@
 """Suite Qualité : cas de support génériques, notés par un juge LLM (DeepEval,
-G-Eval) quand un juge Azure est configuré — repli déterministe
-(`SubstringScorer`) sinon, même convention que `get_llm`/`get_classifier`/
-`get_judge` (EchoLLM/LexicalClassifier/RuleBasedJudge). Voir
+G-Eval) quand un juge Claude (Azure AI Foundry) est configuré — repli
+déterministe (`SubstringScorer`) sinon, même convention que `get_llm`/
+`get_classifier`/`get_judge` (EchoLLM/LexicalClassifier/RuleBasedJudge). Voir
 conception_chantier3_evaluation_mlops.md §Suite Qualité.
 """
 
@@ -30,40 +30,58 @@ class SubstringScorer:
         return 1.0 if expected_substring in answer else 0.0
 
 
+def _foundry_anthropic_model_cls() -> Any:
+    """Sous-classe de `deepeval.models.AnthropicModel` pointée sur Azure AI
+    Foundry (`AnthropicFoundry`) plutôt que l'API Anthropic directe — import
+    différé (dépendance optionnelle `deepeval`/`anthropic`, même convention
+    que le reste du module). `AnthropicModel._build_client` instancie
+    `anthropic.Anthropic`/`AsyncAnthropic` en dur (vérifié dans le package
+    installé) : impossible d'y injecter `AnthropicFoundry` autrement qu'en
+    surchargeant `load_model`. `base_url` passé au constructeur n'est pas dans
+    l'alias_map de DeepEval, donc survit tel quel jusqu'à
+    `AnthropicFoundry(api_key=..., base_url=...)`.
+    """
+    from deepeval.models import AnthropicModel
+
+    # deepeval n'expose pas de types stricts (`AnthropicModel`, `_build_client`
+    # non annotés) — `type: ignore[no-untyped-call]` ciblé plutôt que relâcher
+    # `mypy strict` pour tout le module.
+    class _FoundryAnthropicModel(AnthropicModel):  # type: ignore[no-untyped-call]
+        def load_model(self, async_mode: bool = False) -> Any:
+            from anthropic import AnthropicFoundry, AsyncAnthropicFoundry
+
+            client_cls = AsyncAnthropicFoundry if async_mode else AnthropicFoundry
+            return self._build_client(client_cls)  # type: ignore[no-untyped-call]
+
+    return _FoundryAnthropicModel
+
+
 class DeepEvalScorer:
-    """Juge Azure pinné (id + version d'API), rubrique G-Eval versionnée —
-    voir conception_chantier3_evaluation_mlops.md §Pourquoi DeepEval, mais
-    cadré. `temperature=0` côté juge (déterminisme, cf. §M4).
+    """Juge Claude (`claude-opus-4-5`) via Azure AI Foundry, rubrique G-Eval
+    versionnée — voir conception_chantier3_evaluation_mlops.md §Pourquoi
+    DeepEval, mais cadré. `temperature=0` côté juge (déterminisme, cf. §M4).
 
-    Utilise le déploiement **async** (`azure_openai_async_*`, Chantier 1 Task 9),
+    Utilise le déploiement **async** (`anthropic_*`, Chantier 1 Task 9),
     partagé avec l'extracteur mémoire — les deux usages sont asynchrones/
-    best-effort, contrairement au juge garde-fous (déploiement `guard` dédié,
-    chemin bloquant, Chantier 2 Task 9). Ne jamais lire les champs `guard_*`
-    ici : ce serait recréer le couplage de quota que la séparation des
-    déploiements (Q1, session de grilling) visait à éliminer.
+    best-effort, contrairement au juge garde-fous (déploiement `guard` dédié
+    Azure OpenAI, chemin bloquant, Chantier 2 Task 9). Ne jamais lire les
+    champs `guard_*` ici : ce serait recréer le couplage de quota que la
+    séparation des déploiements (Q1, session de grilling) visait à éliminer.
 
-    Le modèle Azure est construit **une fois** ici (`AzureOpenAIModel`,
-    https://deepeval.com/integrations/models/azure-openai) et réutilisé pour
-    chaque `score()` — passer `model=self._deployment` (une simple string) à
-    `GEval` ne suffit pas à router vers Azure : DeepEval a besoin d'une
-    instance de modèle configurée avec `endpoint`/`api_key`/`api_version`,
-    sinon `endpoint`/`api_key` ci-dessous seraient validés (`require`) mais
-    jamais utilisés pour l'appel réel.
+    Voir `_foundry_anthropic_model_cls()` : `deepeval.models.AnthropicModel`
+    instancie `anthropic.Anthropic` en dur, d'où la sous-classe qui pointe
+    `AnthropicFoundry` à la place.
     """
 
     def __init__(self) -> None:
-        from deepeval.models import AzureOpenAIModel
-
         from velmo.config import get_settings, require
 
         settings = get_settings()
-        endpoint = require(settings.azure_openai_async_endpoint, "AZURE_OPENAI_ASYNC_ENDPOINT")
-        api_key = require(settings.azure_openai_async_api_key, "AZURE_OPENAI_ASYNC_API_KEY")
-        self._model = AzureOpenAIModel(
-            model=settings.azure_openai_async_deployment,
-            deployment_name=settings.azure_openai_async_deployment,
+        endpoint = require(settings.anthropic_foundry_endpoint, "ANTHROPIC_FOUNDRY_ENDPOINT")
+        api_key = require(settings.anthropic_api_key, "ANTHROPIC_API_KEY")
+        self._model = _foundry_anthropic_model_cls()(
+            model=settings.anthropic_async_model,
             api_key=api_key,
-            api_version=settings.azure_openai_async_api_version,
             base_url=endpoint,
             temperature=0,  # déterminisme du juge, cf. §M4
         )
@@ -89,14 +107,14 @@ class DeepEvalScorer:
 
 
 def get_quality_scorer() -> QualityScorer:
-    """DeepEval si `AZURE_OPENAI_ASYNC_ENDPOINT`/`AZURE_OPENAI_ASYNC_API_KEY`
-    sont définis (déploiement async, partagé avec l'extracteur mémoire —
-    jamais le déploiement `guard` du juge garde-fous), sinon `SubstringScorer`
-    — même contrat de repli gracieux que le reste du codebase."""
+    """DeepEval si `ANTHROPIC_FOUNDRY_ENDPOINT`/`ANTHROPIC_API_KEY` sont
+    définis (déploiement async, partagé avec l'extracteur mémoire — jamais le
+    déploiement `guard` du juge garde-fous), sinon `SubstringScorer` — même
+    contrat de repli gracieux que le reste du codebase."""
     from velmo.config import get_settings
 
     settings = get_settings()
-    if settings.azure_openai_async_endpoint and settings.azure_openai_async_api_key:
+    if settings.anthropic_foundry_endpoint and settings.anthropic_api_key:
         try:
             return DeepEvalScorer()
         except Exception:

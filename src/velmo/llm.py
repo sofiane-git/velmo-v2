@@ -1,6 +1,8 @@
-"""Clients LLM : Azure AI Inference (Mistral-Large-3) et repli local hors-ligne.
+"""Clients LLM : Azure AI Inference (Mistral-Large-3, agent principal), Claude
+via Azure AI Foundry (`AnthropicFoundry`, extracteur mémoire) et repli local
+hors-ligne.
 
-L'import du SDK Azure est différé pour que le harness démarre et que les tests
+L'import des SDK est différé pour que le harness démarre et que les tests
 tournent sans dépendre du SDK ni d'un endpoint joignable.
 """
 
@@ -55,27 +57,31 @@ class AzureLLM:
         return cast(str, self._model.invoke(messages).content)
 
 
-class AzureOpenAILLM:
-    """Client Azure OpenAI (chat completions), utilisé par l'extracteur
-    mémoire — déploiement asynchrone (`azure_openai_async_*`), distinct du
-    déploiement dédié au juge garde-fous (voir Settings, Q1 session de grilling).
+class AnthropicLLM:
+    """Client Claude via Azure AI Foundry (`AnthropicFoundry`), utilisé par
+    l'extracteur mémoire — déploiement asynchrone (`anthropic_*`), distinct du
+    déploiement Azure OpenAI dédié au juge garde-fous (voir Settings, Q1
+    session de grilling). `base_url` pointe la ressource Foundry, pas l'API
+    Anthropic directe (`api.anthropic.com`) — exemple fourni par Azure :
+    `AnthropicFoundry(api_key=..., base_url="https://<resource>.services.ai.azure.com/anthropic")`.
     """
 
-    def __init__(self, endpoint: str, api_key: str, deployment: str) -> None:
-        from openai import OpenAI  # import différé : dépendance optionnelle
+    def __init__(self, endpoint: str, api_key: str, model: str) -> None:
+        from anthropic import AnthropicFoundry  # import différé : dépendance optionnelle
 
-        self._client = OpenAI(base_url=endpoint, api_key=api_key, timeout=45.0)
-        self._deployment = deployment
+        self._client = AnthropicFoundry(api_key=api_key, base_url=endpoint)
+        self._model = model
 
     def invoke(self, system: str, context: str, message: str) -> str:
-        messages = [{"role": "system", "content": system}]
-        if context:
-            messages.append({"role": "system", "content": f"Mémoire:\n{context}"})
-        messages.append({"role": "user", "content": message})
-        completion = self._client.chat.completions.create(
-            model=self._deployment, messages=messages  # type: ignore[arg-type]
+        full_system = f"{system}\n\nMémoire:\n{context}" if context else system
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=1024,
+            system=full_system,
+            messages=[{"role": "user", "content": message}],
         )
-        return completion.choices[0].message.content or ""
+        block = response.content[0]
+        return block.text if block.type == "text" else ""
 
 
 def get_llm() -> LLM:

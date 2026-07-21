@@ -64,62 +64,64 @@ service × région si tu veux comparer plusieurs services avant de choisir.
 
 ---
 
-## 2. Azure OpenAI — deux déploiements séparés (décision Q1)
+## 2. Azure OpenAI + Azure AI Foundry — deux déploiements séparés (décision Q1, révisée)
 
 Rappel de la décision : le juge garde-fous (chemin **bloquant synchrone**) ne doit pas
 partager son quota avec l'extracteur mémoire et le juge DeepEval (tous deux **asynchrones/
-best-effort**). Un déploiement Azure OpenAI = une ressource Azure OpenAI (ou plusieurs
-déploiements sur la même ressource — voir note ci-dessous).
+best-effort**). Ces deux usages ne partagent plus seulement un quota isolé mais un **vendor
+distinct** depuis la décision révisée (Ch.1) : `claude-opus-4-5` via **Azure AI Foundry**,
+pas `gpt-5-mini`/Azure OpenAI. Le juge garde-fous, lui, reste sur Azure OpenAI, inchangé.
 
-### 2.1 Ressource Azure OpenAI n°1 — usages asynchrones (extracteur mémoire + juge DeepEval)
+### 2.1 Ressource Azure AI Foundry — usages asynchrones (extracteur mémoire + juge DeepEval)
+
+Modèles tiers (Anthropic, Mistral, …) se déploient comme au §2.4 (`kind AIServices`, format
+catalogue Foundry), pas `kind OpenAI` — c'est un modèle partenaire, pas un modèle OpenAI natif.
 
 ```bash
 az cognitiveservices account create \
-  --name "aoai-${SUFFIX}-async" \
+  --name "aif-${SUFFIX}-async" \
   --resource-group "$RG" \
   --location "$LOCATION" \
-  --kind OpenAI \
+  --kind AIServices \
   --sku S0 \
-  --custom-domain "aoai-${SUFFIX}-async"
+  --custom-domain "aif-${SUFFIX}-async"
 
-# Déploiement du modèle (gpt-5-mini, ou le modèle réellement disponible équivalent)
+# Déploiement du modèle — --model-format/--model-version exacts à confirmer dans le
+# catalogue Foundry au moment du déploiement (syntaxe des modèles partenaires Anthropic
+# encore jeune côté CLI ; le chemin portail ci-dessous est le plus fiable aujourd'hui).
 az cognitiveservices account deployment create \
-  --name "aoai-${SUFFIX}-async" \
+  --name "aif-${SUFFIX}-async" \
   --resource-group "$RG" \
-  --deployment-name "gpt-5-mini-async" \
-  --model-name "gpt-5-mini" \
-  --model-version "<version pinnée — voir la console Azure OpenAI pour la version dispo>" \
-  --model-format OpenAI \
+  --deployment-name "claude-opus-4-5" \
+  --model-name "claude-opus-4-5" \
+  --model-format "Anthropic" \
   --sku-capacity 10 \
-  --sku-name "Standard"   # pay-as-you-go — voir §2.3 pour la bascule PTU
+  --sku-name "GlobalStandard"
 ```
 
 **Via le portail (création de la ressource)** :
-1. `portal.azure.com` → **Create a resource** → rechercher « Azure OpenAI » → **Create**.
+1. `portal.azure.com` → **Create a resource** → rechercher « Azure AI services » (pas
+   « Azure OpenAI ») → **Create**.
 2. Onglet **Basics** : `Subscription` (la tienne), `Resource group` = `rg-velmo-prod`,
-   `Region` = France Central/West Europe, `Name` = `aoai-velmo-prod-async`,
+   `Region` = France Central/West Europe, `Name` = `aif-velmo-prod-async`,
    `Pricing tier` = **Standard S0**.
 3. Onglet **Network** : laisser `All networks` par défaut pour un premier déploiement
    (à restreindre plus tard via un VNet privé si nécessaire).
 4. **Review + create** → **Create**. Attendre la fin du déploiement (« Go to resource »).
 
-**Via le portail (déploiement du modèle) — deux chemins possibles selon l'interface active
-sur ton abonnement** :
-- **Depuis la ressource Azure OpenAI** : sur la page de la ressource créée à l'étape
-  précédente → bouton **Go to Foundry portal** (ou « Explore » / « Model deployments »
-  selon la version d'interface) → tu arrives sur le portail **Microsoft Foundry**
-  (`ai.azure.com`), déjà connecté à cette ressource.
-- **Directement depuis Microsoft Foundry** : `ai.azure.com` → sélectionner le projet lié à
-  ta ressource (ou en créer un) → menu de gauche **Models + endpoints** → **+ Deploy model**
-  → choisir **Deploy base model** → chercher `gpt-5-mini` (ou l'équivalent disponible) dans
-  le catalogue → **Confirm**.
-- Dans la boîte de dialogue de déploiement : `Deployment name` = `gpt-5-mini-async`,
-  `Deployment type` = **Standard** (pay-as-you-go — PTU réservé au §2.3), vérifier que la
-  ressource Azure OpenAI connectée est bien `aoai-velmo-prod-async` → **Deploy**.
+**Via le portail (déploiement du modèle)** :
+- Depuis la ressource créée → bouton **Go to Foundry portal** (ou directement
+  `ai.azure.com` → projet lié à la ressource) → menu de gauche **Models + endpoints** →
+  **+ Deploy model** → **Deploy base model** → chercher `claude-opus-4-5` dans le
+  catalogue (catégorie « Partner models », modèles Anthropic) → **Confirm**.
+- Dans la boîte de dialogue de déploiement : `Deployment name` = `claude-opus-4-5`,
+  vérifier que la ressource connectée est bien `aif-velmo-prod-async` → **Deploy**.
 - Une fois déployé, la page atterrit sur le **Playground** du modèle — utile pour tester
-  l'appel manuellement avant de brancher le code (`AZURE_OPENAI_ASYNC_ENDPOINT`/
-  `AZURE_OPENAI_ASYNC_API_KEY`, visibles dans l'onglet **Keys and Endpoint** de la ressource
-  côté portail Azure classique).
+  l'appel manuellement avant de brancher le code (`ANTHROPIC_FOUNDRY_ENDPOINT`/
+  `ANTHROPIC_API_KEY`, visibles dans l'onglet **Keys and Endpoint** de la ressource côté
+  portail Azure classique). L'endpoint prend la forme
+  `https://<resource>.services.ai.azure.com/anthropic` — pas le
+  `.../openai/v1` des ressources Azure OpenAI/AI Inference.
 
 ### 2.2 Ressource Azure OpenAI n°2 — juge garde-fous (chemin bloquant)
 
@@ -137,27 +139,31 @@ az cognitiveservices account deployment create \
   --resource-group "$RG" \
   --deployment-name "gpt-5-mini-guard" \
   --model-name "gpt-5-mini" \
-  --model-version "<même version pinnée que ci-dessus — synchronisée, cf. décision Ch.1>" \
+  --model-version "<version pinnée — voir la console Azure OpenAI pour la version dispo>" \
   --model-format OpenAI \
   --sku-capacity 10 \
   --sku-name "Standard"
 ```
 
-**Via le portail** : répéter exactement les mêmes étapes que le §2.1, en changeant :
-`Name` = `aoai-velmo-prod-guard` (ressource), `Deployment name` = `gpt-5-mini-guard`
-(déploiement) — **c'est une 2ᵉ ressource Azure OpenAI complète**, pas un 2ᵉ déploiement sur
-la ressource `async` (voir l'encadré ci-dessous sur le pourquoi). Les identifiants récupérés
-(`Keys and Endpoint`) alimentent `AZURE_OPENAI_GUARD_ENDPOINT`/`AZURE_OPENAI_GUARD_API_KEY`
-— jamais les mêmes variables que la ressource `async`.
+**Via le portail** : mêmes étapes qu'une ressource Azure OpenAI classique (`kind` = **Azure
+OpenAI**, pas **Azure AI services** — contrairement à la ressource Foundry du §2.1) :
+**Create a resource** → « Azure OpenAI » → `Name` = `aoai-velmo-prod-guard`, `Pricing tier`
+= **Standard S0** → **Review + create**. Puis déploiement du modèle via Microsoft Foundry
+(`ai.azure.com`, projet lié à la ressource) → **Models + endpoints** → **+ Deploy model** →
+**Deploy base model** → chercher `gpt-5-mini` → `Deployment name` = `gpt-5-mini-guard`,
+`Deployment type` = **Standard** (pay-as-you-go — PTU réservé au §2.3), vérifier que la
+ressource connectée est bien `aoai-velmo-prod-guard` → **Deploy**. Les identifiants
+récupérés (`Keys and Endpoint`) alimentent `AZURE_OPENAI_GUARD_ENDPOINT`/
+`AZURE_OPENAI_GUARD_API_KEY` — jamais les variables `ANTHROPIC_*` de la ressource Foundry
+du §2.1.
 
-> **Pourquoi deux ressources et pas deux déploiements sur une seule ressource ?** Azure
-> applique les quotas de rate-limit **par déploiement**, mais deux déploiements sur la même
-> ressource restent soumis à la même limite globale de throughput (TPM) de la ressource dans
-> certains tiers. Deux **ressources** séparées garantissent une isolation de quota complète,
-> sans ambiguïté sur le comportement de throttling partagé. Si la doc Azure de ton tier
-> confirme une isolation stricte par déploiement au sein d'une même ressource, tu peux
-> simplifier à une ressource + deux déploiements — vérifie au moment de l'implémentation
-> (le comportement de quota Azure évolue).
+> **Pourquoi deux ressources séparées ?** Vendor différent (Azure OpenAI vs Azure AI
+> Foundry/Anthropic depuis la décision révisée, Ch.1) : deux ressources distinctes de toute
+> façon, pas un choix à trancher. Ça règle aussi, en prime, l'isolation de quota que la
+> décision Q1 visait initialement — Azure applique les quotas de rate-limit **par
+> déploiement**, mais deux déploiements sur une même ressource restent soumis à la même
+> limite globale de throughput (TPM) dans certains tiers ; deux ressources séparées
+> garantissent une isolation complète, sans ambiguïté sur le throttling partagé.
 
 ### 2.3 Bascule Standard → Provisioned Throughput Unit (PTU)
 
@@ -526,15 +532,18 @@ manuellement.
 
 ## 9. Tarification — vérification périodique (décision Ch.3)
 
-La table de tarifs (config versionnée, `velmo.config`) doit être vérifiée contre les prix
-réels Azure OpenAI à intervalle régulier :
+La table de tarifs (config versionnée, `velmo.config` — `token_pricing`) doit être vérifiée
+contre les prix réels Azure à intervalle régulier, **pour chacun des deux vendors** (Azure
+OpenAI pour le juge garde-fous, Azure AI Foundry pour l'extracteur/juge DeepEval — tarifs
+distincts, pas de raison qu'ils dérivent au même rythme) :
 
 **Via le portail (seul chemin pertinent — pas d'équivalent CLI simple pour une consultation
 visuelle)** : `portal.azure.com` → rechercher « Cost Management » → **Cost analysis** →
-`Scope` = le groupe de ressources `rg-velmo-prod` → filtrer (`Add filter`) par
-`Resource` en tapant `aoai-${SUFFIX}` → ajuster la période (`Granularity` = mensuel) →
-comparer le coût affiché au coût calculé par l'instrumentation
-(`eval_run.cost_per_conv` agrégé, cf. Chantier 3).
+`Scope` = le groupe de ressources `rg-velmo-prod` → filtrer (`Add filter`) par `Resource`
+en tapant `aoai-${SUFFIX}` (juge garde-fous) ou `aif-${SUFFIX}` (extracteur/DeepEval) →
+ajuster la période (`Granularity` = mensuel) → comparer le coût affiché au coût calculé par
+l'instrumentation (`eval_run.cost_per_conv` agrégé, cf. Chantier 3) — c'est cette comparaison
+qui révèle une dérive de tarif à corriger dans `token_pricing`.
 
 - Trimestriel, ou dès qu'un écart notable apparaît entre facture réelle et coût recalculé.
 
@@ -566,8 +575,8 @@ stocker dans Key Vault (§4) : `langfuse-public-key`, `langfuse-secret-key`. Ali
 
 | Ressource                     | Rôle                                                    |
 | ------------------------------ | -------------------------------------------------------- |
-| `aoai-${SUFFIX}-async`        | Extracteur mémoire + juge DeepEval (partagé, async)      |
-| `aoai-${SUFFIX}-guard`        | Juge garde-fous (dédié, chemin bloquant)                 |
+| `aif-${SUFFIX}-async`         | Extracteur mémoire + juge DeepEval (`claude-opus-4-5`, Azure AI Foundry, partagé, async) |
+| `aoai-${SUFFIX}-guard`        | Juge garde-fous (`gpt-5-mini`, Azure OpenAI, dédié, chemin bloquant) |
 | `aoai-${SUFFIX}-chat`         | Agent principal (Mistral-Large-3, Azure AI Inference)    |
 | `psql-${SUFFIX}`              | PostgreSQL + `pgvector` — mémoire, audit, éval, PITR     |
 | `kv-${SUFFIX}`                | Secrets (par environnement : staging/prod séparés)       |

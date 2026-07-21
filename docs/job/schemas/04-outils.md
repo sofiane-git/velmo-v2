@@ -73,7 +73,7 @@ chantier indiqué.
 | ----- | ---- | -------------------------- |
 | **Mistral-Large-3** (Azure AI Inference) | Modèle de chat principal (répond au client) | Le brief impose « Azure AI Inference, **aucun modèle local** » ; Mistral-Large-3 est un modèle multilingue FR fort déployé sur le tenant. **Alternative écartée** : modèle local (Mistral 7B) — interdit par le brief + qualité conversationnelle insuffisante. _(Écart de modèle exact vs brief : voir dernière puce.)_ |
 | **LangGraph** (+ `PostgresSaver`) | Orchestration du tour (`StateGraph`) + persistance de l'état de thread | En **LangChain 1.x les classes `*Memory` sont supprimées** ; LangGraph est la voie native de persistance conversationnelle (reprise après crash gratuite). **Alt écartée** : table `MESSAGE` maison → deux sources de vérité ; `ConversationSummaryBufferMemory` → n'existe plus en 1.x. |
-| **LangChain 1.x** (`core`, `azure-ai`) | Client LLM Azure + **sortie structurée** (Pydantic) pour extracteur/juge | `with_structured_output` fiable + client déjà en dépendance ; on n'utilise **que** ce qui existe et sert. **Alt écartée** : appeler l'API brute → réécrire le parsing structuré/validation à la main. |
+| **LangChain 1.x** (`core`, `azure-ai`) | Client LLM Azure pour l'agent principal | Client déjà en dépendance ; on n'utilise **que** ce qui existe et sert. Extracteur mémoire et juges (garde-fous, DeepEval) appellent leur SDK directement (`openai`/`anthropic`), pas de couche LangChain — parsing JSON fait main côté extracteur. |
 
 ### Mémoire (chantier 1)
 
@@ -81,6 +81,7 @@ chantier indiqué.
 | ----- | ---- | -------------------------- |
 | **PostgreSQL** | Source de vérité relationnelle : faits, règles, threads, audit, versions & verdicts CI | Requêtes **exactes et déterministes**, suppression ciblée (R5), transactions, isolation par `user_id`/RLS (R3), contraintes d'unicité (anti-doublon). Imposé par le brief pour l'état durable. **Alt écartée** : NoSQL/clé-valeur → ni requêtes relationnelles ni `UNIQUE` pour dédoublonner un fait. |
 | **ChromaDB** | Index vectoriel des épisodes : recherche par similarité (top-k) | Imposé par le brief pour la mémoire épisodique ; retrouve « ce qui **ressemble** » à la question, ce que SQL ne fait pas. **Alt écartée** : `pgvector` (aurait unifié le store + rendu R5 atomique) — mais **Chroma est imposé** ; tout-SQL → pas de recherche ANN native simple. |
+| **`claude-opus-4-5`** (Azure AI Foundry) | Extracteur LLM (faits/règles, JSON court) — partagé avec le juge DeepEval Qualité (Ch.3) | Tâche structurée, pas conversationnelle. Décision **révisée** depuis `gpt-5-mini` réutilisé du juge garde-fous : 3ᵉ modèle assumé, motivé par la fiabilité du juge DeepEval qui gate la release (voir [`conception_chantier1_memoire.md`](../conceptions/conception_chantier1_memoire.md#qui-écrit-quand-quoi-retenir)). **Alt écartée** : réutiliser `gpt-5-mini` (couplage quota/criticité avec le juge garde-fous jugé plus risqué que le coût d'un endpoint de plus). |
 
 ### Garde-fous — 3 étages, 3 outils (chantier 2)
 
@@ -88,7 +89,7 @@ chantier indiqué.
 | ----- | ---- | -------------------------- |
 | **Regex / motifs** (étage 1) | Détection **déterministe** : PII structurée, motifs d'injection connus, secrets | Gratuit, instantané, **zéro faux négatif** sur un format connu (Luhn carte, clé `sk-…`). **Alt écartée** : un LLM pour ça → coûteux et faillible sur une tâche exacte. |
 | **Llama Guard 3 8B** (Ollama, local) (étage 2) | Classifieur modération G1/G2/G3 (haine/violence/sexuel) | Multilingue **FR**, local (aucune clé/coût), taxonomie MLCommons native. **Alt écartée** : **Detoxify** (anglais Jigsaw) → score ~0 sur cas FR clairs (**mesuré** : auto-agression 0.008) ; volet modération de Content Safety → doublon payant. |
-| **Azure OpenAI `gpt-5-mini`** (étage 3, LLM-juge **+** extracteur mémoire) | Jugement contextuel (G5/G6/G7 subtils) + extraction faits/règles (Ch.1) | Qualité de **jugement contextuel** (injection reformulée, fuite subtile) où un petit modèle local rate ; accès Azure inclus formation ; **réutilisé** pour l'extracteur → un seul endpoint. **Alt écartée** : Mistral 7B local → faux nég/pos ; 3ᵉ modèle dédié → multiplie endpoints/credentials. |
+| **Azure OpenAI `gpt-5-mini`** (étage 3, LLM-juge garde-fous) | Jugement contextuel (G5/G6/G7 subtils) | Qualité de **jugement contextuel** (injection reformulée, fuite subtile) où un petit modèle local rate ; accès Azure inclus formation ; chemin bloquant synchrone → modèle rapide/économique suffisant. **Alt écartée** : Mistral 7B local → faux nég/pos. |
 | **Prompt Shields** (Content Safety) — _feature-flag_ | Détection spécialisée injection/jailbreak (G6), en complément du juge | Moins cher qu'un appel LLM complet sur une détection ciblée. **Non baseline** : dépendance cloud de plus → activé seulement si son **gain incrémental est mesuré** (Ch.3). |
 | **PII redaction** (Azure AI Language) — _feature-flag_ | PII en **texte libre** en sortie (G4) au-delà des formats regex | Couvre nom/adresse d'un autre client que la regex rate. **Non baseline** : **faux positifs** sur noms de joueurs/clubs + coût → activé sous mesure. |
 

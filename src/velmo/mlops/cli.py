@@ -70,7 +70,7 @@ def _build_instrumented_agent(sink: ObservabilitySink):  # type: ignore[no-untyp
     llm = InstrumentedLLM(raw_llm, sink, "agent", settings.azure_ai_inference_model)
     memory = MemoryManager(
         extractor=InstrumentedExtractor(
-            get_extractor(), sink, "memory_extractor", settings.azure_openai_async_deployment
+            get_extractor(), sink, "memory_extractor", settings.anthropic_async_model
         ),
         llm=InstrumentedLLM(raw_llm, sink, "memory_summary", settings.azure_ai_inference_model),
     )

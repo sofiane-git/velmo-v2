@@ -49,10 +49,12 @@ class Settings(BaseSettings):
     # Extracteur mémoire (Chantier 1) + juge DeepEval Qualité (Chantier 3) :
     # usages ASYNCHRONES/best-effort — peuvent partager un même déploiement
     # sans risque mutuel (voir conception_chantier1_memoire.md §Qui décide de
-    # mémoriser en long terme).
-    azure_openai_async_endpoint: str | None = None
-    azure_openai_async_api_key: str | None = None
-    azure_openai_async_deployment: str = "gpt-5-mini"
+    # mémoriser en long terme). claude-opus-4-5 via Azure AI Foundry
+    # (`AnthropicFoundry(api_key=..., base_url=...)` — pas l'API Anthropic
+    # directe), déploiement isolé du juge garde-fous (Chantier 2, Azure OpenAI).
+    anthropic_foundry_endpoint: str | None = None
+    anthropic_api_key: str | None = None
+    anthropic_async_model: str = "claude-opus-4-5"
 
     # Classifieur de modération : Llama Guard 3 servi via Ollama.
     ollama_url: str | None = None
@@ -95,16 +97,16 @@ class Settings(BaseSettings):
     # (conception_chantier3_evaluation_mlops.md §Seuils : tarif Azure).
     # Vérification périodique recommandée (trimestrielle, ou si la facture
     # réelle diverge du coût recalculé) — voir hash de version (mlops).
+    #
+    # "claude-opus-4-5" : 0,01 $US/1000 tokens (tarif Azure AI Foundry
+    # communiqué) recopié tel quel, comme les deux entrées ci-dessous — pas de
+    # conversion $→€ dans ce projet, la table mélange déjà les deux
+    # (approximation assumée, pas une compta exacte).
     token_pricing: dict[str, float] = {
         "gpt-5-mini": 0.0015,
         "Mistral-Large-3": 0.003,
+        "claude-opus-4-5": 0.01,
     }
-
-    # Version d'API Azure OpenAI pinnée pour le juge DeepEval (déploiement
-    # async, cf. Task 4) — un juge non pinné dérive silencieusement d'une
-    # version d'API à l'autre (conception_chantier3_evaluation_mlops.md
-    # §Déterminisme : "modèle Azure pinné (id + version d'API)").
-    azure_openai_async_api_version: str = "2024-08-01-preview"
 
     # Langfuse self-host (jamais Langfuse Cloud — conversations client =
     # PII, conception §Observabilité/Gouvernance RGPD). `None` par défaut :
@@ -132,7 +134,7 @@ class ConfigurationError(RuntimeError):
 _ENDPOINT_KEY_FIELDS: tuple[tuple[str, str], ...] = (
     ("azure_ai_inference_endpoint", "azure_ai_inference_api_key"),
     ("azure_openai_guard_endpoint", "azure_openai_guard_api_key"),
-    ("azure_openai_async_endpoint", "azure_openai_async_api_key"),
+    ("anthropic_foundry_endpoint", "anthropic_api_key"),
     ("azure_language_endpoint", "azure_language_key"),
     ("azure_content_safety_endpoint", "azure_content_safety_key"),
 )

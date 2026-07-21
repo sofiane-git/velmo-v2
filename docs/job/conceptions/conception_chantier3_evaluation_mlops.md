@@ -19,7 +19,7 @@ fonctionnent quand même. C'est la ligne de partage qui structure tout le docume
 | Brique                             | Rôle dans l'évaluation                                                                                                                                                                                                                                                              | Dans le chemin de gate ? |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
 | **Fixtures JSONL** (`eval/*.jsonl`) | `memory_cases.jsonl`, `guardrail_cases.jsonl`, `quality_cases.jsonl` — cas **rejouables et déterministes**, un cas = une entrée + un résultat attendu. Versionnés dans le repo comme du code.                                                                                       | **Oui** (source du quoi-tester) |
-| **DeepEval**                       | Bibliothèque de métriques LLM, **cadrée** : suite Qualité uniquement (G-Eval, answer relevancy, faithfulness). Juge **forcé sur le modèle Azure** de la stack. Rubriques versionnées. **N'entre pas dans le gate de R1** (voir §Suites).                                             | **Oui** (suite Qualité)  |
+| **DeepEval**                       | Bibliothèque de métriques LLM, **cadrée** : suite Qualité uniquement (G-Eval, answer relevancy, faithfulness). Juge **forcé sur un modèle explicitement qualifié et pinné** (`claude-opus-4-5`, Azure AI Foundry — décision révisée depuis `gpt-5-mini`, cf. [chantier 1](conception_chantier1_memoire.md)). Rubriques versionnées. **N'entre pas dans le gate de R1** (voir §Suites).                                             | **Oui** (suite Qualité)  |
 | **PostgreSQL**                     | `agent_version` (identité d'une version) + `eval_run` (résultat agrégé du gate) + `eval_case_result` (détail par cas). **Source de vérité unique du pass/fail et des agrégats latence/coût qui gatent.** Append-only forcé côté base.                                                | **Oui** (décision)       |
 | **Instrumentation locale**         | Décorateur sur chaque appel LLM (agent, extracteur mémoire Ch.1, classifieur + LLM-juge Ch.2) mesurant `tokens` + `durée` → agrégés (p50/p95, coût/conversation) dans `eval_run`. C'est **cette mesure-là** qui gate.                                                                | **Oui** (SLO)            |
 | **Langfuse (self-host)**           | **Observabilité fine, hors chemin de gate** : trace chaque appel LLM en prod pour le drill-down (quel composant dérape), dashboards, alerting. Branché derrière l'interface `ObservabilitySink`. Self-host (données client = PII, RGPD). `eval_run` ne stocke qu'un **pointeur** (URL de trace), pas la donnée. | Non (observabilité seule) |
@@ -33,7 +33,9 @@ fonctionnent quand même. C'est la ligne de partage qui structure tout le docume
 
 > **Pourquoi DeepEval, mais cadré ?** DeepEval fournit des métriques **calibrées** (G-Eval,
 > faithfulness) — inutile de réinventer un juge maison pour la suite Qualité. Mais on le
-> **borne** : (a) juge = modèle Azure (pas d'OpenAI clandestin), (b) rubriques versionnées
+> **borne** : (a) juge = modèle **déployé via Azure** (Azure AI Foundry ou Azure OpenAI —
+> jamais un accès direct hors gouvernance), actuellement `claude-opus-4-5` (décision révisée,
+> remplace `gpt-5-mini`, cf. [chantier 1](conception_chantier1_memoire.md)), (b) rubriques versionnées
 > comme donnée, (c) **la métrique conversationnelle DeepEval ne gate pas R1** — une exigence
 > mémoire non négociable ne peut pas dépendre d'un score LLM flou (voir §Suites).
 
@@ -273,7 +275,7 @@ si l'agent ou le juge est stochastique et non pinné :
 
 - Agent évalué : `temperature = 0` en évaluation (mode déterministe), sauf cas où R1 exige
   du naturel — alors seed fixe + agrégation N-runs.
-- Juge DeepEval : `temperature = 0`, modèle Azure **pinné** (id + version d'API).
+- Juge DeepEval : `temperature = 0`, modèle **pinné** (`claude-opus-4-5`, Azure AI Foundry).
 - Version de DeepEval **pinnée** dans `pyproject.toml` : un upgrade de DeepEval = re-baseline
   explicite (ses métriques évoluent entre releases).
 
@@ -579,7 +581,7 @@ critère est explicite, pas « à l'appréciation ».
 | Latence/coût : où sont-ils calculés ?                       | **Instrumentation locale → Postgres** (ce qui gate) ; Langfuse pour le drill-down seulement                        | Le gate ne doit dépendre d'aucun service tiers ; la donnée de décision reste dans une seule source de vérité. |
 | Absorber la variance du LLM-juge sans bloquer pour du bruit | Qualité en **delta ± 2σ** (N=5 runs) ; mémoire/garde-fous en seuil absolu + retry tracé                            | Seule la qualité est un jugement bruité ; R1–R6/G1–G7 restent vérifiables exactement. |
 | `EVAL_RUN` par version ou par exécution ?                   | **Par exécution** (1 version → N runs)                                                                              | Retry sur flake + nightly sans polluer l'identité de version. |
-| Moteur de métriques qualité : fait main ou biblio ?         | **DeepEval, cadré** : qualité seule, juge Azure pinné, rubriques versionnées, R1 hors gate                         | Métriques calibrées sans réinventer un juge ; mais on ne laisse pas une exigence non négociable dépendre d'un score flou. |
+| Moteur de métriques qualité : fait main ou biblio ?         | **DeepEval, cadré** : qualité seule, juge `claude-opus-4-5` pinné (Azure AI Foundry), rubriques versionnées, R1 hors gate | Métriques calibrées sans réinventer un juge ; mais on ne laisse pas une exigence non négociable dépendre d'un score flou. |
 | Observabilité : quel outil, quel rôle ?                     | **Langfuse self-host**, derrière `ObservabilitySink`, **hors chemin de gate**                                      | Trace fine + RGPD maîtrisé (self-host) ; découplage strict pour que Langfuse down ne casse ni CI ni gate. |
 | Identité de version : outil tiers ou git ?                  | **Hash git** des fichiers (prompt + configs) ; tag semver au release                                               | Git est déjà la source de vérité du prompt ; l'identité ne doit pas dépendre d'un service up. |
 | Stratégie de branches ?                                     | **Trunk-based** : `main` toujours livrable + `feature/*` courtes + **tags semver** + **GitHub Environments**       | Aligné continuous delivery ; supprime `develop` et le double-merge hotfix ; environnements = cibles de déploiement, pas branches. |
