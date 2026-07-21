@@ -490,6 +490,23 @@ class MemoryManager:
         finally:
             session.close()
 
+    def remember_procedure(self, user_id: str, trigger: str, rule: str) -> None:
+        """Symétrique à `remember_fact` : établit explicitement une procédure
+        et lève un éventuel tombstone `procedure_trigger` posé par un
+        `forget()` antérieur, sinon l'extracteur resterait bloqué indéfiniment
+        sur ce trigger alors qu'une règle vivante et à jour existe désormais
+        (cf. `is_tombstoned` dans `_extract_and_persist`/`_maybe_compress`)."""
+        session = self._Session()
+        try:
+            self._bind_user(session, user_id)
+            get_or_create_user(session, user_id)
+            proc, _ = upsert_procedure(session, user_id, trigger, rule, 1.0, None)
+            resolve_tombstone(session, user_id, "procedure_trigger", proc.trigger)
+            write_audit(session, user_id, "write", f"procedure:{trigger}")
+            session.commit()
+        finally:
+            session.close()
+
     def forget(self, user_id: str, target: str) -> ForgetReport:
         session = self._Session()
         try:
@@ -512,12 +529,8 @@ class MemoryManager:
                 RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in removed_procs
             ]
             for proc in removed_procs:
-                # Contrairement à `fact_key` (résolu par `remember_fact`), rien ne
-                # résout jamais un tombstone `procedure_trigger` : il n'existe pas
-                # d'API "remember_procedure" explicite (les procédures ne sont
-                # écrites que par l'extracteur, exactement le chemin que ce
-                # tombstone bloque). Lacune connue et acceptée pour l'instant —
-                # pas un bug à corriger silencieusement ici.
+                # Levé explicitement par `remember_procedure` si l'utilisateur
+                # revient sur son refus (même contrat que `fact_key`/`remember_fact`).
                 set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
             write_audit(session, user_id, "delete", target)
             session.commit()
@@ -561,8 +574,7 @@ class MemoryManager:
             for fact in facts:
                 set_tombstone(session, user_id, "fact_key", fact.key)
             for proc in procedures:
-                # Cf. `forget()` : aucune API "remember_procedure" n'existe pour
-                # résoudre ce tombstone — lacune connue, pas un bug.
+                # Cf. `forget()` : levé par `remember_procedure` si besoin.
                 set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
 
             user = session.get(MemoryUser, user_id)

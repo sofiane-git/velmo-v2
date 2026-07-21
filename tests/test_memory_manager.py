@@ -210,6 +210,13 @@ def test_bind_user_is_noop_on_sqlite():
         session.close()
 
 
+def test_remember_procedure_bypasses_extractor():
+    mm = _mm()
+    mm.remember_procedure("up2", "refund_offer", "Proposer un bon de 10%.")
+    procs = mm.inspect("up2")["procedures"]
+    assert any(p["trigger"] == "refund_offer" and p["rule"] == "Proposer un bon de 10%." for p in procs)
+
+
 def test_forget_removes_matching_procedure():
     from velmo.memory.extractor import ExtractedProcedure, ExtractionResult
 
@@ -318,6 +325,53 @@ def test_remember_fact_resolves_tombstone_and_unblocks_extractor() -> None:
     mm._extract_and_persist(user, "Ma taille est L, tu peux le noter ?", "Noté.")
     rendered = mm.read(user, "ma pointure ?").render()
     assert "taille : L" in rendered
+
+
+def test_remember_procedure_resolves_tombstone_and_unblocks_extractor() -> None:
+    """Symétrique à `test_remember_fact_resolves_tombstone_and_unblocks_extractor`
+    pour les procédures : avant ce fix, aucune API `remember_procedure`
+    n'existait pour lever un tombstone `procedure_trigger` posé par `forget()`
+    — un client qui revenait sur son refus restait bloqué à vie (gap
+    documenté, review finale chantier 1)."""
+    from velmo.memory.db import is_tombstoned
+    from velmo.memory.extractor import ExtractedProcedure, ExtractionResult
+
+    class _ProcExtractor:
+        def extract(self, user_message, assistant_message):
+            return ExtractionResult(
+                procedures=[
+                    ExtractedProcedure(
+                        trigger="refund_offer", rule="Proposer un remboursement.", confidence=0.9
+                    )
+                ]
+            )
+
+    mm = MemoryManager(db_url="sqlite:///:memory:", extractor=_ProcExtractor())
+    user = "acc-proc-tombstone-resolve"
+    mm.remember_procedure(user, "refund_offer", "Proposer un avoir.")
+    mm.forget(user, "refund")
+
+    session = mm._Session()
+    try:
+        mm._bind_user(session, user)
+        assert is_tombstoned(session, user, "procedure_trigger", "refund_offer") is True
+    finally:
+        session.close()
+
+    # Ré-établissement explicite : doit lever le tombstone posé par forget().
+    mm.remember_procedure(user, "refund_offer", "Proposer un remboursement.")
+
+    session = mm._Session()
+    try:
+        mm._bind_user(session, user)
+        assert is_tombstoned(session, user, "procedure_trigger", "refund_offer") is False
+    finally:
+        session.close()
+
+    # L'extracteur peut désormais écrire à nouveau sur ce trigger.
+    mm._extract_and_persist(user, "peu importe", "ok")
+    procs = mm.inspect(user)["procedures"]
+    assert any(p["trigger"] == "refund_offer" and p["rule"] == "Proposer un remboursement." for p in procs)
 
 
 def test_concurrent_writes_do_not_corrupt_shared_checkpointer() -> None:
