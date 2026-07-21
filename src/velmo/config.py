@@ -108,10 +108,11 @@ class Settings(BaseSettings):
         "claude-opus-4-5": 0.01,
     }
 
-    # Langfuse self-host (jamais Langfuse Cloud — conversations client =
-    # PII, conception §Observabilité/Gouvernance RGPD). `None` par défaut :
-    # `get_sink()` retombe sur `NullSink` tant que les 3 sont absents, même
-    # convention de repli gracieux que le reste du codebase.
+    # Langfuse Cloud, région EU (projet pédagogique — pas de vraies
+    # conversations client en prod ; self-host reste la bonne pratique si ça
+    # change un jour, voir conception §Observabilité/Gouvernance RGPD).
+    # `None` par défaut : `get_sink()` retombe sur `NullSink` tant que les 3
+    # sont absents, même convention de repli gracieux que le reste du codebase.
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
     langfuse_base_url: str | None = None

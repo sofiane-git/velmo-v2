@@ -1,23 +1,25 @@
-# Langfuse self-host — Velmo 2.0
+# Langfuse Cloud — Velmo 2.0
 
-## Local/dev
+Projet pédagogique (pas de vraies conversations client en prod) → Langfuse Cloud plutôt que
+self-host, pour un setup en quelques minutes. Self-host resterait la bonne pratique si ce
+projet traitait un jour de vraies données client (voir
+`docs/job/conceptions/conception_chantier3_evaluation_mlops.md` §Gouvernance RGPD).
 
-    git clone --branch v3 https://github.com/langfuse/langfuse.git ../../.vendor/langfuse
-    cp .env ../../.vendor/langfuse/.env
-    # Compléter .env avec les secrets internes (voir .env.example, noms exacts
-    # à relever dans le docker-compose.yml cloné — ils évoluent avec les releases).
-    cd ../../.vendor/langfuse && docker compose up -d
+## Setup
 
-Vérifier : `curl -f http://localhost:3000/api/public/health` (endpoint santé officiel,
-`self-hosting/configuration/health-readiness-endpoints`). Une fois up, brancher
-`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL=http://localhost:3000` (les
-valeurs `LANGFUSE_INIT_PROJECT_PUBLIC_KEY`/`_SECRET_KEY` du `.env`) dans l'environnement local
-avant `uv run python -m velmo.mlops.score`.
+1. Créer un compte sur https://cloud.langfuse.com (région **EU** — pas `us.cloud.langfuse.com`).
+2. Créer un projet (ex. `velmo-mlops`).
+3. **Settings** → **API Keys** → **Create new API key** → récupérer `Public Key` (`pk-lf-...`)
+   et `Secret Key` (`sk-lf-...`).
+4. Renseigner dans `.env` (voir `.env.example`) :
 
-## Production
+       LANGFUSE_PUBLIC_KEY=pk-lf-...
+       LANGFUSE_SECRET_KEY=sk-lf-...
+       LANGFUSE_BASE_URL=https://cloud.langfuse.com
 
-Docker Compose est **déconseillé en prod par Langfuse lui-même** (pas de haute dispo, pas de
-sauvegarde). Utiliser le module Terraform officiel Azure :
-https://github.com/langfuse/langfuse-terraform-azure — voir
-`docs/job/tuto_azure_deploiement.md` §10 pour la procédure complète dans le contexte de ce
-projet (région UE obligatoire — conception §Observabilité, RGPD).
+Vérifier : lancer un run (`uv run python -m velmo.mlops.score`), puis contrôler que la trace
+apparaît dans le dashboard du projet Langfuse Cloud.
+
+Les 3 variables absentes → `get_sink()` (`src/velmo/mlops/observability.py`) retombe sur
+`NullSink`, aucun impact sur le gate (Langfuse reste hors chemin de gate — voir conception
+§Observabilité).
