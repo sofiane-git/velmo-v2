@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.11
+      - run: uv sync
+      - name: 3 suites contre le tag (gate bloquant)
+        run: uv run python -m velmo.mlops.score --min-score 0.8 --triggered-by ci
+
+  approve-and-promote:
+    needs: gate
+    runs-on: ubuntu-latest
+    # GitHub Environment "production" : configurer les required reviewers dans
+    # Settings → Environments → production (geste manuel unique du cycle
+    # normal, cf. conception_chantier3_evaluation_mlops.md §Boucle qualité).
+    # SPOF assumé en équipe solo (voir Décisions de conception, Ch.3) : un
+    # seul reviewer aujourd'hui, à étendre dès qu'une 2e personne rejoint.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Marque le tag comme promu (GitHub Release, pas de rebuild)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG_NAME" \
+            --title "Velmo 2.0 $TAG_NAME" \
+            --notes "Promu en production après gate qualité vert (voir mlops/report.md du run CI associé)."
+      # Note : la commande de déploiement effective (redémarrage du service,
+      # promotion d'un slot, mise à jour d'une image conteneur...) dépend du
+      # choix d'hébergement de l'application — non tranché à ce jour dans ce
+      # repo. Ce job s'arrête à la trace de promotion (GitHub Release) ; la
+      # commande de déploiement réelle est à ajouter ici une fois
+      # l'hébergement choisi, jamais inventée en attendant.
