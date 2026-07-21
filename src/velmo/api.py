@@ -9,6 +9,20 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from velmo.config import get_settings, validate_startup
+from velmo.guardrails import GuardrailEngine
+from velmo.guardrails.classifier import get_classifier
+from velmo.guardrails.judge import get_judge
+from velmo.llm import get_llm
+from velmo.memory import MemoryManager
+from velmo.memory.extractor import get_extractor
+from velmo.mlops.observability import (
+    InstrumentedClassifier,
+    InstrumentedExtractor,
+    InstrumentedJudge,
+    InstrumentedLLM,
+    traced_reply,
+    traced_respond,
+)
 
 from .agent import Agent, build_default_agent
 from .db import Customer
@@ -38,8 +52,34 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
+
+def _build_traced_agent() -> Agent:
+    """Assemble l'agent servi par l'API avec chaque composant LLM enveloppé
+    en résolution dynamique (`sink=None` — Task 3) : `MemoryManager` et
+    `GuardrailEngine` restent des singletons process (une connexion DB/
+    checkpointer chacun), mais `traced_respond` (Task 4) pose un sink
+    *différent par tour de conversation* dans le contexte au moment de
+    l'appel — même principe que `mlops.cli._build_instrumented_agent`, sans
+    le sink fixe (un run CI = un sink ; ici un process = N tours)."""
+    raw_llm = get_llm()
+    llm = InstrumentedLLM(raw_llm, None, "agent", _settings.azure_ai_inference_model)
+    memory = MemoryManager(
+        extractor=InstrumentedExtractor(
+            get_extractor(), None, "memory_extractor", _settings.anthropic_async_model
+        ),
+        llm=InstrumentedLLM(raw_llm, None, "memory_summary", _settings.azure_ai_inference_model),
+    )
+    guardrails = GuardrailEngine(
+        classifier=InstrumentedClassifier(get_classifier(), None, "guardrails_classifier"),
+        judge=InstrumentedJudge(
+            get_judge(), None, "guardrails_judge", _settings.azure_openai_guard_deployment
+        ),
+    )
+    return build_default_agent(llm=llm, memory=memory, guardrails=guardrails)
+
+
 # On instancie l'agent par défaut au démarrage
-agent = build_default_agent()
+agent = _build_traced_agent()
 
 
 def get_agent() -> Agent:
@@ -66,7 +106,7 @@ def chat_endpoint(request: ChatRequest, agent: Agent = Depends(get_agent)) -> Ch
     Envoie un message à l'agent Velmo pour un utilisateur donné.
     """
     try:
-        response_text = agent.respond(request.user_id, request.message)
+        response_text = traced_reply(agent, request.user_id, request.message)
         return ChatResponse(response=response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -77,7 +117,7 @@ def _sse_format(event: str, payload: dict[str, object]) -> str:
 
 
 def _stream_events(agent: Agent, user_id: str, message: str) -> Iterator[str]:
-    for event_type, payload in agent.respond_traced(user_id, message):
+    for event_type, payload in traced_respond(agent, user_id, message):
         yield _sse_format(event_type, payload)
 
 
