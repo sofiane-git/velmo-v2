@@ -166,3 +166,48 @@ def test_get_sink_falls_back_to_null_sink_without_langfuse_config(monkeypatch) -
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
     assert isinstance(get_sink(), NullSink)
+
+
+def test_langfuse_sink_reuses_injected_client(monkeypatch) -> None:
+    """Un client injecté ne doit jamais être reconstruit — sinon chaque tour
+    de conversation ouvrirait sa propre connexion Langfuse au lieu de
+    partager celle du process long-vécu (API live)."""
+    from velmo.mlops.observability import LangfuseSink
+
+    class _FakeObservation:
+        id = "obs-1"
+
+        def update(self, **_: object) -> None:
+            pass
+
+        def end(self) -> None:
+            pass
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.start_calls: list[dict[str, object]] = []
+
+        def create_trace_id(self) -> str:
+            return "generated-trace-id"
+
+        def start_observation(self, **kwargs: object) -> _FakeObservation:
+            self.start_calls.append(kwargs)
+            return _FakeObservation()
+
+    fake_client = _FakeClient()
+    sink = LangfuseSink(client=fake_client, trace_id="turn-123", parent_span_id="root-1")  # type: ignore[arg-type]
+    sink.on_llm_call("agent", 10, 5.0, 0.0, input="hi", output="hello", model="m")
+
+    assert len(fake_client.start_calls) == 1
+    call = fake_client.start_calls[0]
+    assert call["trace_context"] == {"trace_id": "turn-123", "parent_span_id": "root-1"}
+
+
+def test_get_langfuse_client_falls_back_to_none_without_config(monkeypatch) -> None:
+    from velmo.mlops.observability import get_langfuse_client
+
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
+    get_langfuse_client.cache_clear()
+    assert get_langfuse_client() is None

@@ -16,9 +16,12 @@ acceptent déjà ces composants en injection de constructeur.
 from __future__ import annotations
 
 import time
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from langfuse import Langfuse
+
     from velmo.guardrails.classifier import ClassifierResult, ModerationClassifier
     from velmo.guardrails.judge import Judge
     from velmo.llm import LLM
@@ -128,19 +131,28 @@ class LangfuseSink:
     Langfuse est down, `on_llm_call` peut lever — c'est `run_eval` (Task 6)
     qui décide comment isoler ça, pas cette classe elle-même."""
 
-    def __init__(self) -> None:
-        from langfuse import Langfuse
+    def __init__(
+        self,
+        *,
+        client: "Langfuse | None" = None,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+    ) -> None:
+        if client is None:
+            from langfuse import Langfuse
 
-        from velmo.config import get_settings, require
+            from velmo.config import get_settings, require
 
-        settings = get_settings()
-        self._client = Langfuse(
-            public_key=require(settings.langfuse_public_key, "LANGFUSE_PUBLIC_KEY"),
-            secret_key=require(settings.langfuse_secret_key, "LANGFUSE_SECRET_KEY"),
-            base_url=require(settings.langfuse_base_url, "LANGFUSE_BASE_URL"),
-            mask=mask_sensitive_data,
-        )
-        self._trace_id: str = self._client.create_trace_id()
+            settings = get_settings()
+            client = Langfuse(
+                public_key=require(settings.langfuse_public_key, "LANGFUSE_PUBLIC_KEY"),
+                secret_key=require(settings.langfuse_secret_key, "LANGFUSE_SECRET_KEY"),
+                base_url=require(settings.langfuse_base_url, "LANGFUSE_BASE_URL"),
+                mask=mask_sensitive_data,
+            )
+        self._client = client
+        self._trace_id: str = trace_id or self._client.create_trace_id()
+        self._parent_span_id = parent_span_id
 
     def on_llm_call(
         self,
@@ -153,8 +165,11 @@ class LangfuseSink:
         output: str | None = None,
         model: str | None = None,
     ) -> None:
-        generation = self._client.start_observation(
-            trace_context={"trace_id": self._trace_id},
+        trace_context_dict: dict[str, str] = {"trace_id": self._trace_id}
+        if self._parent_span_id is not None:
+            trace_context_dict["parent_span_id"] = self._parent_span_id
+        generation = self._client.start_observation(  # type: ignore[call-overload]
+            trace_context=trace_context_dict,
             name=component,
             as_type="generation",
             input=input,
@@ -195,6 +210,32 @@ def get_sink() -> ObservabilitySink:
         except Exception:
             return NullSink()
     return NullSink()
+
+
+@lru_cache(maxsize=1)
+def get_langfuse_client() -> "Langfuse | None":
+    """Client Langfuse **partagé**, pour un process long-vécu (API live) —
+    contrairement à `get_sink()` (construit un `LangfuseSink` complet, un par
+    appel, pour un process court-vécu comme le gate CI), ceci mémoïse le
+    `Langfuse(...)` lui-même : un tour de conversation ne doit jamais rouvrir
+    une connexion. Repli sur `None` (jamais d'exception) — même contrat que
+    `get_sink()`."""
+    from velmo.config import get_settings
+
+    settings = get_settings()
+    if not (settings.langfuse_public_key and settings.langfuse_secret_key and settings.langfuse_base_url):
+        return None
+    try:
+        from langfuse import Langfuse
+
+        return Langfuse(
+            public_key=settings.langfuse_public_key,
+            secret_key=settings.langfuse_secret_key,
+            base_url=settings.langfuse_base_url,
+            mask=mask_sensitive_data,
+        )
+    except Exception:
+        return None
 
 
 def estimate_cost(tokens: int, model: str) -> float:
