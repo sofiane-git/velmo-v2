@@ -512,6 +512,18 @@ def is_tombstoned(session: Session, user_id: str, target_kind: str, target: str)
     return existing is not None
 
 
+def list_active_tombstones(session: Session, user_id: str) -> list[MemoryTombstone]:
+    """Tombstones non résolus d'un utilisateur (garde anti-résurrection)."""
+    return list(
+        session.scalars(
+            select(MemoryTombstone).where(
+                MemoryTombstone.user_id == user_id,
+                MemoryTombstone.resolved_at.is_(None),
+            )
+        ).all()
+    )
+
+
 def resolve_tombstone(session: Session, user_id: str, target_kind: str, target: str) -> None:
     existing = session.scalars(
         select(MemoryTombstone).where(

@@ -31,6 +31,7 @@ from .db import (
     get_or_create_active_thread,
     get_or_create_user,
     is_tombstoned,
+    list_active_tombstones,
     list_episodes,
     list_facts,
     list_procedures,
@@ -325,6 +326,28 @@ class MemoryManager:
         except FutureTimeoutError:
             return WriteReport(pending=True)
 
+    def _maybe_add_episode_guarded(
+        self,
+        session: Session,
+        user_id: str,
+        summary: str,
+        thread_id: str | None,
+    ) -> bool:
+        """Écrit un épisode seulement si son résumé ne reprend aucune valeur
+        sous tombstone actif (anti-résurrection étendue aux épisodes, D9-04).
+        Retourne True si l'épisode a été écrit."""
+        active = [
+            t.target
+            for t in list_active_tombstones(session, user_id)
+            if t.target_kind == "fact_value" and t.target and t.target in summary
+        ]
+        if active:
+            return False
+        embedding, model_id = self._embed_if_postgres(session, summary)
+        episode = add_episode(session, user_id, summary, thread_id, embedding, model_id)
+        self.episodic_store.add(user_id, summary, episode.id)
+        return True
+
     def _extract_and_persist(
         self, user_id: str, user_message: str, assistant_message: str
     ) -> WriteReport:
@@ -367,11 +390,9 @@ class MemoryManager:
 
             if has_dispute:
                 summary = f"Litige signalé : {user_message.strip()}"
-                embedding, model_id = self._embed_if_postgres(session, summary)
-                episode = add_episode(session, user_id, summary, thread.thread_id, embedding, model_id)
-                self.episodic_store.add(user_id, summary, episode.id)
-                session.commit()
-                report.episode_created = True
+                if self._maybe_add_episode_guarded(session, user_id, summary, thread.thread_id):
+                    session.commit()
+                    report.episode_created = True
 
             # Note de portée : une éventuelle création d'épisode/fact déclenchée par
             # `_maybe_compress` (résumé de compression, rare en session courte) n'est
@@ -449,9 +470,7 @@ class MemoryManager:
 
         # 3. Persistance.
         thread.summary = (thread.summary + " " if thread.summary else "") + summary
-        embedding, model_id = self._embed_if_postgres(session, summary)
-        episode = add_episode(session, user_id, summary, thread.thread_id, embedding, model_id)
-        self.episodic_store.add(user_id, summary, episode.id)
+        self._maybe_add_episode_guarded(session, user_id, summary, thread.thread_id)
         session.commit()
 
     def _scrub_thread_messages(self, user_id: str, value: str) -> None:
@@ -524,6 +543,7 @@ class MemoryManager:
             )
             for fact in removed_facts:
                 set_tombstone(session, user_id, "fact_key", fact.key)
+                set_tombstone(session, user_id, "fact_value", fact.value)
                 removed_episodes = delete_episodes_matching(session, user_id, fact.value)
                 report.count += len(removed_episodes)
                 report.episodes.extend(e.summary for e in removed_episodes)
@@ -592,6 +612,7 @@ class MemoryManager:
             # dans la même transaction et l'anti-résurrection est inopérante (B2).
             for fact in facts:
                 set_tombstone(session, user_id, "fact_key", fact.key)
+                set_tombstone(session, user_id, "fact_value", fact.value)
             for proc in procedures:
                 set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
             write_audit(session, user_id, "delete", "all")

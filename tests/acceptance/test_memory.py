@@ -125,3 +125,25 @@ def test_forget_all_tombstones_survive_cascade():
         assert is_tombstoned(session, user, "fact_key", "adresse"), (
             "le tombstone doit survivre à l'effacement total"
         )
+
+
+def test_forgotten_value_does_not_resurrect_via_episode():
+    # D9-04 : après l'oubli d'un fait, un épisode écrit tardivement ne doit pas
+    # réintroduire la valeur oubliée (la garde tombstone couvre aussi les épisodes,
+    # pas seulement les faits/procédures à clé exacte).
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    user = "acc-episode-resurrect"
+    secret = "O-2024-9999"
+    mm.remember_fact(user, "commande_litige", secret)
+    mm.forget_all(user)
+
+    from velmo.memory.db import list_episodes
+
+    with mm._Session() as session:
+        mm._bind_user(session, user)
+        added = mm._maybe_add_episode_guarded(session, user, f"Litige signalé : {secret}", None)
+        session.commit()
+    assert added is False, "un épisode reprenant une valeur sous tombstone doit être refusé"
+    with mm._Session() as session:
+        mm._bind_user(session, user)
+        assert all(secret not in e.summary for e in list_episodes(session, user))
