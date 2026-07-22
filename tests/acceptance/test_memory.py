@@ -149,6 +149,95 @@ def test_forgotten_value_does_not_resurrect_via_episode():
         assert all(secret not in e.summary for e in list_episodes(session, user))
 
 
+def test_word_boundary_tombstone_does_not_block_unrelated_episode():
+    # F3 : un tombstone `fact_value` court et réaliste ("L") ne doit pas
+    # matcher en substring brut à l'intérieur d'un mot plus long ("Litige").
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    user = "acc-word-boundary"
+    mm.remember_fact(user, "shoe_size", "L")
+    mm.forget(user, "pointure")
+
+    with mm._Session() as session:
+        mm._bind_user(session, user)
+        added = mm._maybe_add_episode_guarded(
+            session, user, "Litige signalé : commande en retard", None
+        )
+    assert added is True, "« L » sous tombstone ne doit pas bloquer un résumé sans rapport"
+
+
+def test_compression_summary_redacts_tombstoned_value():
+    # F1 : si le résumé de compression reprend une valeur sous tombstone, le
+    # garde doit être appliqué AVANT d'avancer `thread.summary` — sinon la
+    # valeur oubliée persisterait dans le résumé du thread (re-rendu par
+    # `read()`) même si l'épisode correspondant n'a jamais été écrit.
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    user = "acc-compress-redact"
+    secret = "O-2024-9999"
+    mm.remember_fact(user, "commande_litige", secret)
+    mm.forget_all(user)
+
+    from velmo.memory.db import get_or_create_active_thread
+
+    with mm._Session() as session:
+        mm._bind_user(session, user)
+        thread = get_or_create_active_thread(session, user, mm.session_gap_hours)
+        tombstoned = mm._active_value_tombstones_in(session, user, f"Litige sur {secret}.")
+        assert tombstoned == [secret]
+
+        import re
+
+        persisted_summary = f"Litige sur {secret}."
+        for target in tombstoned:
+            persisted_summary = re.sub(
+                rf"(?<!\w){re.escape(target)}(?!\w)", "[information supprimée]", persisted_summary
+            )
+        thread.summary = (thread.summary + " " if thread.summary else "") + persisted_summary
+        session.commit()
+
+    with mm._Session() as session:
+        mm._bind_user(session, user)
+        thread = get_or_create_active_thread(session, user, mm.session_gap_hours)
+        assert secret not in thread.summary
+        assert "[information supprimée]" in thread.summary
+
+
+def test_forget_all_purges_checkpoints_before_commit():
+    # F2 : la purge des checkpoints doit précéder le commit métier de
+    # `forget_all` (miroir de test_purge_deletes_checkpoints_before_thread_headers
+    # pour purge_inactive_threads) — un crash pendant la purge des checkpoints
+    # ne doit pas laisser un commit métier partiel derrière lui.
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    user = "acc-forget-all-order"
+    # `mm.write` (contrairement à `remember_fact` seul) crée un Thread, donc un
+    # checkpoint LangGraph — sans lui, `thread_ids` serait vide et `delete_thread`
+    # ne serait jamais appelé, masquant le bug que ce test cible.
+    mm.write(user, "Commande O-2024-0001 à suivre.", "Noté.")
+    mm.remember_fact(user, "commande", "O-2024-0001")
+
+    original = mm._checkpointer.delete_thread
+
+    def boom(_tid):
+        raise RuntimeError("simulate crash during checkpoint purge")
+
+    mm._checkpointer.delete_thread = boom  # type: ignore[method-assign]
+    try:
+        try:
+            mm.forget_all(user)
+        except RuntimeError:
+            pass
+    finally:
+        mm._checkpointer.delete_thread = original  # type: ignore[method-assign]
+
+    from velmo.memory.db import list_facts
+
+    with mm._Session() as session:
+        mm._bind_user(session, user)
+        facts = list_facts(session, user)
+    assert any(f.key == "commande" for f in facts), (
+        "le commit métier ne doit pas avoir eu lieu si la purge des checkpoints a échoué"
+    )
+
+
 def test_purge_deletes_checkpoints_before_thread_headers():
     # D9-10 : la purge doit supprimer les checkpoints AVANT de committer la
     # suppression des en-têtes Thread, pour qu'un crash entre les deux n'orpheline

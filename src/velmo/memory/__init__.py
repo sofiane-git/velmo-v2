@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
@@ -326,6 +327,23 @@ class MemoryManager:
         except FutureTimeoutError:
             return WriteReport(pending=True)
 
+    def _active_value_tombstones_in(self, session: Session, user_id: str, text: str) -> list[str]:
+        """Retourne les valeurs `fact_value` sous tombstone actif présentes dans
+        `text`, à frontière de mot. Un `in` substring brut sur-bloquerait avec
+        des valeurs courtes réalistes ("L", "44") qui matchent à l'intérieur
+        d'un mot plus long (ex. "L" dans "Litige signalé", F3) — les lookarounds
+        `(?<!\\w)`/`(?!\\w)` évitent ce faux positif tout en restant robustes
+        aux valeurs finissant par un caractère non-mot (contrairement à `\\b`).
+        Partagé par `_maybe_add_episode_guarded` (garde) et `_maybe_compress`
+        (expurgation du résumé, F1) pour matcher exactement les mêmes valeurs."""
+        return [
+            t.target
+            for t in list_active_tombstones(session, user_id)
+            if t.target_kind == "fact_value"
+            and t.target
+            and re.search(rf"(?<!\w){re.escape(t.target)}(?!\w)", text)
+        ]
+
     def _maybe_add_episode_guarded(
         self,
         session: Session,
@@ -336,12 +354,10 @@ class MemoryManager:
         """Écrit un épisode seulement si son résumé ne reprend aucune valeur
         sous tombstone actif (anti-résurrection étendue aux épisodes, D9-04).
         Retourne True si l'épisode a été écrit."""
-        active = [
-            t.target
-            for t in list_active_tombstones(session, user_id)
-            if t.target_kind == "fact_value" and t.target and t.target in summary
-        ]
-        if active:
+        if self._active_value_tombstones_in(session, user_id, summary):
+            # Pas la valeur elle-même dans le log : elle est censée être oubliée
+            # (RGPD) — cf. M1.
+            logger.info("épisode écarté pour user_id=%s : valeur sous tombstone", user_id)
             return False
         embedding, model_id = self._embed_if_postgres(session, summary)
         episode = add_episode(session, user_id, summary, thread_id, embedding, model_id)
@@ -468,9 +484,28 @@ class MemoryManager:
             )
             return
 
-        # 3. Persistance.
-        thread.summary = (thread.summary + " " if thread.summary else "") + summary
-        self._maybe_add_episode_guarded(session, user_id, summary, thread.thread_id)
+        # 3. Persistance. Le garde anti-résurrection est appelé D'ABORD, avant
+        # d'avancer `thread.summary` : sinon un refus (résumé reprenant une
+        # valeur sous tombstone) laisserait la chaîne interdite persister dans
+        # `Thread.summary` — re-rendu par `read()` — même si l'épisode
+        # correspondant n'a jamais été écrit (F1). On n'avance jamais moins que
+        # ce tour (pas de retry en boucle sur le même bloc, cf. docstring de
+        # cette méthode) : à la place, on expurge la valeur du texte persisté,
+        # avec le même remplacement/matching que `_scrub_thread_messages`.
+        tombstoned = self._active_value_tombstones_in(session, user_id, summary)
+        persisted_summary = summary
+        if tombstoned:
+            logger.info(
+                "résumé de compression expurgé pour user_id=%s : valeur sous tombstone",
+                user_id,
+            )
+            for target in tombstoned:
+                persisted_summary = re.sub(
+                    rf"(?<!\w){re.escape(target)}(?!\w)", "[information supprimée]", persisted_summary
+                )
+        thread.summary = (thread.summary + " " if thread.summary else "") + persisted_summary
+        if not tombstoned:
+            self._maybe_add_episode_guarded(session, user_id, summary, thread.thread_id)
         session.commit()
 
     def _scrub_thread_messages(self, user_id: str, value: str) -> None:
@@ -601,6 +636,19 @@ class MemoryManager:
                 episodes=[e.summary for e in episodes],
             )
 
+            # Store secondaire (checkpoints) purgé AVANT toute mutation métier —
+            # même ordre que `purge_inactive_threads` (D9-10). Important : la
+            # cascade métier n'attend pas le `session.commit()` final, elle est
+            # déjà actée par le COMMIT interne de `get_or_create_user` juste en
+            # dessous (recréation de l'utilisateur après suppression) — la purge
+            # doit donc précéder CE point, pas seulement la fin de la fonction.
+            # Un crash ici laisse les données métier intactes et un re-run
+            # complète l'opération. Le checkpointer gère sa propre connexion,
+            # indépendante de `session`.
+            with self._graph_lock:
+                for thread_id in thread_ids:
+                    self._checkpointer.delete_thread(thread_id)
+
             user = session.get(MemoryUser, user_id)
             if user is not None:
                 session.delete(user)
@@ -619,12 +667,6 @@ class MemoryManager:
             session.commit()
         finally:
             session.close()
-
-        # Purge des checkpoints hors session (le checkpointer gère sa propre
-        # connexion — même chemin que purge_inactive_threads).
-        with self._graph_lock:
-            for thread_id in thread_ids:
-                self._checkpointer.delete_thread(thread_id)
 
         return report
 
