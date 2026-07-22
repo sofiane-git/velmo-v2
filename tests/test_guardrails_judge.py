@@ -29,7 +29,9 @@ def test_judge_verdict_schema_rejects_invalid_level() -> None:
     from velmo.guardrails.judge import JudgeVerdict
 
     with pytest.raises(ValidationError):
-        JudgeVerdict(manipulation="extreme", secret_interne="aucun", hors_role="aucun", reasoning="")
+        JudgeVerdict(
+            manipulation="extreme", secret_interne="aucun", hors_role="aucun", reasoning=""
+        )
 
 
 def test_judge_verdict_schema_accepts_valid_levels() -> None:
@@ -262,7 +264,9 @@ def _tres_fort_logprobs(confidence: float) -> _FakeLogprobs:
     tokens_ = [
         _FakeLogprobToken('{"manipulation": "', 0.0),
         _FakeLogprobToken("tres_fort", math.log(confidence)),
-        _FakeLogprobToken('", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}', 0.0),
+        _FakeLogprobToken(
+            '", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}', 0.0
+        ),
     ]
     return _FakeLogprobs(tokens_)
 
@@ -271,7 +275,12 @@ def test_azure_judge_downgrades_tres_fort_when_confidence_low(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
-        {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
+        {
+            "manipulation": "tres_fort",
+            "secret_interne": "aucun",
+            "hors_role": "aucun",
+            "reasoning": "",
+        }
     )
     _patch_azure_openai(monkeypatch, content, [], logprobs=_tres_fort_logprobs(0.5))
 
@@ -284,7 +293,12 @@ def test_azure_judge_keeps_tres_fort_when_confidence_high(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
-        {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
+        {
+            "manipulation": "tres_fort",
+            "secret_interne": "aucun",
+            "hors_role": "aucun",
+            "reasoning": "",
+        }
     )
     _patch_azure_openai(monkeypatch, content, [], logprobs=_tres_fort_logprobs(0.95))
 
@@ -300,7 +314,12 @@ def test_azure_judge_treats_unmatched_logprobs_as_full_confidence(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
-        {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
+        {
+            "manipulation": "tres_fort",
+            "secret_interne": "aucun",
+            "hors_role": "aucun",
+            "reasoning": "",
+        }
     )
     mismatched = _FakeLogprobs([_FakeLogprobToken("tout autre chose", -1.0)])
     _patch_azure_openai(monkeypatch, content, [], logprobs=mismatched)
@@ -340,7 +359,10 @@ def test_rule_based_judge_empty_reasoning_on_legitimate_message():
 def test_root_match_detects_word_root_not_only_exact_phrase() -> None:
     """Une reformulation ('juridiquement', pas la phrase exacte de
     scope_policy.yaml) doit être attrapée par la racine 'juridiq'."""
-    assert _root_match("Qu'est-ce que je risque juridiquement dans ce litige ?", EXTENDED_SCOPE_ROOTS) == "juridiq"
+    assert (
+        _root_match("Qu'est-ce que je risque juridiquement dans ce litige ?", EXTENDED_SCOPE_ROOTS)
+        == "juridiq"
+    )
 
 
 def test_root_match_returns_none_on_unrelated_text() -> None:
@@ -357,7 +379,12 @@ def test_rule_based_judge_flags_hors_role_via_extended_vocab_when_no_exact_phras
 
 class _StubPrimary(Judge):
     def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
-        return {"manipulation": 0.9, "secret_interne": 0.0, "hors_role": 0.0, "reasoning": "primary"}
+        return {
+            "manipulation": 0.9,
+            "secret_interne": 0.0,
+            "hors_role": 0.0,
+            "reasoning": "primary",
+        }
 
 
 def test_shadowing_judge_returns_primary_verdict() -> None:

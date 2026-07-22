@@ -40,8 +40,15 @@ def test_agent_version_eval_run_case_result_roundtrip() -> None:
     session.commit()
 
     case = EvalCaseResult(
-        id="case-1", run_id="run-1", case_id="R1-marc-3commandes", suite="memory",
-        passed=True, score=1.0, latency_ms=50.0, retried=False, error_kind=None,
+        id="case-1",
+        run_id="run-1",
+        case_id="R1-marc-3commandes",
+        suite="memory",
+        passed=True,
+        score=1.0,
+        latency_ms=50.0,
+        retried=False,
+        error_kind=None,
     )
     session.add(case)
     session.commit()

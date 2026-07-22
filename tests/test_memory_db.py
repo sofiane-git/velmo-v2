@@ -179,8 +179,13 @@ def test_upsert_fact_canonicalizes_reordered_key_with_entity():
     assert changed is True
 
     fact2, changed2 = upsert_fact(
-        session, "u9", "order_O-2024-0101_status", "préparée (prête pour l'expédition)",
-        "order", 0.9, None
+        session,
+        "u9",
+        "order_O-2024-0101_status",
+        "préparée (prête pour l'expédition)",
+        "order",
+        0.9,
+        None,
     )
     session.commit()
     assert changed2 is True

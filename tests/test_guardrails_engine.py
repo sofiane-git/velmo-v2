@@ -62,5 +62,7 @@ def test_check_output_only_exposes_known_categories():
     # catégorie hors G1-G7 (le filtre de `_check()` reste en place même si la
     # panne totale des étages 2/3 émet désormais des hits `method="fallback"`
     # par catégorie réelle plutôt qu'un flag générique "availability").
-    decision = _engine().check_output("Réponse neutre sans rien de particulier.", user_id="u-hits-3")
+    decision = _engine().check_output(
+        "Réponse neutre sans rien de particulier.", user_id="u-hits-3"
+    )
     assert all(h.category in CATEGORIES for h in decision.hits)

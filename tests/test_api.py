@@ -42,9 +42,7 @@ def test_chat_endpoint_still_works_with_overridden_agent():
     app.dependency_overrides[get_agent] = _hermetic_agent
     client = TestClient(app)
     try:
-        response = client.post(
-            "/chat", json={"user_id": "C-marc-dubois", "message": "Bonjour"}
-        )
+        response = client.post("/chat", json={"user_id": "C-marc-dubois", "message": "Bonjour"})
         assert response.status_code == 200
         assert "response" in response.json()
     finally:
@@ -124,7 +122,9 @@ def test_gate_run_streams_suite_events_then_final(monkeypatch, tmp_path) -> None
     stages = [e for e, _ in events]
     assert stages[0] == "suite_start"
     assert stages[-1] == "final"
-    suite_stages = [(e, payload["suite"]) for e, payload in events if e in ("suite_start", "suite_done")]
+    suite_stages = [
+        (e, payload["suite"]) for e, payload in events if e in ("suite_start", "suite_done")
+    ]
     assert suite_stages == [
         ("suite_start", "memory"),
         ("suite_done", "memory"),

@@ -119,9 +119,7 @@ def _token_spans(content: str, tokens_: list[dict[str, Any]]) -> list[tuple[int,
     return spans
 
 
-def _field_confidence(
-    content: str, tokens_: list[dict[str, Any]], field: str, value: str
-) -> float:
+def _field_confidence(content: str, tokens_: list[dict[str, Any]], field: str, value: str) -> float:
     """Confiance (probabilité jointe) sur la valeur `value` émise pour
     `field` : somme des logprobs des tokens qui recouvrent sa position exacte
     dans `content`. Renvoie 1.0 (confiance maximale, aucune requalification)

@@ -23,8 +23,7 @@ def _run_purge() -> None:
         session.close()
     removed_threads = purge_inactive_threads(manager)
     print(
-        f"Purge : {removed_episodes} épisode(s) expiré(s), "
-        f"{removed_threads} thread(s) inactif(s)."
+        f"Purge : {removed_episodes} épisode(s) expiré(s), {removed_threads} thread(s) inactif(s)."
     )
 
 

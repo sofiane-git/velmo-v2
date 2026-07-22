@@ -103,9 +103,7 @@ def get_kb() -> KnowledgeBase:
         embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=settings.embedding_model
         )
-        collection = client.get_or_create_collection(
-            "velmo_faq", embedding_function=embedder
-        )
+        collection = client.get_or_create_collection("velmo_faq", embedding_function=embedder)
         return ChromaKB(collection)
     except Exception as exc:
         logging.warning("[kb] Chroma indisponible (%s) — fallback sur LocalKB.", exc)
