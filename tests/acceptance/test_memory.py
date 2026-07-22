@@ -147,3 +147,51 @@ def test_forgotten_value_does_not_resurrect_via_episode():
     with mm._Session() as session:
         mm._bind_user(session, user)
         assert all(secret not in e.summary for e in list_episodes(session, user))
+
+
+def test_purge_deletes_checkpoints_before_thread_headers():
+    # D9-10 : la purge doit supprimer les checkpoints AVANT de committer la
+    # suppression des en-têtes Thread, pour qu'un crash entre les deux n'orpheline
+    # pas définitivement les checkpoints (les Thread ayant disparu, un re-run ne
+    # les retrouverait jamais). On vérifie l'ordre en faisant échouer delete_thread.
+    from velmo.memory import retention
+    from velmo.memory.db import list_threads
+
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    user = "acc-purge-order"
+    mm.write(user, "Commande O-2024-0001 à suivre.", "Noté.")
+    with mm._Session() as session:
+        thread_ids_before = [t.thread_id for t in list_threads(session, user)]
+    assert thread_ids_before
+
+    # Force le vieillissement pour que la purge cible le thread.
+    from velmo.memory.db import Thread, utcnow
+    from datetime import timedelta
+    with mm._Session() as session:
+        for t in list_threads(session, user):
+            t.last_message_at = utcnow() - timedelta(days=200)
+            session.add(t)
+        session.commit()
+
+    # delete_thread lève : si l'ordre est correct (checkpoints d'abord), l'exception
+    # remonte AVANT le commit de suppression des en-têtes → les Thread survivent.
+    original = mm._checkpointer.delete_thread
+
+    def boom(_tid):
+        raise RuntimeError("simulate crash during checkpoint purge")
+
+    mm._checkpointer.delete_thread = boom  # type: ignore[method-assign]
+    try:
+        try:
+            retention.purge_inactive_threads(mm, ttl_days=90)
+        except RuntimeError:
+            pass
+    finally:
+        mm._checkpointer.delete_thread = original  # type: ignore[method-assign]
+
+    with mm._Session() as session:
+        thread_ids_after = [t.thread_id for t in list_threads(session, user)]
+    assert thread_ids_after == thread_ids_before, (
+        "un crash pendant la purge des checkpoints ne doit pas laisser d'en-têtes "
+        "Thread supprimés (donc de checkpoints orphelins)"
+    )
