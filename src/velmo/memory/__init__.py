@@ -199,7 +199,7 @@ class MemoryManager:
         # verrou, deux threads peuvent toucher la même connexion en même temps.
         self._graph_lock = threading.Lock()
         self.extractor = extractor or get_extractor()
-        self.episodic_store = episodic_store or get_episodic_backend()
+        self.episodic_store = episodic_store or get_episodic_backend(resolved_db_url)
         self.llm = llm or get_llm()
 
     def close(self) -> None:
