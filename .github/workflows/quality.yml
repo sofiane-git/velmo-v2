@@ -21,7 +21,19 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --locked
+        # --all-extras : environnement mypy stable — sans les extras, les
+        # imports optionnels (anthropic, langfuse, deepeval…) rendent le
+        # résultat mypy dépendant de l'env (cf. audit B6).
+        run: uv sync --locked --all-extras
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Format (ruff)
+        run: uv run ruff format --check src tests
+
+      - name: Typage strict (mypy)
+        run: uv run mypy src
 
       - name: Vérifie les contrats d'imports (isolation mémoire)
         run: uv run lint-imports --config pyproject.toml
