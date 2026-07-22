@@ -11,7 +11,7 @@ def _engine() -> GuardrailEngine:
 
 
 class _AlwaysHighConfidencePromptInjection:
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+    def evaluate(self, text: str) -> dict[str, float | str]:
         return {
             "manipulation": 0.95,  # >= ESCALATE_THRESHOLD (0.9)
             "secret_interne": 0.0,

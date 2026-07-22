@@ -99,9 +99,9 @@
 
 ### Sécurité applicative/LLM (D4)
 
-- **`D4-01`** · `src/velmo/guardrails/pipeline.py:186` — Le repli fail-closed ne se déclenche que si TOUS les étages 2/3 échouent (`any_stage_2_3_responded`) ; le classifieur ne levant quasi jamais (repli lexical interne), une panne du seul juge saute G5/G6-subtil/G7 **silencieusement**. **Fix :** code. **Reco :** repli par étage défaillant (chaque source manquante applique sa ligne de matrice).
-- **`D4-02`** · `src/velmo/guardrails/judge.py:298` — JSON malformé du juge → verdict « aucun » partout (fail-closed contourné, aucun log) ; l'injection ciblant le juge peut viser ce downgrade. **Fix :** code. **Reco :** échec de parsing = juge en panne (repli fail-closed) + log warning.
-- **`D4-03`** · `src/velmo/guardrails/pipeline.py:173` — Les spans PII Azure détectés en sortie sont jetés (Hit `filter` sans offsets) ; le masquage réel = regex structurées seules → noms/adresses détectés signalés « filter » mais renvoyés NON masqués au client (LLM06). **Fix :** code. **Reco :** propager les spans jusqu'à la redaction + test d'acceptance.
+- ✅ **`D4-01`** *(corrigé : f40051c — repli par étage via `_fallback_hits`/`CATEGORY_STAGES`, statut ok/failed/absent par source)* · `src/velmo/guardrails/pipeline.py:186` — Le repli fail-closed ne se déclenche que si TOUS les étages 2/3 échouent (`any_stage_2_3_responded`) ; le classifieur ne levant quasi jamais (repli lexical interne), une panne du seul juge saute G5/G6-subtil/G7 **silencieusement**. **Fix :** code. **Reco :** repli par étage défaillant (chaque source manquante applique sa ligne de matrice).
+- ✅ **`D4-02`** *(corrigé : f40051c — `_parse_verdict` lève `JudgeParseError`, `AzureJudge.evaluate` la propage + log)* · `src/velmo/guardrails/judge.py:298` — JSON malformé du juge → verdict « aucun » partout (fail-closed contourné, aucun log) ; l'injection ciblant le juge peut viser ce downgrade. **Fix :** code. **Reco :** échec de parsing = juge en panne (repli fail-closed) + log warning.
+- ✅ **`D4-03`** *(corrigé : f40051c — `Hit.spans` propagés, `pii_redaction.redact_spans` + test d'acceptance)* · `src/velmo/guardrails/pipeline.py:173` — Les spans PII Azure détectés en sortie sont jetés (Hit `filter` sans offsets) ; le masquage réel = regex structurées seules → noms/adresses détectés signalés « filter » mais renvoyés NON masqués au client (LLM06). **Fix :** code. **Reco :** propager les spans jusqu'à la redaction + test d'acceptance.
 
 ### CI/CD supply-chain (D5)
 
@@ -163,10 +163,10 @@
 | D2-13 | agent.py:5 | Docstring : « Seul le MLOps reste à construire » — faux, module complet + gate actif | code | Supprimer la phrase d'état |
 | D2-14 | conception_chantier1:18 | Rôles LangChain annoncés (structured output extracteur, embeddings) ≠ code (SDK anthropic direct, sentence-transformers) | doc | Réduire au rôle réel (client LLM agent) |
 | D3-04 | pyproject.toml:94 | Un seul contrat import-linter ; guardrails.db, mlops.db, direction mlops→agent non contractualisés ; 'forbidden' à sources énumérées n'attrape pas les futurs modules | code | Contrats supplémentaires, envisager type=layers |
-| D3-05 | agent.py:220 | L'agent re-dispatch sur la catégorie du verdict pour choisir le caviardage (fuite de connaissance guardrails→agent) | code | `Decision.stored_text` rempli par le pipeline |
+| ✅ D3-05 (f40051c) | agent.py:220 | L'agent re-dispatch sur la catégorie du verdict pour choisir le caviardage (fuite de connaissance guardrails→agent) | code | `Decision.stored_text` rempli par le pipeline |
 | D3-06 | agent.py:1 | agent.py 535 lignes : orchestration + routage regex + 6 formatters + escalade + payloads de trace | code | Extraire routage/formatters (velmo/routing.py) |
-| D4-04 | guardrails/pipeline.py:110 | Redaction PII texte libre en sortie uniquement ; en entrée seules les PII structurées sont couvertes (référentiel exige I/O) | les-deux | Étendre à l'entrée ou documenter/justifier l'asymétrie |
-| D4-05 | guardrails/pii_redaction.py:28 | Dégradations silencieuses : scan→[] sur erreur Azure, prompt_shields→None si non configuré, classifier→lexical — zéro log | code | Warning au démarrage (étages non configurés) + à l'occurrence |
+| ✅ D4-04 (f40051c) | guardrails/pipeline.py:110 | Redaction PII texte libre en sortie uniquement ; en entrée seules les PII structurées sont couvertes (référentiel exige I/O) | les-deux | Asymétrie justifiée en doc (docstring `pii_redaction`) : risque = fuite inter-clients en sortie ; structuré déjà bloqué en entrée (étage 1) |
+| ✅ D4-05 (f40051c) | guardrails/pii_redaction.py:28 | Dégradations silencieuses : scan→[] sur erreur Azure, prompt_shields→None si non configuré, classifier→lexical — zéro log | code | `scan` distingue None/erreur ; `_warn_unconfigured_stages` (démarrage) + log par occurrence (pipeline + classifier) |
 | ✅ D5-04 *(corrigé : 9547813 — write/id-token scoppés au job check-model-drift)* | nightly.yml:19 | `contents: write` + `id-token: write` au niveau workflow, hérités par 3 jobs dont 2 n'en ont pas besoin | code | Scoper les permissions élevées au seul job check-model-drift |
 | D5-05 | pyproject.toml:9 | `python-dotenv>=1.0` et `azure-ai-inference>=1.0.0b9` sans borne supérieure | code | Borner `<2` comme le reste du fichier |
 | D5-06 | nightly.yml:96 | Push bot direct sur main (model-versions.json) : contourne branch protection, normalise un token write-main | les-deux | Artefact/branche dédiée/repo variable |
@@ -206,8 +206,8 @@
 |----|---------|---------|------|
 | D2-11 | pyproject.toml:47 | Commentaire « Langfuse self-host » périmé (réel : Cloud EU) | Corriger le commentaire |
 | D3-07 | api.py:37 | Import du module privé `velmo.tools._common` pour `select` | `from sqlalchemy import select` |
-| D4-06 | referentiel-audit.md (D4) | Le référentiel dit G5 fail-open, la conception + code disent fail-closed (code plus strict) | Aligner le référentiel (G5 fail-closed) |
-| D4-07 | guardrails/__init__.py:178 | `agent_response` jamais alimenté vers le juge (paramètre mort) | Transmettre ou supprimer |
+| ✅ D4-06 (f40051c) | referentiel-audit.md (D4) | Le référentiel dit G5 fail-open, la conception + code disent fail-closed (code plus strict) | Référentiel aligné (G5 fail-closed) |
+| ✅ D4-07 (f40051c) | guardrails/__init__.py:178 | `agent_response` jamais alimenté vers le juge (paramètre mort) | Paramètre supprimé (juge + pipeline + wrapper observabilité) |
 | D6-10 | docker-compose.yml:29 | Credentials littéraux dans compose (recoupe D10-09) | Interpoler depuis .env |
 | D7-20 | tuto_release:193 | Renvois « §2.4 » erronés (procédure au §2.3) | Corriger 3 renvois |
 | D7-21 | tuto_azure:97 | Commande Anthropic fournie avec avertissement « peut-être fausse » | Re-vérifier et trancher |

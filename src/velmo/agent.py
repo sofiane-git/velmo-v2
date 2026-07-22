@@ -17,7 +17,7 @@ from typing import Any, Callable, Literal
 from sqlalchemy.orm import Session
 
 from . import tools
-from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine, redact_pii, redact_secret_leak
+from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine
 from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
 from .memory import FACT_KEY_ALIASES, ForgetReport, MemoryContext, MemoryManager, WriteReport
@@ -214,11 +214,9 @@ class Agent:
                     f"garde-fou {gate_in.category} (entrée)",
                     channel=_escalation_channel(gate_in.category),
                 )
-            stored_message = message
-            if gate_in.category == "pii":
-                stored_message = redact_pii(message)
-            elif gate_in.category == "secret_leak":
-                stored_message = redact_secret_leak(message)
+            # Texte à persister déjà redacté par l'engine (D3-05) — l'agent ne
+            # re-dispatch pas sur la catégorie du garde-fou.
+            stored_message = gate_in.stored_text if gate_in.stored_text is not None else message
             self.memory.write(user_id, stored_message, refusal, background=True)
             yield (
                 "final",

@@ -22,6 +22,8 @@ from ._scoring import FALLBACK_MAX_SCORE
 from ._text import phrase_hit, tokens
 from ._timeouts import CLIENT_TIMEOUT_S
 
+logger = logging.getLogger(__name__)
+
 SCOPE_POLICY_PATH = Path(__file__).resolve().parent / "scope_policy.yaml"
 
 JUDGE_SYSTEM_PROMPT = (
@@ -54,7 +56,7 @@ JUDGE_SYSTEM_PROMPT = (
 
 
 class Judge(Protocol):
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]: ...
+    def evaluate(self, text: str) -> dict[str, float | str]: ...
 
 
 # Niveaux ordonnés du moins au plus grave. Un LLM à qui on demande un chiffre
@@ -92,6 +94,26 @@ class JudgeVerdict(BaseModel):
     secret_interne: _Level = "aucun"
     hors_role: _Level = "aucun"
     reasoning: str = ""
+
+
+class JudgeParseError(ValueError):
+    """Réponse du juge inexploitable (JSON malformé ou niveau hors énumération).
+
+    Traitée comme une **panne du juge** par `AzureJudge.evaluate` (l'appel
+    lève, `pipeline.py` applique alors le repli fail-closed sur G5/G6/G7) — pas
+    comme un verdict « aucun » silencieux : une injection ciblant le juge
+    pourrait viser précisément ce downgrade (D4-02).
+    """
+
+
+def _parse_verdict(content: str) -> JudgeVerdict:
+    """Valide la réponse JSON du juge contre `JudgeVerdict`. Lève
+    `JudgeParseError` si le contenu est hors schéma (au lieu de retomber
+    silencieusement sur un verdict « aucun »)."""
+    try:
+        return JudgeVerdict.model_validate_json(content)
+    except ValueError as exc:
+        raise JudgeParseError(str(exc)) from exc
 
 
 # En dessous de cette confiance (probabilité du token de verdict), un
@@ -227,7 +249,7 @@ class RuleBasedJudge:
         self._scope_phrases = scope_phrases or load_scope_keywords()
         self._extended_roots = extended_roots or EXTENDED_SCOPE_ROOTS
 
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+    def evaluate(self, text: str) -> dict[str, float | str]:
         match = _first_scope_match(text, self._scope_phrases)
         if match:
             reasoning = f"Mot-clé de périmètre détecté : « {' '.join(match)} »"
@@ -275,15 +297,12 @@ class AzureJudge:
         )
         self._deployment = settings.azure_openai_guard_deployment
 
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
-        user_content = f"Texte à évaluer:\n{text}"
-        if agent_response:
-            user_content += f"\n\nRéponse de l'agent (contexte) :\n{agent_response}"
+    def evaluate(self, text: str) -> dict[str, float | str]:
         completion = self._client.chat.completions.create(
             model=self._deployment,
             messages=[
                 {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
+                {"role": "user", "content": f"Texte à évaluer:\n{text}"},
             ],
             response_format={"type": "json_object"},
             logprobs=True,
@@ -292,12 +311,15 @@ class AzureJudge:
         choice = completion.choices[0]
         content = choice.message.content or "{}"
         try:
-            verdict = JudgeVerdict.model_validate_json(content)
-        except ValueError:
-            # Réponse hors schéma (JSON malformé ou valeur de niveau invalide) :
-            # traité comme "aucun" partout plutôt que de propager l'exception —
-            # même contrat de tolérance que LLMExtractor.extract (Chantier 1).
-            verdict = JudgeVerdict(manipulation="aucun", secret_interne="aucun", hors_role="aucun")
+            verdict = _parse_verdict(content)
+        except JudgeParseError:
+            # Réponse hors schéma = juge inexploitable : on la traite comme une
+            # panne (l'appel lève, pipeline.py applique le repli fail-closed)
+            # plutôt que comme un verdict « aucun » silencieux (D4-02).
+            logger.warning(
+                "Juge garde-fous : réponse hors schéma — traitée comme panne (fail-closed)."
+            )
+            raise
 
         tokens_: list[dict[str, Any]] | None = None
         if choice.logprobs is not None and choice.logprobs.content is not None:
@@ -350,18 +372,16 @@ class ShadowingJudge:
             "ShadowingJudge : primary=%s shadow=%s", primary_result, shadow_result
         )
 
-    def _run_shadow(
-        self, text: str, agent_response: str | None, primary_result: dict[str, Any]
-    ) -> None:
+    def _run_shadow(self, text: str, primary_result: dict[str, Any]) -> None:
         try:
-            shadow_result = self._shadow.evaluate(text, agent_response)
+            shadow_result = self._shadow.evaluate(text)
         except Exception:
             return  # le shadow ne doit jamais faire remonter d'erreur — best-effort pur
         self._on_divergence(text, primary_result, shadow_result)
 
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
-        primary_result = self._primary.evaluate(text, agent_response)
-        _SHADOW_EXECUTOR.submit(self._run_shadow, text, agent_response, primary_result)
+    def evaluate(self, text: str) -> dict[str, float | str]:
+        primary_result = self._primary.evaluate(text)
+        _SHADOW_EXECUTOR.submit(self._run_shadow, text, primary_result)
         return primary_result
 
 
