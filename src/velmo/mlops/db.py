@@ -101,36 +101,31 @@ def _postgres_reachable(url: str, timeout_seconds: int = 1) -> bool:
 
 def make_mlops_engine(url: str | None = None) -> Engine:
     """Postgres réel si `url` (ou `DB_URL`) est joignable ; sinon SQLite fichier
-    persistant. Même convention que `memory/db.py::make_memory_engine`."""
+    persistant. Même convention que `memory/db.py::make_memory_engine`.
+
+    `url=None` résout `DB_URL` via `get_settings().db_url` puis applique la
+    même logique que `url` explicite (au lieu de ne considérer que le cas
+    Postgres) : une `DB_URL` déjà SQLite (ex. fichier temporaire de test) est
+    utilisée telle quelle, pas silencieusement écrasée par le repli par
+    défaut — sinon `GET /mlops/gate/history` ne verrait jamais les lignes
+    qu'un test vient de persister via `DB_URL=sqlite:///...`.
+    """
     from velmo.config import get_settings
 
-    if url is not None:
-        if url.startswith("postgresql") and not _postgres_reachable(url):
-            warnings.warn(
-                f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            path = _default_sqlite_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            engine = create_engine(f"sqlite:///{path}", future=True)
-        elif ":memory:" in url:
-            engine = create_engine(url, future=True)
-        else:
-            engine = create_engine(url, future=True)
+    if url is None:
+        url = get_settings().db_url
+
+    if url.startswith("postgresql") and not _postgres_reachable(url):
+        warnings.warn(
+            f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        path = _default_sqlite_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        engine = create_engine(f"sqlite:///{path}", future=True)
     else:
-        pg_url = get_settings().db_url
-        if _postgres_reachable(pg_url):
-            engine = create_engine(pg_url, future=True)
-        else:
-            warnings.warn(
-                f"Postgres injoignable ({pg_url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            path = _default_sqlite_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            engine = create_engine(f"sqlite:///{path}", future=True)
+        engine = create_engine(url, future=True)
 
     if engine.url.drivername.startswith("sqlite"):
 

@@ -126,3 +126,80 @@ def test_gate_run_streams_suite_events_then_final(monkeypatch, tmp_path) -> None
     assert events[-1][1]["gate_passed"] in (True, False)
     # le verrou doit être relâché une fois le stream terminé
     assert api_module._gate_running is False
+
+
+def test_gate_history_and_cases_return_persisted_rows(monkeypatch, tmp_path) -> None:
+    from sqlalchemy.orm import sessionmaker
+
+    from velmo.mlops.db import AgentVersion, EvalCaseResult, EvalRun, make_mlops_engine
+
+    db_url = f"sqlite:///{tmp_path}/mlops_history_api.db"
+    monkeypatch.setenv("DB_URL", db_url)
+
+    engine = make_mlops_engine(db_url)
+    session = sessionmaker(bind=engine, future=True)()
+    session.add(
+        AgentVersion(
+            version_tag="dev-abc123",
+            prompt_hash="p",
+            memory_config_hash="m",
+            guardrail_config_hash="g",
+            git_commit="abc123",
+        )
+    )
+    session.commit()
+    session.add(
+        EvalRun(
+            id="run-test01",
+            version_tag="dev-abc123",
+            note_memory=0.9,
+            note_guardrails=0.85,
+            note_quality=0.8,
+            note_globale=0.87,
+            global_gate=0.8,
+            gate_passed=True,
+            block_rate=0.9,
+            false_positive_rate=0.1,
+            latency_p50_ms=100.0,
+            latency_p95_ms=200.0,
+            cost_per_conv=0.01,
+            triggered_by="manual",
+        )
+    )
+    # Commit ici : `EvalRun`/`EvalCaseResult` n'ont pas de `relationship()`
+    # ORM entre elles (seulement une colonne `ForeignKey`), donc l'unit-of-work
+    # de SQLAlchemy ne garantit pas l'ordre d'insertion entre les deux dans un
+    # même flush — sans ce commit intermédiaire, l'insert de `EvalCaseResult`
+    # peut partir avant celui de `EvalRun` et violer la contrainte FK.
+    session.commit()
+    session.add(
+        EvalCaseResult(
+            id="case-test01",
+            run_id="run-test01",
+            case_id="mem-001",
+            suite="memory",
+            passed=True,
+            score=1.0,
+            latency_ms=50.0,
+        )
+    )
+    session.commit()
+    session.close()
+
+    client = TestClient(app)
+    history = client.get("/mlops/gate/history").json()
+    matched = next(r for r in history if r["id"] == "run-test01")
+    assert matched["git_commit"] == "abc123"
+    assert matched["gate_passed"] is True
+    assert matched["triggered_by"] == "manual"
+
+    cases = client.get("/mlops/gate/runs/run-test01/cases").json()
+    assert len(cases) == 1
+    assert cases[0]["case_id"] == "mem-001"
+    assert cases[0]["suite"] == "memory"
+
+
+def test_gate_run_cases_returns_empty_list_for_unknown_run(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("DB_URL", f"sqlite:///{tmp_path}/mlops_history_empty.db")
+    client = TestClient(app)
+    assert client.get("/mlops/gate/runs/does-not-exist/cases").json() == []

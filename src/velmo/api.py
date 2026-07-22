@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from velmo.config import get_settings, validate_startup
 from velmo.guardrails import GuardrailEngine
@@ -17,6 +18,7 @@ from velmo.llm import get_llm
 from velmo.memory import MemoryManager
 from velmo.memory.extractor import get_extractor
 from velmo.mlops import run_eval_steps
+from velmo.mlops.db import AgentVersion, EvalCaseResult, EvalRun, make_mlops_engine
 from velmo.mlops.observability import (
     CostAccumulatingSink,
     InstrumentedClassifier,
@@ -122,6 +124,29 @@ class CustomerOut(BaseModel):
     full_name: str
 
 
+class GateRunOut(BaseModel):
+    id: str
+    version_tag: str
+    git_commit: str
+    note_memory: float
+    note_guardrails: float
+    note_quality: float
+    note_globale: float
+    gate_passed: bool
+    triggered_by: str
+    ran_at: str
+    latency_p95_ms: float
+    cost_per_conv: float
+
+
+class GateCaseOut(BaseModel):
+    case_id: str
+    suite: str
+    passed: bool
+    score: float
+    latency_ms: float
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest, agent: Agent = Depends(get_agent)) -> ChatResponse:
     """
@@ -192,6 +217,73 @@ def trigger_gate_run() -> StreamingResponse:
         raise HTTPException(status_code=409, detail="Un run du gate est déjà en cours.")
     _gate_running = True
     return StreamingResponse(_gate_event_stream(), media_type="text/event-stream")
+
+
+def _mlops_session() -> Session:
+    from sqlalchemy.orm import sessionmaker
+
+    return sessionmaker(bind=make_mlops_engine(), future=True)()
+
+
+@app.get("/mlops/gate/history", response_model=list[GateRunOut])
+def gate_history(limit: int = 50) -> list[GateRunOut]:
+    """
+    Historique des runs du gate qualité, toutes origines confondues
+    (`triggered_by`: `manual` déclenché depuis cette API, ou `ci`/`nightly`/
+    `hotfix` déclenchés par les workflows GitHub Actions) — même table
+    `eval_run` que la CI alimente déjà.
+    """
+    session = _mlops_session()
+    try:
+        rows = (
+            session.query(EvalRun, AgentVersion.git_commit)
+            .join(AgentVersion, EvalRun.version_tag == AgentVersion.version_tag)
+            .order_by(EvalRun.ran_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            GateRunOut(
+                id=run.id,
+                version_tag=run.version_tag,
+                git_commit=git_commit,
+                note_memory=run.note_memory,
+                note_guardrails=run.note_guardrails,
+                note_quality=run.note_quality,
+                note_globale=run.note_globale,
+                gate_passed=run.gate_passed,
+                triggered_by=run.triggered_by,
+                ran_at=run.ran_at.isoformat(),
+                latency_p95_ms=run.latency_p95_ms,
+                cost_per_conv=run.cost_per_conv,
+            )
+            for run, git_commit in rows
+        ]
+    finally:
+        session.close()
+
+
+@app.get("/mlops/gate/runs/{run_id}/cases", response_model=list[GateCaseOut])
+def gate_run_cases(run_id: str) -> list[GateCaseOut]:
+    """
+    Détail par cas de test (`eval_case_result`) d'un run précis — pour
+    creuser quels cas ont échoué, par suite.
+    """
+    session = _mlops_session()
+    try:
+        rows = session.query(EvalCaseResult).filter_by(run_id=run_id).all()
+        return [
+            GateCaseOut(
+                case_id=r.case_id,
+                suite=r.suite,
+                passed=r.passed,
+                score=r.score,
+                latency_ms=r.latency_ms,
+            )
+            for r in rows
+        ]
+    finally:
+        session.close()
 
 
 @app.post("/memory/{user_id}/clear-session")
