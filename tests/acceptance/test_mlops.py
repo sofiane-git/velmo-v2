@@ -13,6 +13,32 @@ from velmo.mlops import (
     write_report,
 )
 
+_REAL_LLM_ENV_KEYS = (
+    "AZURE_AI_INFERENCE_ENDPOINT",
+    "AZURE_AI_INFERENCE_API_KEY",
+    "AZURE_OPENAI_GUARD_ENDPOINT",
+    "AZURE_OPENAI_GUARD_API_KEY",
+    "ANTHROPIC_FOUNDRY_ENDPOINT",
+    "ANTHROPIC_API_KEY",
+    "OLLAMA_URL",
+)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_offline_eval(monkeypatch, tmp_path):
+    """Gate d'acceptance = mode dégradé DÉTERMINISTE (philosophie hybride,
+    audit B4) : le vrai modèle est gaté à release/nightly, jamais ici.
+
+    Sans cette isolation, le `.env` réel du poste (auto-chargé par deepeval à
+    l'import pour toute la session pytest, cf. pyproject) branche de vrais
+    appels Azure : latence p95 > plafond NF → `global_` forcé à 0.0 pour les
+    DEUX agents, et `degraded < good` devient `0.0 < 0.0` (l'échec historique
+    de `test_regression_blocks_delivery`). La DB partagée `var/velmo_mlops.db`
+    polluerait de même la baseline de non-régression entre exécutions."""
+    for key in _REAL_LLM_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("DB_URL", f"sqlite:///{tmp_path}/acceptance_mlops.db")
+
 
 def test_scores_produced_and_versioned():
     # Critère : note globale + notes mémoire / garde-fous / qualité, versionnées.
