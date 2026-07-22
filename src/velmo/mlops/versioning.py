@@ -45,6 +45,18 @@ def _guardrail_config_hash() -> str:
     return _sha256(json.dumps(payload, sort_keys=True))
 
 
+def _gate_config_hash() -> str:
+    from velmo.config import get_settings
+
+    settings = get_settings()
+    payload = {
+        "gate_min_score": settings.gate_min_score,
+        "gate_latency_p95_ceiling_ms": settings.gate_latency_p95_ceiling_ms,
+        "gate_cost_per_conv_ceiling": settings.gate_cost_per_conv_ceiling,
+    }
+    return _sha256(json.dumps(payload, sort_keys=True))
+
+
 def compute_version_hashes() -> dict[str, str]:
     """Hash de chaque composante versionnée — change automatiquement dès
     qu'un fichier/seuil change, jamais un numéro oublié après un ajustement."""
@@ -52,6 +64,7 @@ def compute_version_hashes() -> dict[str, str]:
         "prompt_hash": _prompt_hash(),
         "memory_config_hash": _memory_config_hash(),
         "guardrail_config_hash": _guardrail_config_hash(),
+        "gate_config_hash": _gate_config_hash(),
     }
 
 

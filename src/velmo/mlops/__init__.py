@@ -14,6 +14,7 @@ from typing import Literal, Protocol
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from velmo.config import get_settings
 from velmo.mlops.db import AgentVersion, EvalCaseResult, EvalRun, make_mlops_engine
 from velmo.mlops.observability import CostAccumulatingSink, NullSink, ObservabilitySink
 from velmo.mlops.results import CaseResult
@@ -23,15 +24,12 @@ from velmo.mlops.suites.memory import run_memory_suite_steps
 from velmo.mlops.suites.quality import run_quality_suite_steps
 from velmo.mlops.versioning import compute_version_hashes, current_git_commit, current_git_tag
 
-# Seuils SLO non-fonctionnels (conception §Gates non-fonctionnels : latence et
-# coût peuvent bloquer). Constantes de module (pas un magic number inline
-# dans `run_eval`) pour rester monkeypatchables en test — voir
-# `test_run_eval_blocks_when_latency_slo_exceeded`. Versionnage complet en
-# config hashée (comme `token_pricing`) est un raffinement possible, laissé
-# hors périmètre : la conception les qualifie elle-même de "points de départ
-# à calibrer", et aucun test d'acceptance ne verrouille leur provenance.
-LATENCY_P95_CEILING_MS = 4000.0
-COST_PER_CONV_CEILING = 0.05
+# Seuils SLO non-fonctionnels et plancher du gate : source unique en config
+# (`Settings.gate_*`, conception §Seuils — « chiffres versionnés dans un
+# fichier de config, donc hashés dans la version ») ; lus à l'exécution et
+# inclus dans `compute_version_hashes()` (gate_config_hash, audit D8-05).
+# Surcharge en test : `monkeypatch.setenv("GATE_LATENCY_P95_CEILING_MS", ...)`
+# — voir `test_run_eval_blocks_when_latency_slo_exceeded`.
 
 
 class Evaluable(Protocol):
@@ -92,6 +90,7 @@ def _persist_version(
             prompt_hash=hashes["prompt_hash"],
             memory_config_hash=hashes["memory_config_hash"],
             guardrail_config_hash=hashes["guardrail_config_hash"],
+            gate_config_hash=hashes["gate_config_hash"],
             git_commit=commit,
         )
     )
@@ -262,7 +261,11 @@ def run_eval_steps(
             if not non_regression_ok(baseline_quality_scores, quality_scores):
                 quality_gate_score = 0.0
 
-        nf_gate_ok = latency_p95 <= LATENCY_P95_CEILING_MS and cost <= COST_PER_CONV_CEILING
+        gate_settings = get_settings()
+        nf_gate_ok = (
+            latency_p95 <= gate_settings.gate_latency_p95_ceiling_ms
+            and cost <= gate_settings.gate_cost_per_conv_ceiling
+        )
         global_gate = min(note_memory, note_guardrails, quality_gate_score) if nf_gate_ok else 0.0
 
         _persist_version(session, hashes, commit, version_tag)
@@ -275,7 +278,7 @@ def run_eval_steps(
             note_quality=note_quality,
             note_globale=note_globale,
             global_gate=global_gate,
-            gate_passed=global_gate >= 0.80,
+            gate_passed=global_gate >= gate_settings.gate_min_score,
             block_rate=recall,
             false_positive_rate=fpr,
             latency_p50_ms=latency_p50,
@@ -312,7 +315,7 @@ def run_eval_steps(
             "note_quality": note_quality,
             "note_globale": note_globale,
             "global_gate": global_gate,
-            "gate_passed": global_gate >= 0.80,
+            "gate_passed": global_gate >= get_settings().gate_min_score,
             "block_rate": recall,
             "false_positive_rate": fpr,
             "latency_p50_ms": latency_p50,

@@ -101,25 +101,72 @@ jobs:
     needs: check-model-drift
     if: needs.check-model-drift.outputs.quality_memory == 'true' || needs.check-model-drift.outputs.guardrails == 'true'
     runs-on: ubuntu-latest
+    # Vrai modèle + baseline persistante (audit B4/B5) : un drift-check sur le
+    # stub hors-ligne ne mesurerait rien. Mêmes secrets que release.yml.
+    env:
+      DB_URL: ${{ secrets.DB_URL }}
+      AZURE_AI_INFERENCE_ENDPOINT: ${{ secrets.AZURE_AI_INFERENCE_ENDPOINT }}
+      AZURE_AI_INFERENCE_API_KEY: ${{ secrets.AZURE_AI_INFERENCE_API_KEY }}
+      AZURE_OPENAI_GUARD_ENDPOINT: ${{ secrets.AZURE_OPENAI_GUARD_ENDPOINT }}
+      AZURE_OPENAI_GUARD_API_KEY: ${{ secrets.AZURE_OPENAI_GUARD_API_KEY }}
+      ANTHROPIC_FOUNDRY_ENDPOINT: ${{ secrets.ANTHROPIC_FOUNDRY_ENDPOINT }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
       - run: uv sync --locked
+      - name: Garde anti-silence — le drift-check NE DOIT PAS évaluer le stub
+        # Secrets absents => repli EchoLLM/SQLite silencieux : le drift-check
+        # mesurerait le stub et écrirait une baseline bidon (audit B4/B5).
+        run: |
+          if [ -z "$AZURE_AI_INFERENCE_API_KEY" ]; then
+            echo "::error::AZURE_AI_INFERENCE_API_KEY absent — drift-check évaluerait le stub (audit B4)."
+            exit 1
+          fi
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DB_URL absent — mesures drift non persistantes (audit B5)."
+            exit 1
+          fi
       - name: Qualité + Mémoire (drift Mistral-Large-3 / claude-opus-4-5)
         if: needs.check-model-drift.outputs.quality_memory == 'true'
         run: uv run python -m velmo.mlops.drift_check --suites quality,memory --triggered-by model-drift
       - name: Garde-fous (drift gpt-5-mini)
         if: needs.check-model-drift.outputs.guardrails == 'true'
         run: uv run python -m velmo.mlops.drift_check --suites guardrails --triggered-by model-drift
+      # Pas de step « alerte deux-nuits » ici : drift_check sort déjà en exit 1
+      # sous le plancher (audit D8-03), et l'alerte deux-nuits lit les EvalRun
+      # nightly (pas la table drift_check_run) — elle appartient au job
+      # scheduled-eval, pas au drift ponctuel (revue Lot 3).
 
   scheduled-eval:
     runs-on: ubuntu-latest
+    # Vrai modèle + baseline persistante (audit B4/B5), cf. drift-check-eval.
+    env:
+      DB_URL: ${{ secrets.DB_URL }}
+      AZURE_AI_INFERENCE_ENDPOINT: ${{ secrets.AZURE_AI_INFERENCE_ENDPOINT }}
+      AZURE_AI_INFERENCE_API_KEY: ${{ secrets.AZURE_AI_INFERENCE_API_KEY }}
+      AZURE_OPENAI_GUARD_ENDPOINT: ${{ secrets.AZURE_OPENAI_GUARD_ENDPOINT }}
+      AZURE_OPENAI_GUARD_API_KEY: ${{ secrets.AZURE_OPENAI_GUARD_API_KEY }}
+      ANTHROPIC_FOUNDRY_ENDPOINT: ${{ secrets.ANTHROPIC_FOUNDRY_ENDPOINT }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
       - run: uv sync --locked
+      - name: Garde anti-silence — le run bihebdomadaire NE DOIT PAS évaluer le stub
+        # Sans secrets, la baseline EvalRun persistée serait celle du stub —
+        # exactement B4/B5, et l'alerte deux-nuits relirait des runs bidon.
+        run: |
+          if [ -z "$AZURE_AI_INFERENCE_API_KEY" ]; then
+            echo "::error::AZURE_AI_INFERENCE_API_KEY absent — le run bihebdo évaluerait le stub (audit B4)."
+            exit 1
+          fi
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DB_URL absent — baseline non persistante (audit B5)."
+            exit 1
+          fi
       - name: Décide si le run complet bihebdomadaire doit tourner (1 lundi sur 2)
         id: gate
         run: |
@@ -130,6 +177,13 @@ jobs:
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+      # `--min-score 0.0` : ce run ENREGISTRE (baseline + historique) ; la
+      # décision d'alerter appartient au step suivant (règle deux-nuits).
       - name: 3 suites (bihebdomadaire)
         if: steps.gate.outputs.run == 'true'
         run: uv run python -m velmo.mlops.score --min-score 0.0 --triggered-by nightly
+      # L'échec de ce step EST le canal d'alerte (notification GitHub du job
+      # rouge) — filtre anti-bruit deux-nuits (audit D8-04).
+      - name: Alerte deux-nuits (dimensions gate)
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python -m velmo.mlops.alerting

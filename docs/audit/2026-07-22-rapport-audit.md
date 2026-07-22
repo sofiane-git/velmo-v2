@@ -54,14 +54,14 @@
 - **Fix :** infra · **Plugin :** oui — check : lockfile commité obligatoire ; `git check-ignore <lockfile>` doit échouer ; croiser avec `COPY` du Dockerfile.
 - **Reco :** retirer du .gitignore, commiter, passer CI et Dockerfile à `uv sync --locked`/`--frozen`.
 
-### B4 · Le gate qualité CI évalue un stub hors-ligne — `D8-01`
+### ✅ B4 · Le gate qualité CI évalue un stub hors-ligne — `D8-01` *(corrigé : aea8c43 — gate hybride : PR = dégradé déterministe documenté ; release + nightly = vrai modèle avec secrets + garde anti-silence)*
 - **Fichier :** `.github/workflows/quality.yml:26-30` (idem release.yml)
 - **Constat :** aucun `env:`/`secrets`/`services:` dans quality.yml → l'agent évalué par le gate tourne en repli hors-ligne (EchoLLM, SQLite) : le gate ne mesure jamais la config LLM réelle qu'il est censé garder.
 - **Preuve :** `runner.py:60-72` construit l'agent depuis `get_settings()` (lues dans l'env) ; README:22 « le cœur tourne sans service externe (repli hors-ligne) ».
 - **Fix :** infra · **Plugin :** oui — un gate d'éval LLM doit injecter les credentials du modèle réellement déployé, sinon il évalue un stub.
 - **Reco :** injecter secrets Azure + URL Postgres dans les jobs gate, ou documenter explicitement que le gate CI évalue le mode dégradé et pourquoi c'est acceptable.
 
-### B5 · Non-régression M4 structurellement morte en CI — `D8-02`
+### ✅ B5 · Non-régression M4 structurellement morte en CI — `D8-02` *(corrigé : aea8c43 — DB_URL secret vers Postgres partagé dans release + nightly ; garde anti-silence si absent. NB : le code résout `DB_URL`, pas « MLOPS_DATABASE_URL » cité au constat)*
 - **Fichier :** `.github/workflows/quality.yml:30`
 - **Constat :** sans `MLOPS_DATABASE_URL`, le runner retombe sur un SQLite recréé à chaque run éphémère → `_fetch_previous_quality_scores` renvoie toujours `[]` → chaque run CI est un « 1er run » où la régression ne peut pas échouer.
 - **Preuve :** `mlops/db.py:120-124` (repli SQLite) ; `mlops/__init__.py:261-266` (« Sans baseline… la dimension ne peut pas encore échouer »).
@@ -130,9 +130,9 @@
 
 ### MLOps/hygiène (D8)
 
-- **`D8-03`** · `src/velmo/mlops/drift_check.py:103` — Post-drift : print puis `sys.exit(0)` inconditionnel — pas de seuil, pas de persistance, pas d'alerte ; la règle « deux nuits consécutives » documentée est inimplémentable. **Fix :** les-deux.
-- **`D8-04`** · `.github/workflows/nightly.yml:133` — Run bihebdo à `--min-score 0.0` : ne peut jamais être rouge, et l'alerte documentée n'existe dans aucun workflow. **Fix :** les-deux.
-- **`D8-05`** · `src/velmo/mlops/__init__.py:284` — Seuils de gate en dur et dupliqués (0.80 ×2, plafonds NF, défaut CLI), hors config et hors `compute_version_hashes` — la conception exige « chiffres versionnés dans un fichier de config (donc hashés) ». **Fix :** code.
+- ✅ **`D8-03`** *(corrigé : ae83702 — table drift_check_run + exit 1 sous plancher)* · `src/velmo/mlops/drift_check.py:103` — Post-drift : print puis `sys.exit(0)` inconditionnel — pas de seuil, pas de persistance, pas d'alerte ; la règle « deux nuits consécutives » documentée est inimplémentable. **Fix :** les-deux.
+- ✅ **`D8-04`** *(corrigé : bc0177e — velmo.mlops.alerting, règle deux-nuits, échec du job = canal d'alerte)* · `.github/workflows/nightly.yml:133` — Run bihebdo à `--min-score 0.0` : ne peut jamais être rouge, et l'alerte documentée n'existe dans aucun workflow. **Fix :** les-deux.
+- ✅ **`D8-05`** *(corrigé : fec6d48 — Settings.gate_*, gate_config_hash dans l'identité de version, migration 0011)* · `src/velmo/mlops/__init__.py:284` — Seuils de gate en dur et dupliqués (0.80 ×2, plafonds NF, défaut CLI), hors config et hors `compute_version_hashes` — la conception exige « chiffres versionnés dans un fichier de config (donc hashés) ». **Fix :** code.
 - ✅ **`D8-06`** *(corrigé : 38a4e8f — git rm + règles .gitignore)* · `eval/Archive.zip` — Artefact zip + copies périmées de fixtures commités (l'intention `.gitignore archives/` existe mais casse différente). **Fix :** infra. **Reco :** `git rm`, l'historique git est l'archive.
 - **`D8-07`** · `README.md:10-12` — README décrit les 3 chantiers « (à construire) » alors qu'ils sont livrés et que le gate bloque déjà la CI. **Fix :** doc.
 - **`D8-08`** · `README.md:19` — README annonce « Kimi-K2.6 » ; config/CI réelles : Mistral-Large-3, claude-opus-4-5, gpt-5-mini. **Fix :** doc.
@@ -281,7 +281,7 @@ Gabarit de tuto exigible : section Prérequis ; graphe de dépendances des étap
 Réparation par lots → **writing-plans #2**, ordonnée par sévérité :
 1. ✅ **Lot RGPD/mémoire** (B1, B2, D9-03, D9-04, D9-10) — FAIT (commits e101bc3..b1daccd, 5 tests d'acceptance/unitaires ajoutés). Note D9-03 : cas atteignable déjà mitigé par af89c2d, invariant durci en défense.
 2. ✅ **Lot supply-chain/CI** (B3, B6, D5-02/03/04, D8-06, D10-05/07) — FAIT (commits 9b170eb..8076a45). Bonus : baseline ruff format (31 fichiers), lint web autofixé.
-3. **Lot gate MLOps** (B4, B5, D8-03/04/05) — décisions d'infra à prendre (DB persistante ou mode dégradé assumé).
+3. ✅ **Lot gate MLOps** (B4, B5, D8-03/04/05) — FAIT (commits fec6d48..b484a4c). Décisions actées : gate hybride (PR dégradé / release+nightly réel), baseline via DB_URL→Postgres. Bonus : test_regression_blocks_delivery (échec historique) résolu — cause = hermétisme des tests, pas le scoring.
 4. **Lot guardrails** (D2-02, D4-01/02/03/05) — durcissement pipeline.
 5. **Lot Docker** (D6-*) — mécanique.
 6. **Lot docs/tutos** (D1-*, D2 doc-side, D7-*, D8-07/08/09, D9-07/08) — réécritures alignées sur le code corrigé (à faire en dernier pour documenter l'état final).

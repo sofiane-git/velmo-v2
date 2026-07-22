@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     # constante gravée : voir aussi le seuil équivalent des garde-fous (Ch.2).
     memory_confidence_threshold: float = 0.7
 
+    # Seuils du gate qualité MLOps (conception_chantier3_evaluation_mlops.md
+    # §Seuils : « chiffres versionnés dans un fichier de config, donc hashés
+    # dans la version ») — source unique lue par run_eval/cli/drift_check et
+    # incluse dans compute_version_hashes() (gate_config_hash, audit D8-05).
+    gate_min_score: float = 0.80
+    gate_latency_p95_ceiling_ms: float = 4000.0  # SLO p95 par conversation
+    gate_cost_per_conv_ceiling: float = 0.05  # €/conversation (tarif Azure)
+
     # Tarif €/1000 tokens par modèle — config versionnée, pas codée en dur
     # (conception_chantier3_evaluation_mlops.md §Seuils : tarif Azure).
     # Vérification périodique recommandée (trimestrielle, ou si la facture
