@@ -112,6 +112,11 @@ jobs:
       - name: Garde-fous (drift gpt-5-mini)
         if: needs.check-model-drift.outputs.guardrails == 'true'
         run: uv run python -m velmo.mlops.drift_check --suites guardrails --triggered-by model-drift
+      # L'échec de ce step EST le canal d'alerte (notification GitHub du job
+      # rouge) : dimension gate sous plancher deux runs consécutifs → décision
+      # humaine de rollback (conception ch.3 §Rollback, audit D8-04).
+      - name: Alerte deux-nuits (dimensions gate)
+        run: uv run python -m velmo.mlops.alerting
 
   scheduled-eval:
     runs-on: ubuntu-latest
@@ -130,6 +135,13 @@ jobs:
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+      # `--min-score 0.0` : ce run ENREGISTRE (baseline + historique) ; la
+      # décision d'alerter appartient au step suivant (règle deux-nuits).
       - name: 3 suites (bihebdomadaire)
         if: steps.gate.outputs.run == 'true'
         run: uv run python -m velmo.mlops.score --min-score 0.0 --triggered-by nightly
+      # L'échec de ce step EST le canal d'alerte (notification GitHub du job
+      # rouge) — filtre anti-bruit deux-nuits (audit D8-04).
+      - name: Alerte deux-nuits (dimensions gate)
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python -m velmo.mlops.alerting
