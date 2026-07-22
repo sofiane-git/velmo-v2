@@ -34,8 +34,7 @@ fonctionnent quand même. C'est la ligne de partage qui structure tout le docume
 > **Pourquoi DeepEval, mais cadré ?** DeepEval fournit des métriques **calibrées** (G-Eval,
 > faithfulness) — inutile de réinventer un juge maison pour la suite Qualité. Mais on le
 > **borne** : (a) juge = modèle **déployé via Azure** (Azure AI Foundry ou Azure OpenAI —
-> jamais un accès direct hors gouvernance), actuellement `claude-opus-4-5` (décision révisée,
-> remplace `gpt-5-mini`, cf. [chantier 1](conception_chantier1_memoire.md)), (b) rubriques versionnées
+> jamais un accès direct hors gouvernance), actuellement `claude-opus-4-5`, (b) rubriques versionnées
 > comme donnée, (c) **la métrique conversationnelle DeepEval ne gate pas R1** — une exigence
 > mémoire non négociable ne peut pas dépendre d'un score LLM flou (voir §Suites).
 
