@@ -45,6 +45,9 @@ class AgentVersion(Base):
     prompt_hash: Mapped[str] = mapped_column(String)
     memory_config_hash: Mapped[str] = mapped_column(String)
     guardrail_config_hash: Mapped[str] = mapped_column(String)
+    # Seuils de gate hashés (Settings.gate_*, audit D8-05) — nullable : les
+    # versions enregistrées avant la migration 0011 n'en ont pas.
+    gate_config_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     git_commit: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
