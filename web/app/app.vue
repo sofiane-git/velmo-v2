@@ -21,12 +21,20 @@ useSeoMeta({
   <UApp>
     <UHeader>
       <template #left>
-        <NuxtLink
-          to="/"
-          class="font-semibold text-lg"
-        >
-          Velmo — Cheminement pédagogique
-        </NuxtLink>
+        <div class="flex items-center gap-4">
+          <NuxtLink
+            to="/"
+            class="font-semibold text-lg"
+          >
+            Velmo — Cheminement pédagogique
+          </NuxtLink>
+          <NuxtLink
+            to="/mlops"
+            class="text-sm text-muted hover:text-default"
+          >
+            MLOps
+          </NuxtLink>
+        </div>
       </template>
 
       <template #right>
