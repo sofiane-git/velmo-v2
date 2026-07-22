@@ -34,14 +34,14 @@
 
 ## Findings — BLOQUANT (8, regroupés en 6 causes racines)
 
-### B1 · Droit à l'oubli : checkpoints LangGraph non purgés — `D2-01` + `D9-01`
+### ✅ B1 · Droit à l'oubli : checkpoints LangGraph non purgés — `D2-01` + `D9-01` *(corrigé : e101bc3, 13fc0bd)*
 - **Fichier :** `src/velmo/memory/__init__.py:550-591`
 - **Constat :** `forget_all` (R5/art. 17) supprime faits/procédures/épisodes/user mais n'appelle jamais `checkpointer.delete_thread` — le verbatim conversationnel survit dans les tables de checkpoints. Pire : les lignes `Thread` étant supprimées, ces checkpoints deviennent orphelins que `purge_inactive_threads` (qui itère sur `Thread`) ne retrouvera jamais → conservation illimitée de données « effacées ».
 - **Preuve :** conception_chantier1:270-274 exige « + purge des checkpoints du thread (PostgresSaver.delete_thread) — une seule transaction » ; `grep delete_thread src/velmo` → seul `retention.py:56,61` (purge TTL).
 - **Fix :** code · **Plugin :** oui — l'oubli doit couvrir TOUS les stores, y compris l'état géré par le framework (checkpoints, historiques de session).
 - **Reco :** collecter les `thread_id` avant le DELETE cascade, appeler `delete_thread(tid)` pour chacun ; test d'acceptance « aucun résidu dans les checkpoints après effacement total ».
 
-### B2 · Tombstones détruits par la cascade FK dans `forget_all` — `D9-02` *(majeur reclassé avec B1 : même transaction, même risque)*
+### ✅ B2 · Tombstones détruits par la cascade FK dans `forget_all` — `D9-02` *(corrigé : e101bc3 — tombstones posés après recréation user ; + tombstone `fact_value` en c525403)*
 - **Fichier :** `src/velmo/memory/__init__.py:579-588` + `memory/db.py:129`
 - **Constat :** les tombstones sont posés PUIS emportés par `session.delete(user)` (FK `ondelete=CASCADE` sur `memory_tombstone.user_id`) — après effacement total, une extraction LLM différée (`background=True`, chemin par défaut) peut réécrire les faits oubliés. L'anti-résurrection est inopérante précisément pour l'effacement total.
 - **Preuve :** conception_chantier1:286-288 « un tombstone que l'extracteur consulte avant tout write ».
@@ -139,7 +139,7 @@
 
 ### RGPD (D9)
 
-- **`D9-03`** · `src/velmo/agent.py:285` — Chemin autorisé : le message BRUT part en mémoire (checkpoints + extracteur LLM cloud) en ignorant `gate_in.filtered_text` — une carte bancaire collée dans un message légitime est persistée et exportée en clair. Contredit conception_chantier2:147 et le contrat de `redact_pii`. **Fix :** code. **Reco :** écrire `filtered_text` quand action='filter' + test Luhn-valide → aucune occurrence en clair.
+- ✅ **`D9-03`** *(corrigé : b1daccd — cas atteignable déjà mitigé par af89c2d (block+redaction en entrée) ; garde symétrique `filtered_text` ajoutée sur le chemin autorisé + test)* · `src/velmo/agent.py:285` — Chemin autorisé : le message BRUT part en mémoire (checkpoints + extracteur LLM cloud) en ignorant `gate_in.filtered_text` — une carte bancaire collée dans un message légitime est persistée et exportée en clair. Contredit conception_chantier2:147 et le contrat de `redact_pii`. **Fix :** code. **Reco :** écrire `filtered_text` quand action='filter' + test Luhn-valide → aucune occurrence en clair.
 - **`D9-05`** · `src/velmo/memory/retention.py:7-9` — TTL RGPD (24 mois épisodes, 90 j threads) exécutés par AUCUN mécanisme planifié : `velmo purge` existe en CLI, nightly ne l'appelle pas, le tuto ne crée pas la tâche promise — limitation de conservation théorique. **Fix :** infra. **Reco :** brancher `velmo purge` au nightly + journaliser.
 - **`D9-06`** · `src/velmo/mlops/observability.py:34-47` — Masque avant Langfuse Cloud = PII structurées seules ; noms/adresses (exactement ce que la mémoire stocke en facts) partent en clair dans les traces (`input={'message': …}`, payloads memory_read). **Fix :** les-deux. **Reco :** étendre `mask_sensitive_data` au texte libre (réutiliser `pii_redaction.scan`) ou documenter la limite + condition de bascule self-host.
 - *(D9-02 reclassé en bloquant, voir B2.)*
@@ -186,11 +186,11 @@
 | D8-09 | CLAUDE.md:9 | Gate décrit comme « pytest tests/acceptance/ » seul — omet lint-imports et le Quality gate mlops min-score 0.8 | doc | Compléter la puce CI |
 | D8-10 | nightly.yml:126 | Cadence « 1 lundi sur 2 » par parité de semaine ISO : trou de 3 semaines les années à 53 semaines | infra | Delta de jours depuis une époque |
 | D8-11 | nightly.yml:92-96 | Commit bot sans [skip ci] → chaque bump d'état déclenche un run d'éval LLM payant complet | infra | `[skip ci]` ou `paths-ignore: ['.github/state/**']` |
-| D9-04 | memory/__init__.py:367-373 | Écritures d'épisodes sans consultation des tombstones (résurrection possible via épisode tardif) | code | Garde avant add_episode ou target_kind 'episode_value' |
+| ✅ D9-04 *(corrigé : c525403, f52c34e)* | memory/__init__.py:367-373 | Écritures d'épisodes sans consultation des tombstones (résurrection possible via épisode tardif) | code | Garde avant add_episode ou target_kind 'episode_value' |
 | D9-07 | conception_chantier1:1 | Aucune base légale (art. 6) ni consentement documenté pour la mémoire persistante | doc | Section « Base légale » + information utilisateur |
 | D9-08 | conception_chantier1:491 | Registre de traitement (art. 30) référencé 2× mais n'existe nulle part | doc | docs/rgpd/registre_traitements.md consolidé |
 | D9-09 | api.py:290 | Aucun export/portabilité (art. 20) : `inspect()` existe mais n'est exposé ni API ni CLI | les-deux | GET /memory/{user_id}/export réutilisant inspect() |
-| D9-10 | memory/retention.py:48-61 | purge_inactive_threads commit les Thread AVANT delete_thread : crash entre les deux = checkpoints orphelins définitifs (idempotence revendiquée fausse) | code | Inverser l'ordre (store secondaire d'abord) |
+| ✅ D9-10 *(corrigé : 7d6ddd4)* | memory/retention.py:48-61 | purge_inactive_threads commit les Thread AVANT delete_thread : crash entre les deux = checkpoints orphelins définitifs (idempotence revendiquée fausse) | code | Inverser l'ordre (store secondaire d'abord) |
 | D10-06 | scripts/seed_kb.py:20 | os.getenv direct contournant la config centralisée, défauts divergents de .env.example | code | Passer par Settings |
 | D10-07 | Makefile:27 | `make ci` = pytest seul ≠ gate CI réelle (lint-imports + acceptance + mlops score) | les-deux | Invariant « make ci == pipeline CI » |
 | D10-08 | .pre-commit-config.yaml (absent) | Pas de hook pre-commit (ruff/mypy à la main ou en CI seulement) | infra | Config minimale ruff + ruff-format |
@@ -279,7 +279,7 @@ Gabarit de tuto exigible : section Prérequis ; graphe de dépendances des étap
 ## Prochaine étape
 
 Réparation par lots → **writing-plans #2**, ordonnée par sévérité :
-1. **Lot RGPD/mémoire** (B1, B2, D9-03, D9-04, D9-10) — corrections code + tests d'acceptance.
+1. ✅ **Lot RGPD/mémoire** (B1, B2, D9-03, D9-04, D9-10) — FAIT (commits e101bc3..b1daccd, 5 tests d'acceptance/unitaires ajoutés). Note D9-03 : cas atteignable déjà mitigé par af89c2d, invariant durci en défense.
 2. **Lot supply-chain/CI** (B3, B6, D5-02/03/04, D8-06, D10-05/07) — infra rapide, fort effet.
 3. **Lot gate MLOps** (B4, B5, D8-03/04/05) — décisions d'infra à prendre (DB persistante ou mode dégradé assumé).
 4. **Lot guardrails** (D2-02, D4-01/02/03/05) — durcissement pipeline.

@@ -165,7 +165,7 @@ def test_purge_deletes_checkpoints_before_thread_headers():
     assert thread_ids_before
 
     # Force le vieillissement pour que la purge cible le thread.
-    from velmo.memory.db import Thread, utcnow
+    from velmo.memory.db import utcnow
     from datetime import timedelta
     with mm._Session() as session:
         for t in list_threads(session, user):
