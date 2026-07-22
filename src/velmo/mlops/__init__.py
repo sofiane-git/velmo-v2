@@ -128,10 +128,17 @@ def run_eval_steps(
     tous ses appelants existants (CLI, tests d'acceptance).
 
     `db_url=None` est transmis tel quel aux suites et à `make_mlops_engine` —
-    chacun résout alors `Settings.db_url` indépendamment. Si `sink` est déjà
-    un `CostAccumulatingSink` (cas du CLI/API, qui en construisent un pour
-    instrumenter l'agent évalué AVANT d'appeler ceci), il est réutilisé tel
-    quel plutôt que ré-enveloppé."""
+    chacun résout alors `Settings.db_url` indépendamment (Postgres si
+    joignable, sinon repli SQLite fichier). Ne jamais forcer un `:memory:` par
+    défaut ici : un appel réel en CI/nightly doit respecter la base
+    configurée, pas une base éphémère silencieuse.
+
+    Si `sink` est déjà un `CostAccumulatingSink` (cas du CLI/API, qui en
+    construisent un pour instrumenter l'agent évalué lui-même AVANT d'appeler
+    ceci), il est réutilisé tel quel plutôt que ré-enveloppé : un double-wrap
+    créerait un second accumulateur qui ne verrait jamais les appels LLM de
+    l'agent (câblés sur le premier), sous-comptant le coût réel — c'est
+    justement le bug que ce partage évite (voir `mlops.runner`/`mlops.cli`)."""
     sink = sink or NullSink()
     cost_sink = sink if isinstance(sink, CostAccumulatingSink) else CostAccumulatingSink(sink)
 
@@ -179,6 +186,15 @@ def run_eval_steps(
     latencies = sorted(r.latency_ms for r in all_results)
     latency_p50 = _percentile(latencies, 0.5)
     latency_p95 = _percentile(latencies, 0.95)
+    # Coût : `cost_sink` (`CostAccumulatingSink`) additionne chaque
+    # `on_llm_call(..., cost=...)` émis par les composants instrumentés des
+    # suites — `0.0` seulement si les composants sont restés en repli local
+    # (`EchoLLM`/`LexicalClassifier`, coût nul par construction, cf.
+    # `estimate_cost`), jamais un placeholder inconditionnel. Le SLO
+    # (conception §Gates non-fonctionnels) est un coût **par conversation**
+    # (0,05 €), pas un total sur l'ensemble des cas des 3 suites : diviser par
+    # le nombre de conversations évaluées est nécessaire pour que le gate
+    # compare des grandeurs homogènes (voir aussi `EvalRun.cost_per_conv`).
     cost = cost_sink.total_cost / len(all_results) if all_results else 0.0
 
     hashes = compute_version_hashes()
@@ -190,6 +206,11 @@ def run_eval_steps(
     session = session_factory()
     try:
         baseline_quality_scores = _fetch_previous_quality_scores(session)
+        # Qualité : dimension bruitée (jugement LLM) — le gate ne compare pas
+        # `note_quality` brute au plancher, mais son delta à la baseline
+        # (2σ, M4). Sans baseline (1er run), rien à comparer : la dimension
+        # ne peut pas encore échouer pour "régression" (mais reste soumise au
+        # `min()` comme les 2 autres dimensions).
         quality_gate_score = note_quality
         if baseline_quality_scores and quality_scores:
             if not non_regression_ok(baseline_quality_scores, quality_scores):
