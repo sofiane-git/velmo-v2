@@ -16,15 +16,19 @@ from velmo.guardrails.judge import get_judge
 from velmo.llm import get_llm
 from velmo.memory import MemoryManager
 from velmo.memory.extractor import get_extractor
+from velmo.mlops import run_eval_steps
 from velmo.mlops.observability import (
+    CostAccumulatingSink,
     InstrumentedClassifier,
     InstrumentedExtractor,
     InstrumentedJudge,
     InstrumentedLLM,
     get_langfuse_client,
+    get_sink,
     traced_reply,
     traced_respond,
 )
+from velmo.mlops.runner import build_gate_agent
 
 from .agent import Agent, build_default_agent
 from .db import Customer
@@ -77,7 +81,7 @@ def _build_traced_agent() -> Agent:
     `GuardrailEngine` restent des singletons process (une connexion DB/
     checkpointer chacun), mais `traced_respond` (Task 4) pose un sink
     *différent par tour de conversation* dans le contexte au moment de
-    l'appel — même principe que `mlops.cli._build_instrumented_agent`, sans
+    l'appel — même principe que `mlops.runner.build_gate_agent`, sans
     le sink fixe (un run CI = un sink ; ici un process = N tours)."""
     raw_llm = get_llm()
     llm = InstrumentedLLM(raw_llm, None, "agent", _settings.azure_ai_inference_model)
@@ -152,6 +156,42 @@ def chat_stream_endpoint(
         _stream_events(agent, request.user_id, request.message),
         media_type="text/event-stream",
     )
+
+
+_gate_running = False
+
+
+def _gate_event_stream() -> Iterator[str]:
+    global _gate_running
+    try:
+        raw_sink = get_sink()
+        cost_sink = CostAccumulatingSink(raw_sink)
+        agent = build_gate_agent(cost_sink)
+        for event in run_eval_steps(agent, triggered_by="manual", sink=cost_sink):
+            yield _sse_format(event.stage, event.payload)
+        close = getattr(raw_sink, "close", None)
+        if close is not None:
+            close()
+    finally:
+        _gate_running = False
+
+
+@app.post("/mlops/gate/run")
+def trigger_gate_run() -> StreamingResponse:
+    """
+    Déclenche un run du gate qualité MLOps (mémoire + garde-fous + qualité)
+    et diffuse sa progression en SSE : un événement `suite_done` par suite
+    terminée, puis un événement `final` avec les notes agrégées et le statut
+    pass/fail. Persiste comme n'importe quel run (`triggered_by="manual"`,
+    même valeur que le CLI local exécuté sans argument) — visible ensuite via
+    `GET /mlops/gate/history`. Un seul run à la fois : un second appel pendant
+    qu'un run est en cours reçoit `409`.
+    """
+    global _gate_running
+    if _gate_running:
+        raise HTTPException(status_code=409, detail="Un run du gate est déjà en cours.")
+    _gate_running = True
+    return StreamingResponse(_gate_event_stream(), media_type="text/event-stream")
 
 
 @app.post("/memory/{user_id}/clear-session")

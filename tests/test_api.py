@@ -97,3 +97,32 @@ def test_chat_stream_blocked_input_short_circuits():
         assert events[-1][1]["status"] == "blocked_input"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_gate_run_rejects_concurrent_trigger(monkeypatch) -> None:
+    import velmo.api as api_module
+
+    monkeypatch.setattr(api_module, "_gate_running", True)
+    client = TestClient(app)
+    response = client.post("/mlops/gate/run")
+    assert response.status_code == 409
+
+
+def test_gate_run_streams_suite_events_then_final(monkeypatch, tmp_path) -> None:
+    import velmo.api as api_module
+    from conftest import build_reference_agent
+
+    monkeypatch.setenv("DB_URL", f"sqlite:///{tmp_path}/mlops_gate_api.db")
+    monkeypatch.setattr(api_module, "build_gate_agent", lambda sink: build_reference_agent())
+
+    client = TestClient(app)
+    response = client.post("/mlops/gate/run")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    events = _parse_sse(response.text)
+    stages = [e for e, _ in events]
+    assert stages == ["suite_done", "suite_done", "suite_done", "final"]
+    assert events[-1][1]["gate_passed"] in (True, False)
+    # le verrou doit être relâché une fois le stream terminé
+    assert api_module._gate_running is False
