@@ -51,6 +51,8 @@ mlops/report.md
 mlops/*.json
 
 archives/
+Archive/
+*.zip
 
 # Superpowers skill specs/plans (local working docs, not committed)
 docs/superpowers/
