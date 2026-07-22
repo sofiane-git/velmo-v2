@@ -9,7 +9,11 @@ const suiteLabels: Record<string, string> = {
 
 async function launch() {
   if (store.isRunning) return
-  await runGate()
+  try {
+    await runGate()
+  } catch {
+    store.fail(`Le gate s'est interrompu de manière inattendue.`)
+  }
 }
 </script>
 

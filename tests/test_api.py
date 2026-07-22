@@ -129,6 +129,8 @@ def test_gate_run_streams_suite_events_then_final(monkeypatch, tmp_path) -> None
 
 
 def test_gate_history_and_cases_return_persisted_rows(monkeypatch, tmp_path) -> None:
+    from datetime import datetime
+
     from sqlalchemy.orm import sessionmaker
 
     from velmo.mlops.db import AgentVersion, EvalCaseResult, EvalRun, make_mlops_engine
@@ -164,6 +166,7 @@ def test_gate_history_and_cases_return_persisted_rows(monkeypatch, tmp_path) -> 
             latency_p95_ms=200.0,
             cost_per_conv=0.01,
             triggered_by="manual",
+            ran_at=datetime(2026, 1, 1, 12, 0, 0),
         )
     )
     # Commit ici : `EvalRun`/`EvalCaseResult` n'ont pas de `relationship()`
@@ -183,6 +186,28 @@ def test_gate_history_and_cases_return_persisted_rows(monkeypatch, tmp_path) -> 
             latency_ms=50.0,
         )
     )
+    # Second run, plus ancien (`ran_at` antérieur) : sert de garde-fou de
+    # régression sur l'ORDER BY EvalRun.ran_at.desc() de la route
+    # (dont dépend le tri chronologique de ScoreTrendChart.vue).
+    session.add(
+        EvalRun(
+            id="run-test00",
+            version_tag="dev-abc123",
+            note_memory=0.7,
+            note_guardrails=0.7,
+            note_quality=0.7,
+            note_globale=0.7,
+            global_gate=0.7,
+            gate_passed=False,
+            block_rate=0.7,
+            false_positive_rate=0.2,
+            latency_p50_ms=100.0,
+            latency_p95_ms=200.0,
+            cost_per_conv=0.01,
+            triggered_by="manual",
+            ran_at=datetime(2026, 1, 1, 10, 0, 0),
+        )
+    )
     session.commit()
     session.close()
 
@@ -192,6 +217,9 @@ def test_gate_history_and_cases_return_persisted_rows(monkeypatch, tmp_path) -> 
     assert matched["git_commit"] == "abc123"
     assert matched["gate_passed"] is True
     assert matched["triggered_by"] == "manual"
+
+    run_ids = [r["id"] for r in history if r["id"] in ("run-test01", "run-test00")]
+    assert run_ids == ["run-test01", "run-test00"]  # ordre descendant sur ran_at
 
     cases = client.get("/mlops/gate/runs/run-test01/cases").json()
     assert len(cases) == 1
