@@ -16,5 +16,6 @@ watch(() => store.lastResult, (result) => {
   <div class="p-4 space-y-4 max-w-3xl mx-auto">
     <GatePanel />
     <HistoryTable :runs="runs" />
+    <ScoreTrendChart :runs="runs" />
   </div>
 </template>
