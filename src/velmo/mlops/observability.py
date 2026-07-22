@@ -517,11 +517,11 @@ class InstrumentedJudge:
         self._component = component
         self._model = model
 
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+    def evaluate(self, text: str) -> dict[str, float | str]:
         start = time.monotonic()
-        result = self._inner.evaluate(text, agent_response)
+        result = self._inner.evaluate(text)
         latency_ms = (time.monotonic() - start) * 1000
-        tokens = _estimate_tokens(text, agent_response or "")
+        tokens = _estimate_tokens(text, "")
         cost = estimate_cost(tokens, self._model)
         _resolve_sink(self._sink).on_llm_call(
             self._component,

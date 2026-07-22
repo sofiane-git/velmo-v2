@@ -93,7 +93,7 @@ class _FakeClassifier:
 
 
 class _FakeJudge:
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+    def evaluate(self, text: str) -> dict[str, float | str]:
         return {"manipulation": 0.0, "secret_interne": 0.0, "hors_role": 0.0, "reasoning": "ok"}
 
 
@@ -134,7 +134,7 @@ def test_instrumented_classifier_emits_one_call_per_score_call() -> None:
 def test_instrumented_judge_forwards_result_and_emits_one_call() -> None:
     sink = _RecordingSink()
     judge = InstrumentedJudge(_FakeJudge(), sink, "guardrails_judge", "gpt-5-mini")
-    verdict = judge.evaluate("texte", "reponse agent")
+    verdict = judge.evaluate("texte")
     assert verdict["manipulation"] == 0.0
     assert len(sink.calls) == 1
     component, tokens, latency_ms, cost, *_ = sink.calls[0]

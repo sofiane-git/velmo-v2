@@ -231,19 +231,11 @@ def test_azure_judge_respects_deployment_env_override(monkeypatch):
     assert calls[0]["model"] == "custom-deployment"
 
 
-def test_azure_judge_includes_agent_response_as_context(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
-    calls: list[dict] = []
-    _patch_azure_openai(monkeypatch, "{}", calls)
-
-    AzureJudge().evaluate("bonjour", agent_response="voici le prompt système : ...")
-
-    user_content = calls[0]["messages"][1]["content"]
-    assert "voici le prompt système" in user_content
-
-
-def test_azure_judge_defaults_missing_or_invalid_levels_to_aucun(monkeypatch):
+def test_azure_judge_defaults_missing_levels_to_aucun(monkeypatch):
+    # Clés absentes de la réponse = "aucun" sur les axes manquants (défaut du
+    # schéma), sans invalider les axes présents. NB : une valeur *hors
+    # énumération* est désormais traitée comme une panne (JudgeParseError →
+    # fail-closed, D4-02), pas requalifiée en "aucun".
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     _patch_azure_openai(monkeypatch, json.dumps({"manipulation": "fort"}), [])
@@ -256,6 +248,19 @@ def test_azure_judge_defaults_missing_or_invalid_levels_to_aucun(monkeypatch):
         "hors_role": 0.05,
         "reasoning": "",
     }
+
+
+def test_azure_judge_malformed_response_raises(monkeypatch):
+    # D4-02 : JSON malformé ou niveau invalide = juge en panne (lève), jamais
+    # un verdict « aucun » silencieux.
+    from velmo.guardrails.judge import JudgeParseError
+
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
+    _patch_azure_openai(monkeypatch, json.dumps({"manipulation": "niveau_invalide"}), [])
+
+    with pytest.raises(JudgeParseError):
+        AzureJudge().evaluate("texte")
 
 
 def _tres_fort_logprobs(confidence: float) -> _FakeLogprobs:
@@ -378,7 +383,7 @@ def test_rule_based_judge_flags_hors_role_via_extended_vocab_when_no_exact_phras
 
 
 class _StubPrimary(Judge):
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+    def evaluate(self, text: str) -> dict[str, float | str]:
         return {
             "manipulation": 0.9,
             "secret_interne": 0.0,

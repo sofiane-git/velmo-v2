@@ -22,6 +22,11 @@ class Hit:
     action: str  # "block" | "filter" | "flag"
     score: float | None = None
     reasoning: str | None = None
+    # Positions `(offset, length)` du contenu à masquer quand la détection les
+    # connaît (PII texte libre Azure AI Language) — un hit `filter` sans spans
+    # s'appuie sur les regex structurées, un hit avec spans masque exactement
+    # les segments détectés (cf. pipeline.py / __init__.py, fuite LLM06).
+    spans: list[tuple[int, int]] | None = None
 
 
 INJECTION_PHRASES: list[tuple[str, ...]] = [

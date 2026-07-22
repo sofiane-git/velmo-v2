@@ -51,7 +51,7 @@ Ancrage : **OWASP Top 10 for LLM Applications** (LLM01 prompt injection, LLM02 i
 | Contrôle en **entrée** (prompt injection / jailbreak) — Prompt Shields | LLM01 | Vérifier présence + activation dans pipeline (`conception_chantier2`, `guardrails/prompt_shields.py`) |
 | Contrôle en **sortie** (insecure output handling) — filtrage réponses | LLM02 | Vérifier étape output du pipeline + catégories couvertes |
 | Redaction PII (entrée et sortie) — non-fuite d'infos sensibles | LLM06 | Vérifier `guardrails/pii_redaction.py` + où elle s'applique |
-| Matrice de repli par catégorie : fail-closed sur catégories critiques | secure default | Vérifier G1/G2/G3/G6 fail-closed, G4/G5/G7 fail-open loggé (ou équivalent) |
+| Matrice de repli par catégorie : fail-closed sur catégories critiques | secure default | Vérifier G1/G2/G3/G5/G6 fail-closed (G5 hors-périmètre = risque de responsabilité légale, cf. conception §Repli), G4/G7 fail-open loggé (ou équivalent) |
 | Aucune des catégories interdites ne passe dans un sens comme dans l'autre | reco §2 | Vérifier symétrie I/O de la couverture |
 | Décisions de blocage journalisées (observabilité guardrails) | reco principes | Vérifier journalisation décision de blocage |
 
