@@ -38,8 +38,15 @@ def test_run_eval_persists_version_run_and_cases(tmp_path) -> None:
     session.close()
 
 
-def test_run_eval_global_gate_is_min_of_dimensions() -> None:
-    scores = run_eval(build_reference_agent())
+def test_run_eval_global_gate_is_min_of_dimensions(tmp_path) -> None:
+    # `db_url` isolé obligatoire ici : sans lui, `run_eval` retombe sur la
+    # base SQLite partagée par défaut (Postgres injoignable en local/CI), dont
+    # l'historique accumulé sert de baseline de non-régression qualité
+    # (`_fetch_previous_quality_scores`) — un run précédent bruité y ferait
+    # échouer `non_regression_ok` au hasard et forcerait `global_` à 0.0,
+    # peu importe les 3 notes de dimension réelles.
+    db_url = f"sqlite:///{tmp_path}/mlops_global_gate.db"
+    scores = run_eval(build_reference_agent(), db_url=db_url)
     assert scores.global_ == min(scores.memory, scores.guardrails, scores.quality) or (
         # `global_` peut porter soit la moyenne pondérée (reporting) soit le
         # gate selon l'implémentation retenue à l'écriture du code — ce test
@@ -50,7 +57,7 @@ def test_run_eval_global_gate_is_min_of_dimensions() -> None:
     )
 
 
-def test_run_eval_degraded_agent_scores_lower_than_reference() -> None:
+def test_run_eval_degraded_agent_scores_lower_than_reference(tmp_path) -> None:
     # NB : `.guardrails` ne peut jamais différer ici — `run_guardrails_suite`
     # (Task 3) ne prend pas `agent` en paramètre et construit toujours son
     # propre `GuardrailEngine` via `get_classifier()`/`get_judge()`, quel que
@@ -60,8 +67,13 @@ def test_run_eval_degraded_agent_scores_lower_than_reference() -> None:
     # substrings attendus, ce qui fait chuter `.global_` (vérifié : score
     # qualité 1.0 partout pour l'agent de référence, 0.0 partout pour le
     # dégradé).
-    good = run_eval(build_reference_agent())
-    degraded = run_eval(build_degraded_agent())
+    # `db_url` isolé (même raison que `test_run_eval_global_gate_is_min_of_dimensions`
+    # ci-dessus) : chaque agent a besoin de sa propre base, sinon le run
+    # dégradé utiliserait le run de référence comme baseline de non-régression
+    # qualité (et inversement selon l'ordre), ce qui n'est pas ce que ce test
+    # vérifie.
+    good = run_eval(build_reference_agent(), db_url=f"sqlite:///{tmp_path}/mlops_good.db")
+    degraded = run_eval(build_degraded_agent(), db_url=f"sqlite:///{tmp_path}/mlops_degraded.db")
     assert degraded.global_ < good.global_
 
 
@@ -70,11 +82,31 @@ def test_run_eval_steps_yields_ordered_suite_then_final_events(tmp_path) -> None
 
     db_url = f"sqlite:///{tmp_path}/mlops_steps.db"
     events = list(run_eval_steps(build_reference_agent(), db_url=db_url))
-    assert [e.stage for e in events] == ["suite_done", "suite_done", "suite_done", "final"]
-    assert [e.payload["suite"] for e in events[:3]] == ["memory", "guardrails", "quality"]
-    for event in events[:3]:
+
+    assert events[0].stage == "suite_start"
+    assert events[-1].stage == "final"
+
+    suite_start_events = [e for e in events if e.stage == "suite_start"]
+    suite_done_events = [e for e in events if e.stage == "suite_done"]
+    assert [e.payload["suite"] for e in suite_start_events] == ["memory", "guardrails", "quality"]
+    assert [e.payload["suite"] for e in suite_done_events] == ["memory", "guardrails", "quality"]
+    for event in suite_done_events:
         assert event.payload["cases"] > 0
         assert 0.0 <= event.payload["note"] <= 1.0
+
+    # Chaque suite_done est précédé d'autant de case_done que de cas, chacun
+    # lui-même précédé d'un case_start pour le même case_id (cf.
+    # `run_*_suite_steps` — un cas démarre puis se termine avant le suivant).
+    for suite in ("memory", "guardrails", "quality"):
+        starts = [e.payload["case_id"] for e in events if e.stage == "case_start" and e.payload["suite"] == suite]
+        dones = [e.payload["case_id"] for e in events if e.stage == "case_done" and e.payload["suite"] == suite]
+        assert starts == dones
+        assert len(starts) > 0
+        suite_done = next(e for e in suite_done_events if e.payload["suite"] == suite)
+        assert suite_done.payload["cases"] == len(dones)
+        for done_event in (e for e in events if e.stage == "case_done" and e.payload["suite"] == suite):
+            assert isinstance(done_event.payload["passed"], bool)
+            assert 0.0 <= done_event.payload["score"] <= 1.0
 
 
 def test_run_eval_steps_final_event_matches_run_eval_scores(tmp_path) -> None:

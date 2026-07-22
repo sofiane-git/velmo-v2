@@ -122,7 +122,17 @@ def test_gate_run_streams_suite_events_then_final(monkeypatch, tmp_path) -> None
 
     events = _parse_sse(response.text)
     stages = [e for e, _ in events]
-    assert stages == ["suite_done", "suite_done", "suite_done", "final"]
+    assert stages[0] == "suite_start"
+    assert stages[-1] == "final"
+    suite_stages = [(e, payload["suite"]) for e, payload in events if e in ("suite_start", "suite_done")]
+    assert suite_stages == [
+        ("suite_start", "memory"),
+        ("suite_done", "memory"),
+        ("suite_start", "guardrails"),
+        ("suite_done", "guardrails"),
+        ("suite_start", "quality"),
+        ("suite_done", "quality"),
+    ]
     assert events[-1][1]["gate_passed"] in (True, False)
     # le verrou doit être relâché une fois le stream terminé
     assert api_module._gate_running is False

@@ -49,20 +49,42 @@ async function launch() {
         class="flex items-center gap-2"
       >
         <UIcon
-          name="i-lucide-check"
-          class="text-success"
+          :name="step.passed === step.cases ? 'i-lucide-check' : 'i-lucide-x'"
+          :class="step.passed === step.cases ? 'text-success' : 'text-error'"
         />
-        Suite {{ suiteLabels[step.suite] }} — {{ step.cases }} cas — {{ (step.note * 100).toFixed(0) }}%
+        Suite {{ suiteLabels[step.suite] }} — {{ step.passed }}/{{ step.cases }} cas — {{ (step.note * 100).toFixed(0) }}%
       </li>
-      <li
-        v-if="store.isRunning"
-        class="flex items-center gap-2 text-muted italic"
-      >
-        <UIcon
-          name="i-lucide-loader-circle"
-          class="animate-spin"
-        />
-        Suite en cours...
+      <li v-if="store.currentSuite">
+        <div class="flex items-center gap-2 text-muted italic">
+          <UIcon
+            name="i-lucide-loader-circle"
+            class="animate-spin"
+          />
+          Suite {{ suiteLabels[store.currentSuite] }} en cours...
+        </div>
+        <ul class="mt-1 space-y-0.5 pl-6">
+          <li
+            v-for="c in store.caseResults"
+            :key="c.case_id"
+            class="flex items-center gap-2 text-xs"
+          >
+            <UIcon
+              :name="c.passed ? 'i-lucide-check' : 'i-lucide-x'"
+              :class="c.passed ? 'text-success' : 'text-error'"
+            />
+            {{ c.case_id }} — {{ (c.score * 100).toFixed(0) }}%
+          </li>
+          <li
+            v-if="store.currentCase"
+            class="flex items-center gap-2 text-xs text-muted italic"
+          >
+            <UIcon
+              name="i-lucide-loader-circle"
+              class="animate-spin"
+            />
+            {{ store.currentCase }}...
+          </li>
+        </ul>
       </li>
     </ul>
 

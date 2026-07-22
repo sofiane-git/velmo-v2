@@ -9,6 +9,8 @@ tournent sans dépendre du SDK ni d'un endpoint joignable.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Any, Protocol, cast, runtime_checkable
 
 from velmo.config import get_settings, require
@@ -43,6 +45,52 @@ class EchoLLM:
         return f"[velmo] J'ai bien reçu : {message}"
 
 
+class _MinIntervalRateLimiter:
+    """Espace chaque appel d'un délai minimal fixe, dès le tout premier appel.
+
+    Le déploiement Azure `Mistral-Large-3` (`sconanRG`/`sconanext-8976-resource`,
+    francecentral) est plafonné à 20 requêtes/min — et la subscription (tenant
+    de formation partagé) est déjà au plafond régional pour ce modèle
+    (`az cognitiveservices usage list` : `AIServices.GlobalStandard.Mistral-Large-3`
+    = 20/20), donc pas de marge côté Azure pour absorber les rafales (suite
+    Qualité + résumés mémoire pendant un run du gate, ou un run concurrent d'un
+    chat manuel).
+
+    Une première version autorisait une rafale de N appels sans délai avant de
+    commencer à freiner (fenêtre glissante classique) — insuffisant en
+    pratique : un seul tour d'agent peut déclencher plusieurs appels Mistral
+    (routage + génération), et un cas en échec en déclenche un second
+    (`with_retry`) ; la rafale initiale suffisait déjà à dépasser le vrai
+    plafond de 20/min avant même que le freinage ne s'engage (429 observés dès
+    les premières secondes du process). Un espacement fixe dès le 1er appel
+    élimine toute rafale, plus sûr sous un plafond aussi bas. Verrou tenu
+    pendant le `sleep()` : sérialise volontairement les appelants concurrents
+    (threads du threadpool FastAPI) plutôt que de les laisser se réveiller
+    ensemble et redépasser la limite."""
+
+    def __init__(self, min_interval_s: float) -> None:
+        self._min_interval_s = min_interval_s
+        self._last_call: float | None = None
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            if self._last_call is not None:
+                elapsed = now - self._last_call
+                if elapsed < self._min_interval_s:
+                    time.sleep(self._min_interval_s - elapsed)
+            self._last_call = time.monotonic()
+
+
+# 4.5s entre appels (~13/min, sous les 20/min réels) : cf. docstring
+# `_MinIntervalRateLimiter`. La marge (13 vs 20) absorbe les appels multiples
+# par tour d'agent et les retries. Partagé par toutes les instances
+# d'`AzureLLM` du process (module-level) — c'est le quota Azure du
+# déploiement qui est global, pas un budget par instance.
+_MISTRAL_RATE_LIMITER = _MinIntervalRateLimiter(min_interval_s=4.5)
+
+
 class AzureLLM:
     """Adapte le modèle de chat Azure AI Inference à l'interface `LLM`."""
 
@@ -54,6 +102,7 @@ class AzureLLM:
         if context:
             messages.append({"role": "system", "content": f"Mémoire:\n{context}"})
         messages.append({"role": "user", "content": message})
+        _MISTRAL_RATE_LIMITER.wait()
         return cast(str, self._model.invoke(messages).content)
 
 

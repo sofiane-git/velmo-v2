@@ -38,7 +38,7 @@
 | `quality.yml` | push sur `main`, ou toute PR | Installe le projet (`uv sync`), vérifie les contrats d'imports, lance `tests/acceptance/`, puis `velmo.mlops.score --min-score 0.8` | **Oui** — si un check échoue, la PR ne doit pas être mergeable (voir §3) |
 | `release.yml` | push d'un tag `v*.*.*` | Job `gate` : rejoue les 3 suites contre le tag. Job `approve-and-promote` : attend une approbation manuelle sur l'Environment `production`, puis crée une **GitHub Release** | **Oui** pour le gate ; approbation humaine ensuite |
 | `hotfix.yml` | push sur `hotfix/**` | Suite réduite (mémoire + garde-fous seulement), non bloquante pour le score global | Non (garde-fous restent bloquants, le score MLOps est informatif) |
-| `nightly.yml` | cron 3h UTC + déclenchable à la main | Rejoue les 3 suites seulement la nuit après un nouveau tag, ou le lundi (évite de dépenser du budget Azure pour rien) | Non — informatif |
+| `nightly.yml` | cron 3h UTC + déclenchable à la main | 2 déclencheurs indépendants : `check-model-drift` (relève la version des 3 déploiements Azure, rejoue seulement la/les suite(s) touchée(s) si ça a bougé) + `scheduled-eval` (3 suites, un lundi sur deux) | Non — informatif |
 
 ⚠️ **Écart repéré avec `CLAUDE.md`** : ce fichier dit que le gate MLOps
 (`velmo.mlops.score --min-score 0.8`) est "scaffolded but commented out in CI". Ce n'est plus
@@ -214,11 +214,28 @@ git push origin hotfix/nom-du-bug
 (bloquant), le score MLOps tourne en informatif (`|| true`, jamais rouge le run). Une fois
 mergé dans `main`, retague normalement (§4) pour repasser par le cycle complet.
 
-## 6. Nightly — rien à faire
+## 6. Nightly — rien à faire (config Azure une fois exceptée)
 
-Tourne seul chaque nuit à 3h UTC. Ne rejoue les 3 suites en entier que la première nuit après
-un nouveau tag, ou le lundi — sinon `run=false` et le job s'arrête sans rien faire (évite de
-payer des appels Azure OpenAI/Foundry pour rien). Déclenchable à la main si besoin :
+Tourne seul chaque nuit à 3h UTC, 2 jobs indépendants :
+
+- **`check-model-drift`** : se connecte à Azure en OIDC (`azure/login@v2`, pas de secret client
+  stocké), relève `model.version` sur les 3 déploiements (`Mistral-Large-3`, `gpt-5-mini`,
+  `claude-opus-4-5`), compare à `.github/state/model-versions.json`. Si un provider a changé de
+  version sous nos pieds (aucun diff de code ne le révèle), le job suivant (`drift-check-eval`)
+  rejoue uniquement la/les suite(s) concernée(s) (`quality,memory` pour Mistral/Claude,
+  `guardrails` pour gpt-5-mini) via `python -m velmo.mlops.drift_check` — pas le gate complet,
+  juste un rapport (voir `src/velmo/mlops/drift_check.py`).
+- **`scheduled-eval`** : rejoue les 3 suites en entier un lundi sur deux (parité de semaine ISO)
+  — plus de branche "1re nuit après un tag" : un tag est déjà passé par le gate complet de
+  `quality.yml` à la fusion, le rejouer la nuit même sur un code identique n'apporte rien.
+
+Config Azure requise une fois (pas encore faite au 2026-07-22) : credential fédérée OIDC côté
+Azure AD (trust sur ce repo), secrets `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/
+`AZURE_SUBSCRIPTION_ID`, et l'identité doit avoir un accès lecture sur les 3 comptes Cognitive
+Services (`sconanext-8976-resource`, `sconanext-8458-resource`, `sconanext-7665-resource`, tous
+dans `sconanRG` — déjà posés comme variables du repo).
+
+Déclenchable à la main si besoin :
 
 ```bash
 gh workflow run nightly.yml

@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import json
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,7 +18,7 @@ from velmo.config import get_settings
 from velmo.memory import MemoryManager
 from velmo.memory.extractor import FactExtractor, get_extractor
 from velmo.mlops.observability import InstrumentedExtractor, InstrumentedLLM, NullSink, ObservabilitySink
-from velmo.mlops.results import CaseResult, with_retry
+from velmo.mlops.results import CaseResult, CaseStepEvent, with_retry
 
 EVAL_PATH = Path(__file__).resolve().parents[4] / "eval" / "memory_cases.jsonl"
 
@@ -187,6 +188,53 @@ def _run_r3_group(
     return results
 
 
+def run_memory_suite_steps(
+    db_url: str | None = None, sink: ObservabilitySink | None = None
+) -> Iterator[CaseStepEvent]:
+    """Version générateur de `run_memory_suite` — diffuse un `CaseStepEvent`
+    `"start"` juste avant chaque cas puis `"done"` une fois son `CaseResult`
+    connu, pour que `run_eval_steps` (mlops/__init__.py) puisse streamer la
+    progression cas par cas. Mêmes règles de résolution `db_url`/`sink` et
+    même comportement que `run_memory_suite`, qui consomme désormais ce
+    générateur jusqu'au bout.
+
+    Cas R3 (isolation) : `_run_r3_group` rejoue tous les cas dans un
+    `MemoryManager` partagé avant de les évaluer un par un (le couple est
+    testé, pas un cas isolé) — les `"start"` des cas R3 sont donc tous émis
+    avant le groupe (ils démarrent ensemble), puis un `"done"` par résultat
+    au fur et à mesure qu'ils sont connus.
+    """
+    sink = sink or NullSink()
+    cases = _load_cases()
+
+    r3_cases = [c for c in cases if c["tag"] == "R3"]
+    other_cases = [c for c in cases if c["tag"] != "R3"]
+
+    for case in other_cases:
+        evaluation_type = case["evaluation"]["type"]
+        yield CaseStepEvent("start", case["id"])
+        # R4 exige un budget de tokens volontairement bas pour forcer la
+        # compression sur ce cas précis (`requires_summarization`) — les
+        # autres cas gardent le budget par défaut (8000, cf. Chantier 1) pour
+        # ne jamais déclencher de résumé sur des conversations courtes.
+        if case["evaluation"].get("requires_summarization"):
+            result = with_retry(functools.partial(_run_recall_with_small_budget, case, db_url, sink))
+        elif evaluation_type in ("recall", "persistence"):
+            result = with_retry(functools.partial(_run_recall_or_persistence_case, case, db_url, sink))
+        elif evaluation_type == "forget":
+            result = with_retry(functools.partial(_run_forget_case, case, db_url, sink))
+        elif evaluation_type == "inspect":
+            result = with_retry(functools.partial(_run_inspect_case, case, db_url, sink))
+        else:
+            continue
+        yield CaseStepEvent("done", case["id"], result)
+
+    for case in r3_cases:
+        yield CaseStepEvent("start", case["id"])
+    for result in _run_r3_group(r3_cases, db_url, sink):
+        yield CaseStepEvent("done", result.case_id, result)
+
+
 def run_memory_suite(
     db_url: str | None = None, sink: ObservabilitySink | None = None
 ) -> list[CaseResult]:
@@ -200,34 +248,11 @@ def run_memory_suite(
     `sink=None` retombe sur `NullSink` (pas d'instrumentation, comportement
     historique).
     """
-    sink = sink or NullSink()
-    cases = _load_cases()
     results: list[CaseResult] = []
-
-    r3_cases = [c for c in cases if c["tag"] == "R3"]
-    other_cases = [c for c in cases if c["tag"] != "R3"]
-
-    for case in other_cases:
-        evaluation_type = case["evaluation"]["type"]
-        # R4 exige un budget de tokens volontairement bas pour forcer la
-        # compression sur ce cas précis (`requires_summarization`) — les
-        # autres cas gardent le budget par défaut (8000, cf. Chantier 1) pour
-        # ne jamais déclencher de résumé sur des conversations courtes.
-        if case["evaluation"].get("requires_summarization"):
-            results.append(
-                with_retry(functools.partial(_run_recall_with_small_budget, case, db_url, sink))
-            )
-            continue
-        if evaluation_type in ("recall", "persistence"):
-            results.append(
-                with_retry(functools.partial(_run_recall_or_persistence_case, case, db_url, sink))
-            )
-        elif evaluation_type == "forget":
-            results.append(with_retry(functools.partial(_run_forget_case, case, db_url, sink)))
-        elif evaluation_type == "inspect":
-            results.append(with_retry(functools.partial(_run_inspect_case, case, db_url, sink)))
-
-    results.extend(_run_r3_group(r3_cases, db_url, sink))
+    for event in run_memory_suite_steps(db_url=db_url, sink=sink):
+        if event.kind == "done":
+            assert event.result is not None
+            results.append(event.result)
     return results
 
 

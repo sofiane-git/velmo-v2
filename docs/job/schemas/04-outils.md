@@ -118,3 +118,20 @@ chantier indiqué.
 - **LangGraph comme colonne vertébrale mémoire** : le `checkpointer PostgresSaver` persiste l'état de thread (fil + résumé glissant R4) ; les classes `*Memory` de LangChain 0.x sont **supprimées en 1.x**, LangChain 1.x se limite au client LLM Azure + sortie structurée ; ChromaDB est accédé en client natif (détail : [`conception_chantier1_memoire.md`](../conceptions/conception_chantier1_memoire.md)).
 - **GitHub à trois niveaux** : le dépôt (tronc `main` toujours livrable + `feature/*` courtes + **tags semver**, PR, revue) *et* Actions (exécution CI, paliers différenciés par déclencheur) *et* Environments (`staging` redéployé à chaque merge dans `main` ; `production` par **promotion du tag validé**, sans rebuild) — trois usages du même outil, pas trois outils.
 - **LLM principal de l'agent — écart assumé au brief** : `reco_expert.md` **impose** Azure AI Inference / **Kimi-K2.6** ; le déploiement réel utilise **Mistral-Large-3** (même fournisseur Azure AI Inference, variable `AZURE_AI_INFERENCE_MODEL`, cf. `llm.py`). Déviation **tracée et assumée** : la contrainte structurante du brief (« Azure AI Inference, **aucun modèle local** ») reste **respectée** — seul le modèle exact change (choix effectif de déploiement sur le tenant Azure). Le pipeline d'orchestration (LangGraph) et les composants de contrôle (Llama Guard 3, LLM-juge `gpt-5-mini`) sont indépendants de ce choix.
+
+
+
+┌─────────────────────────────────────────────────────┬────────────────────────┬──────────────────────────────────────────────────────────────────────────────┐
+│                        Model                        │        Hosting         │                                   Used by                                    │
+├─────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+│ Mistral-Large-3 (azure_ai_inference)                │ Azure, cloud           │ quality suite (agent response) + memory suite (summary)                      │
+│                                                     │ deployment             │                                                                              │
+├─────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+│ claude-opus-4-5 (anthropic_async, via Azure         │ Azure, cloud           │ quality suite (judge) + memory suite (extractor)                             │
+│ Foundry)                                            │ deployment             │                                                                              │
+├─────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+│ gpt-5-mini (azure_openai_guard)                     │ Azure, cloud           │ guardrails suite (judge) only                                                │
+│                                                     │ deployment             │                                                                              │
+├─────────────────────────────────────────────────────┼────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+│ llama-guard3:8b                                     │ local Ollamclassifier) — not a drift candidate, you control that tag        │
+│                                                     │                        │ directly                                                                     │

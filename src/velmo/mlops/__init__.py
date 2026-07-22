@@ -18,9 +18,9 @@ from velmo.mlops.db import AgentVersion, EvalCaseResult, EvalRun, make_mlops_eng
 from velmo.mlops.observability import CostAccumulatingSink, NullSink, ObservabilitySink
 from velmo.mlops.results import CaseResult
 from velmo.mlops.stats import non_regression_ok
-from velmo.mlops.suites.guardrails import guardrails_confusion_matrix, run_guardrails_suite
-from velmo.mlops.suites.memory import run_memory_suite
-from velmo.mlops.suites.quality import run_quality_suite
+from velmo.mlops.suites.guardrails import guardrails_confusion_matrix, run_guardrails_suite_steps
+from velmo.mlops.suites.memory import run_memory_suite_steps
+from velmo.mlops.suites.quality import run_quality_suite_steps
 from velmo.mlops.versioning import compute_version_hashes, current_git_commit, current_git_tag
 
 # Seuils SLO non-fonctionnels (conception §Gates non-fonctionnels : latence et
@@ -56,12 +56,14 @@ class Scores:
 
 @dataclass(frozen=True)
 class GateEvent:
-    """Un pas de `run_eval_steps` : une suite qui vient de finir
+    """Un pas de `run_eval_steps` : une suite qui démarre
+    (`stage="suite_start"`), un cas qui démarre (`stage="case_start"`), un cas
+    terminé (`stage="case_done"`), une suite qui vient de finir
     (`stage="suite_done"`), ou l'agrégat final (`stage="final"`). `payload`
-    reste un `dict` JSON-serialisable (pas de `Scores` imbriqué) — c'est ce
-    que l'API `/mlops/gate/run` sérialise directement en SSE."""
+    reste un `dict` JSON-serialisable (pas de `Scores`/`CaseResult` imbriqué)
+    — c'est ce que l'API `/mlops/gate/run` sérialise directement en SSE."""
 
-    stage: Literal["suite_done", "final"]
+    stage: Literal["suite_start", "case_start", "case_done", "suite_done", "final"]
     payload: dict[str, object]
 
 
@@ -142,7 +144,23 @@ def run_eval_steps(
     sink = sink or NullSink()
     cost_sink = sink if isinstance(sink, CostAccumulatingSink) else CostAccumulatingSink(sink)
 
-    memory_results = run_memory_suite(db_url=db_url, sink=cost_sink)
+    yield GateEvent("suite_start", {"suite": "memory"})
+    memory_results: list[CaseResult] = []
+    for case_event in run_memory_suite_steps(db_url=db_url, sink=cost_sink):
+        if case_event.kind == "start":
+            yield GateEvent("case_start", {"suite": "memory", "case_id": case_event.case_id})
+        else:
+            assert case_event.result is not None
+            memory_results.append(case_event.result)
+            yield GateEvent(
+                "case_done",
+                {
+                    "suite": "memory",
+                    "case_id": case_event.case_id,
+                    "passed": case_event.result.passed,
+                    "score": case_event.result.score,
+                },
+            )
     note_memory = _pass_rate(memory_results)
     yield GateEvent(
         "suite_done",
@@ -154,7 +172,23 @@ def run_eval_steps(
         },
     )
 
-    guardrails_results = run_guardrails_suite(db_url=db_url, sink=cost_sink)
+    yield GateEvent("suite_start", {"suite": "guardrails"})
+    guardrails_results: list[CaseResult] = []
+    for case_event in run_guardrails_suite_steps(db_url=db_url, sink=cost_sink):
+        if case_event.kind == "start":
+            yield GateEvent("case_start", {"suite": "guardrails", "case_id": case_event.case_id})
+        else:
+            assert case_event.result is not None
+            guardrails_results.append(case_event.result)
+            yield GateEvent(
+                "case_done",
+                {
+                    "suite": "guardrails",
+                    "case_id": case_event.case_id,
+                    "passed": case_event.result.passed,
+                    "score": case_event.result.score,
+                },
+            )
     recall, fpr = guardrails_confusion_matrix(guardrails_results)
     note_guardrails = 0.6 * recall + 0.4 * (1 - fpr)
     yield GateEvent(
@@ -167,7 +201,23 @@ def run_eval_steps(
         },
     )
 
-    quality_results = run_quality_suite(agent, db_url=db_url)
+    yield GateEvent("suite_start", {"suite": "quality"})
+    quality_results: list[CaseResult] = []
+    for case_event in run_quality_suite_steps(agent, db_url=db_url):
+        if case_event.kind == "start":
+            yield GateEvent("case_start", {"suite": "quality", "case_id": case_event.case_id})
+        else:
+            assert case_event.result is not None
+            quality_results.append(case_event.result)
+            yield GateEvent(
+                "case_done",
+                {
+                    "suite": "quality",
+                    "case_id": case_event.case_id,
+                    "passed": case_event.result.passed,
+                    "score": case_event.result.score,
+                },
+            )
     quality_scores = [r.score for r in quality_results]
     note_quality = statistics.mean(quality_scores) if quality_scores else 0.0
     yield GateEvent(

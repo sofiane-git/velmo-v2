@@ -4,7 +4,7 @@ les agrège en `Scores` et les persiste en `EvalCaseResult`."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Literal
 
 
 @dataclass
@@ -16,6 +16,19 @@ class CaseResult:
     latency_ms: float
     error_kind: str | None = None  # "infra" | "agent" | None
     retried: bool = False
+
+
+@dataclass(frozen=True)
+class CaseStepEvent:
+    """Un pas des variantes `run_*_suite_steps` (mémoire/garde-fous/qualité) :
+    un cas qui démarre (`kind="start"`, `result=None`) ou un cas terminé
+    (`kind="done"`, `result` renseigné) — même rôle que `GateEvent`
+    (`mlops/__init__.py`) mais un niveau plus bas (le cas, pas la suite).
+    Permet à `run_eval_steps` de diffuser la progression cas par cas."""
+
+    kind: Literal["start", "done"]
+    case_id: str
+    result: CaseResult | None = None
 
 
 def with_retry(run_once: Callable[[], CaseResult]) -> CaseResult:

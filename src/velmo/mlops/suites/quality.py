@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Protocol
 
-from velmo.mlops.results import CaseResult
+from velmo.mlops.results import CaseResult, CaseStepEvent
 
 EVAL_PATH = Path(__file__).resolve().parents[4] / "eval" / "quality_cases.jsonl"
 
@@ -127,29 +128,38 @@ def _load_cases() -> list[dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+def run_quality_suite_steps(agent: Any, db_url: str | None = None) -> Iterator[CaseStepEvent]:
+    """Version générateur de `run_quality_suite` — diffuse un `CaseStepEvent`
+    `"start"` avant chaque cas puis `"done"` une fois son `CaseResult` connu
+    (même rôle que `run_memory_suite_steps`), pour que `run_eval_steps`
+    streame la progression cas par cas."""
+    scorer = get_quality_scorer()
+    for case in _load_cases():
+        yield CaseStepEvent("start", case["id"])
+        start = time.monotonic()
+        try:
+            answer = agent.respond(case["user_id"], case["question"])
+            score = scorer.score(case["question"], answer, case["expected_substring"])
+            result = CaseResult(
+                case_id=case["id"], suite="quality", passed=score >= 0.5,
+                score=score, latency_ms=(time.monotonic() - start) * 1000,
+            )
+        except Exception:
+            result = CaseResult(
+                case_id=case["id"], suite="quality", passed=False, score=0.0,
+                latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
+            )
+        yield CaseStepEvent("done", case["id"], result)
+
+
 def run_quality_suite(agent: Any, db_url: str | None = None) -> list[CaseResult]:
     """`agent` : objet exposant `.respond(user_id, message) -> str` (protocole
     `Evaluable`, cf. `mlops/__init__.py`). `db_url` non utilisé directement ici
     (l'agent porte déjà sa propre mémoire/session) — gardé pour homogénéité de
     signature avec les deux autres suites."""
-    scorer = get_quality_scorer()
     results: list[CaseResult] = []
-    for case in _load_cases():
-        start = time.monotonic()
-        try:
-            answer = agent.respond(case["user_id"], case["question"])
-            score = scorer.score(case["question"], answer, case["expected_substring"])
-            results.append(
-                CaseResult(
-                    case_id=case["id"], suite="quality", passed=score >= 0.5,
-                    score=score, latency_ms=(time.monotonic() - start) * 1000,
-                )
-            )
-        except Exception:
-            results.append(
-                CaseResult(
-                    case_id=case["id"], suite="quality", passed=False, score=0.0,
-                    latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
-                )
-            )
+    for event in run_quality_suite_steps(agent, db_url=db_url):
+        if event.kind == "done":
+            assert event.result is not None
+            results.append(event.result)
     return results

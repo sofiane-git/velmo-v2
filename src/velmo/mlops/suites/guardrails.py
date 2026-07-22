@@ -12,6 +12,7 @@ from __future__ import annotations
 import functools
 import json
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from velmo.guardrails import GuardrailEngine
 from velmo.guardrails.classifier import get_classifier
 from velmo.guardrails.judge import get_judge
 from velmo.mlops.observability import InstrumentedClassifier, InstrumentedJudge, NullSink, ObservabilitySink
-from velmo.mlops.results import CaseResult, with_retry
+from velmo.mlops.results import CaseResult, CaseStepEvent, with_retry
 
 EVAL_PATH = Path(__file__).resolve().parents[4] / "eval" / "guardrail_cases.jsonl"
 
@@ -64,6 +65,21 @@ def _run_one_case(case: dict[str, Any], engine: GuardrailEngine) -> CaseResult:
         )
 
 
+def run_guardrails_suite_steps(
+    db_url: str | None = None, sink: ObservabilitySink | None = None
+) -> Iterator[CaseStepEvent]:
+    """Version générateur de `run_guardrails_suite` — diffuse un
+    `CaseStepEvent` `"start"` avant chaque cas puis `"done"` une fois son
+    `CaseResult` connu (même rôle que `run_memory_suite_steps`), pour que
+    `run_eval_steps` streame la progression cas par cas."""
+    sink = sink or NullSink()
+    engine = _build_engine(db_url, sink)
+    for case in _load_cases():
+        yield CaseStepEvent("start", case["id"])
+        result = with_retry(functools.partial(_run_one_case, case, engine))
+        yield CaseStepEvent("done", case["id"], result)
+
+
 def run_guardrails_suite(
     db_url: str | None = None, sink: ObservabilitySink | None = None
 ) -> list[CaseResult]:
@@ -77,11 +93,12 @@ def run_guardrails_suite(
     (pas d'état partagé entre `user_id`, contrairement à R3 côté mémoire),
     réutiliser l'engine évite juste de reconstruire classifieur/juge à chaque
     cas."""
-    sink = sink or NullSink()
-    engine = _build_engine(db_url, sink)
-    return [
-        with_retry(functools.partial(_run_one_case, case, engine)) for case in _load_cases()
-    ]
+    results: list[CaseResult] = []
+    for event in run_guardrails_suite_steps(db_url=db_url, sink=sink):
+        if event.kind == "done":
+            assert event.result is not None
+            results.append(event.result)
+    return results
 
 
 def guardrails_confusion_matrix(results: list[CaseResult]) -> tuple[float, float]:

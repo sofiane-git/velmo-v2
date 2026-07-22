@@ -2,41 +2,132 @@ name: nightly
 
 on:
   schedule:
-    # Tous les jours à 3h UTC — le job lui-même décide s'il doit vraiment
-    # tourner en entier (1re nuit après un tag) ou en version allégée
-    # (hebdomadaire sur version stable), cf. conception_chantier3_evaluation_mlops.md
+    # Tous les jours à 3h UTC — 2 déclencheurs indépendants décident chacun
+    # s'il y a du nouveau à mesurer (cf. conception_chantier3_evaluation_mlops.md
     # §Coût par étape : « rejouer 3 suites LLM chaque nuit sur une version
-    # inchangée dépense un budget Azure pour zéro information nouvelle ».
+    # inchangée dépense un budget Azure pour zéro information nouvelle ») :
+    # - `check-model-drift` : un déploiement Azure (Mistral-Large-3,
+    #   gpt-5-mini, claude-opus-4-5) a changé de version sous nos pieds
+    #   (aucun diff de code ne le révèle, cf. discussion §Drift silencieux) ;
+    # - `scheduled-eval` : run complet bihebdomadaire (tous les 2 lundis),
+    #   sans branche "1re nuit post-tag" — un tag est déjà passé par le gate
+    #   complet de `quality.yml` à la fusion, le rejouer la nuit même sur un
+    #   code strictement identique n'apporte aucune information nouvelle.
     - cron: "0 3 * * *"
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
-  nightly-eval:
+  check-model-drift:
+    runs-on: ubuntu-latest
+    outputs:
+      quality_memory: ${{ steps.diff.outputs.quality_memory }}
+      guardrails: ${{ steps.diff.outputs.guardrails }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          # OIDC (federated credential côté Azure AD, pas de secret client
+          # stocké) — voir README/section CI pour la mise en place ponctuelle
+          # côté tenant Azure.
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Relève les versions de déploiement Azure actuelles
+        id: versions
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_AI_INFERENCE_ACCOUNT: ${{ vars.AZURE_AI_INFERENCE_ACCOUNT }}
+          AZURE_OPENAI_GUARD_ACCOUNT: ${{ vars.AZURE_OPENAI_GUARD_ACCOUNT }}
+          AZURE_FOUNDRY_ACCOUNT: ${{ vars.AZURE_FOUNDRY_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          mistral=$(az cognitiveservices account deployment show \
+            --name "$AZURE_AI_INFERENCE_ACCOUNT" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --deployment-name "Mistral-Large-3" --query "properties.model.version" -o tsv)
+          guard=$(az cognitiveservices account deployment show \
+            --name "$AZURE_OPENAI_GUARD_ACCOUNT" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --deployment-name "gpt-5-mini" --query "properties.model.version" -o tsv)
+          claude=$(az cognitiveservices account deployment show \
+            --name "$AZURE_FOUNDRY_ACCOUNT" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --deployment-name "claude-opus-4-5" --query "properties.model.version" -o tsv)
+          echo "mistral=$mistral" >> "$GITHUB_OUTPUT"
+          echo "guard=$guard" >> "$GITHUB_OUTPUT"
+          echo "claude=$claude" >> "$GITHUB_OUTPUT"
+      - name: Compare au dernier état connu (.github/state/model-versions.json)
+        id: diff
+        env:
+          CURRENT_MISTRAL: ${{ steps.versions.outputs.mistral }}
+          CURRENT_GUARD: ${{ steps.versions.outputs.guard }}
+          CURRENT_CLAUDE: ${{ steps.versions.outputs.claude }}
+        run: |
+          set -euo pipefail
+          STATE_FILE=.github/state/model-versions.json
+          prev_mistral=$(jq -r '.mistral // ""' "$STATE_FILE" 2>/dev/null || echo "")
+          prev_guard=$(jq -r '.guard // ""' "$STATE_FILE" 2>/dev/null || echo "")
+          prev_claude=$(jq -r '.claude // ""' "$STATE_FILE" 2>/dev/null || echo "")
+          quality_memory=false
+          guardrails=false
+          [ "$prev_mistral" != "$CURRENT_MISTRAL" ] && quality_memory=true
+          [ "$prev_claude" != "$CURRENT_CLAUDE" ] && quality_memory=true
+          [ "$prev_guard" != "$CURRENT_GUARD" ] && guardrails=true
+          echo "quality_memory=$quality_memory" >> "$GITHUB_OUTPUT"
+          echo "guardrails=$guardrails" >> "$GITHUB_OUTPUT"
+      - name: Persiste le nouvel état si un déploiement a changé
+        if: steps.diff.outputs.quality_memory == 'true' || steps.diff.outputs.guardrails == 'true'
+        env:
+          CURRENT_MISTRAL: ${{ steps.versions.outputs.mistral }}
+          CURRENT_GUARD: ${{ steps.versions.outputs.guard }}
+          CURRENT_CLAUDE: ${{ steps.versions.outputs.claude }}
+        run: |
+          set -euo pipefail
+          mkdir -p .github/state
+          jq -n --arg mistral "$CURRENT_MISTRAL" \
+                --arg guard "$CURRENT_GUARD" \
+                --arg claude "$CURRENT_CLAUDE" \
+                '{mistral: $mistral, guard: $guard, claude: $claude}' > .github/state/model-versions.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/state/model-versions.json
+          git commit -m "chore(nightly): update tracked Azure deployment versions"
+          git push
+
+  drift-check-eval:
+    needs: check-model-drift
+    if: needs.check-model-drift.outputs.quality_memory == 'true' || needs.check-model-drift.outputs.guardrails == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # `fetch-depth: 0` (historique + tags complets) est indispensable
-          # ici : `git describe --tags`/`git log` ci-dessous doivent voir les
-          # tags réels pour détecter "1re nuit après un tag" — un checkout
-          # superficiel (défaut de l'action) ne les voit pas et cette
-          # branche ne se déclencherait jamais (dégradation silencieuse vers
-          # "hebdo lundi seulement").
-          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.11
       - run: uv sync
-      - name: Décide si le nightly complet doit tourner (1re nuit post-tag, ou hebdo)
+      - name: Qualité + Mémoire (drift Mistral-Large-3 / claude-opus-4-5)
+        if: needs.check-model-drift.outputs.quality_memory == 'true'
+        run: uv run python -m velmo.mlops.drift_check --suites quality,memory --triggered-by model-drift
+      - name: Garde-fous (drift gpt-5-mini)
+        if: needs.check-model-drift.outputs.guardrails == 'true'
+        run: uv run python -m velmo.mlops.drift_check --suites guardrails --triggered-by model-drift
+
+  scheduled-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.11
+      - run: uv sync
+      - name: Décide si le run complet bihebdomadaire doit tourner (1 lundi sur 2)
         id: gate
         run: |
-          LAST_TAG_DATE=$(git log -1 --format=%cd --date=short $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD))
-          TODAY=$(date -u +%Y-%m-%d)
-          DAY_OF_WEEK=$(date -u +%u)
-          if [ "$LAST_TAG_DATE" = "$TODAY" ] || [ "$DAY_OF_WEEK" = "1" ]; then
+          week=$(date -u +%V)
+          day_of_week=$(date -u +%u)
+          if [ "$day_of_week" = "1" ] && [ $((10#$week % 2)) -eq 0 ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: 3 suites (si applicable)
+      - name: 3 suites (bihebdomadaire)
         if: steps.gate.outputs.run == 'true'
         run: uv run python -m velmo.mlops.score --min-score 0.0 --triggered-by nightly

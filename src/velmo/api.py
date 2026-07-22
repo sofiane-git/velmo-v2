@@ -205,9 +205,10 @@ def _gate_event_stream() -> Iterator[str]:
 def trigger_gate_run() -> StreamingResponse:
     """
     Déclenche un run du gate qualité MLOps (mémoire + garde-fous + qualité)
-    et diffuse sa progression en SSE : un événement `suite_done` par suite
-    terminée, puis un événement `final` avec les notes agrégées et le statut
-    pass/fail. Persiste comme n'importe quel run (`triggered_by="manual"`,
+    et diffuse sa progression en SSE : un événement `suite_start`, puis un
+    couple `case_start`/`case_done` par cas de la suite, puis `suite_done`,
+    répété pour chaque suite, puis un événement `final` avec les notes
+    agrégées et le statut pass/fail. Persiste comme n'importe quel run (`triggered_by="manual"`,
     même valeur que le CLI local exécuté sans argument) — visible ensuite via
     `GET /mlops/gate/history`. Un seul run à la fois : un second appel pendant
     qu'un run est en cours reçoit `409`.

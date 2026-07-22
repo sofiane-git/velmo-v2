@@ -504,15 +504,27 @@ Les 3 suites (DeepEval) coûtent des appels LLM — pas question de les lancer �
 | Merge dans `main`          | Fréquent      | Build + déploiement staging auto (pas de suites LLM)      | Build seul              |
 | Tag semver (release)       | Rare          | 3 suites LLM contre staging + approbation manuelle        | Cher, mais peu fréquent |
 | Promotion production       | Rare          | Aucun rebuild — promotion de l'artefact validé            | Quasi gratuit           |
-| Nightly                    | **Conditionnel** (1ʳᵉ nuit après un nouveau tag, puis hebdomadaire sur version stable) | 3 suites contre le tag production | Cher, mais pas gaspillé sur une version inchangée |
+| Nightly (complet)          | **Bihebdomadaire** (1 lundi sur 2, parité semaine ISO) | 3 suites contre le tag production | Cher, mais pas gaspillé sur une version inchangée |
+| Nightly (drift modèle)     | **Conditionnel** (déploiement Azure changé de version) | Seulement la/les suite(s) touchée(s) | Quasi gratuit — rare et ciblé |
 | `hotfix/*`                 | Exceptionnel  | Garde-fous + mémoire (bloquant) + Qualité en async après promotion | Réduit, prioritaire     |
 
 > **Pourquoi le nightly n'est pas quotidien inconditionnellement ?** Rejouer les 3 suites
 > (dont DeepEval en N=5 runs, cf. M4) chaque nuit sur une version qui n'a pas bougé dépense un
-> budget Azure pour zéro information nouvelle. Le nightly ne tourne systématiquement que la
-> **première nuit suivant un nouveau tag** (détecter une régression immédiate) ; sur une version
-> stable et inchangée, un cadencement **hebdomadaire** suffit à détecter une dérive externe
-> (dérive du modèle Azure lui-même) sans gaspiller le budget.
+> budget Azure pour zéro information nouvelle. Un tag est déjà passé par le gate complet de
+> `quality.yml` à la fusion — le rejouer la nuit même sur un code strictement identique n'apporte
+> aucune information nouvelle, donc pas de branche "1ʳᵉ nuit après un tag" : sur une version
+> stable, un cadencement **bihebdomadaire** (au lieu d'hebdomadaire) suffit à surveiller une
+> dérive lente (dérive du code de l'agent/des suites elles-mêmes).
+>
+> **Et la dérive du modèle Azure lui-même (le provider change le déploiement sous le même nom) ?**
+> Ce n'est pas ce que détecte le cadencement bihebdomadaire — un job séparé
+> (`check-model-drift`, cf. `.github/workflows/nightly.yml`) relève chaque nuit la version
+> réelle des 3 déploiements (`Mistral-Large-3`, `gpt-5-mini`, `claude-opus-4-5` via Azure AI
+> Foundry) et ne déclenche que la/les suite(s) qui dépendent du modèle ayant changé
+> (`quality`+`memory` pour Mistral/Claude, `guardrails` pour gpt-5-mini) — jamais les 3
+> systématiquement. Ce run ciblé ne passe pas par le gate de livraison (`EvalRun`, schéma à 3
+> notes NOT NULL) : c'est un diagnostic, pas une décision de mise en production (voir
+> `src/velmo/mlops/drift_check.py`).
 
 ---
 
@@ -594,7 +606,7 @@ critère est explicite, pas « à l'appréciation ».
 | Robustesse du harness ?                                     | **Échec infra non compté** (`error_kind`), runs partiels non notés, retries tracés                                 | Un timeout Azure ne doit jamais être compté comme une régression agent (cf. incidents Ch.1). |
 | Gates non-fonctionnels ?                                    | **Latence p95 et coût/conv peuvent bloquer** (SLO)                                                                 | Un changement qui double la latence ou le coût ne doit pas passer en silence. |
 | Tarif Azure pour le calcul du coût : codé en dur ou config ? | **Table de tarifs dans la config versionnée**, vérification périodique                                             | Un tarif figé dérive silencieusement (Azure change ses prix) ; hashé dans la version comme le reste. |
-| Nightly : quotidien systématique ou conditionnel ?          | **Conditionnel** : systématique la 1ʳᵉ nuit après un tag, hebdomadaire sur version stable                          | Rejouer 3 suites LLM chaque nuit sur une version inchangée dépense un budget Azure pour zéro information nouvelle. |
+| Nightly : quotidien systématique ou conditionnel ?          | **Bihebdomadaire** (3 suites) + **drift modèle** (suite(s) touchée(s) seulement, si un déploiement Azure a changé de version) | Rejouer 3 suites LLM chaque nuit sur une version inchangée dépense un budget Azure pour zéro information nouvelle ; un tag est déjà passé par le gate complet à la fusion. |
 | Hotfix : la suite Qualité est-elle simplement sautée ?      | **Sautée du gate, mais rejouée en async non bloquant juste après promotion**                                       | Un correctif urgent peut dégrader le ton/la pertinence sans que le gate (garde-fous + mémoire seulement) ne le détecte. |
 | Approbation production : combien de reviewers ?             | **Un seul (SPOF assumé)** en équipe solo, documenté explicitement                                                  | Pas de système d'astreinte à construire pour une personne ; 2ᵉ reviewer ajouté dès qu'une 2ᵉ personne rejoint le projet. |
 
