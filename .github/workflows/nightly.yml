@@ -103,7 +103,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.11
-      - run: uv sync
+      - run: uv sync --locked
       - name: Qualité + Mémoire (drift Mistral-Large-3 / claude-opus-4-5)
         if: needs.check-model-drift.outputs.quality_memory == 'true'
         run: uv run python -m velmo.mlops.drift_check --suites quality,memory --triggered-by model-drift
@@ -117,7 +117,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.11
-      - run: uv sync
+      - run: uv sync --locked
       - name: Décide si le run complet bihebdomadaire doit tourner (1 lundi sur 2)
         id: gate
         run: |

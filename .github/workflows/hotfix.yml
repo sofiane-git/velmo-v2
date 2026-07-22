@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.11
-      - run: uv sync
+      - run: uv sync --locked
       - name: Garde-fous + mémoire uniquement (qualité bruitée, non bloquante en urgence)
         run: |
           uv run python -c "

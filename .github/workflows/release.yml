@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.11
-      - run: uv sync
+      - run: uv sync --locked
       - name: 3 suites contre le tag (gate bloquant)
         run: uv run python -m velmo.mlops.score --min-score 0.8 --triggered-by ci
 
