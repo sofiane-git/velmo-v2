@@ -127,7 +127,7 @@ class MemoryTombstone(Base):
     __tablename__ = "memory_tombstone"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
-    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "procedure_trigger"
+    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "fact_value" | "procedure_trigger"
     target: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -459,6 +459,13 @@ def list_episodes(session: Session, user_id: str) -> list[Episode]:
     return list(session.scalars(select(Episode).where(Episode.user_id == user_id)).all())
 
 
+def list_threads(session: Session, user_id: str) -> list[Thread]:
+    """Tous les threads d'un utilisateur (pour collecter les thread_id avant
+    une suppression en cascade — le droit à l'oubli doit ensuite purger les
+    checkpoints LangGraph correspondants, hors des tables métier)."""
+    return list(session.scalars(select(Thread).where(Thread.user_id == user_id)).all())
+
+
 def list_recent_audit(session: Session, user_id: str, limit: int = 50) -> list[MemoryAudit]:
     return list(
         session.scalars(
@@ -503,6 +510,18 @@ def is_tombstoned(session: Session, user_id: str, target_kind: str, target: str)
         )
     ).first()
     return existing is not None
+
+
+def list_active_tombstones(session: Session, user_id: str) -> list[MemoryTombstone]:
+    """Tombstones non résolus d'un utilisateur (garde anti-résurrection)."""
+    return list(
+        session.scalars(
+            select(MemoryTombstone).where(
+                MemoryTombstone.user_id == user_id,
+                MemoryTombstone.resolved_at.is_(None),
+            )
+        ).all()
+    )
 
 
 def resolve_tombstone(session: Session, user_id: str, target_kind: str, target: str) -> None:

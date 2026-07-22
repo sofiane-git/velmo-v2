@@ -282,7 +282,14 @@ class Agent:
         # ne doit jamais retarder une réponse déjà validée par les garde-fous
         # (cf. MemoryManager.write). La persistance du tour (history) reste
         # synchrone à l'intérieur de `write`.
-        write_report = self.memory.write(user_id, message, answer, background=True)
+        # La sortie filtrée du garde-fou d'entrée est l'entrée effective de la
+        # persistance : une PII collée dans un message légitime (action='filter')
+        # ne doit jamais entrer en clair en mémoire ni repartir vers l'extracteur
+        # LLM (D9-03, symétrie avec le chemin bloqué plus haut).
+        stored_message = message
+        if gate_in.action == "filter" and gate_in.filtered_text is not None:
+            stored_message = gate_in.filtered_text
+        write_report = self.memory.write(user_id, stored_message, answer, background=True)
         yield "memory_write", _write_report_payload(write_report)
         yield "final", {"answer": answer, "status": status, "latency_ms": _elapsed_ms(start)}
 

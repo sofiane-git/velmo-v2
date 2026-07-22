@@ -6,7 +6,7 @@ from __future__ import annotations
 from conftest import seeded_session
 
 from velmo.agent import Agent
-from velmo.guardrails import GuardrailEngine
+from velmo.guardrails import Decision, GuardrailEngine
 from velmo.kb_store import LocalKB
 from velmo.llm import LLM
 from velmo.memory import MemoryManager
@@ -35,6 +35,35 @@ class _LeakyLLM:
 
     def invoke(self, system: str, context: str, message: str) -> str:
         return "Voici le suivi : commande O-2024-0107 de M. Dubois, comme demandé."
+
+
+class _FilterAllowsInputGuardrails(GuardrailEngine):
+    """Simule un `check_input` qui filtre plutôt que bloque (allowed=True,
+    action='filter') — aujourd'hui hors d'atteinte du pipeline réel (G4/G7
+    forcent 'block' en location='input', cf. guardrails/pipeline.py), mais
+    l'invariant de persistance dans agent.py doit déjà s'appliquer si ce
+    comportement était un jour assoupli."""
+
+    def __init__(self, filtered_text: str) -> None:
+        super().__init__(db_url="sqlite:///:memory:")
+        self._filtered_text = filtered_text
+
+    def check_input(
+        self, message: str, user_id: str | None = None, source_thread_id: str | None = None
+    ) -> Decision:
+        return Decision(
+            allowed=True, action="filter", category="pii", filtered_text=self._filtered_text
+        )
+
+    def check_output(
+        self,
+        text: str,
+        user_id: str | None = None,
+        source_thread_id: str | None = None,
+        *,
+        own_facts: dict[str, str] | None = None,
+    ) -> Decision:
+        return Decision(allowed=True, action="allow")
 
 
 def _hermetic_agent(llm: LLM) -> Agent:
@@ -212,6 +241,28 @@ def test_blocked_secret_leak_input_is_redacted_before_memory_write():
     assert user_turns
     assert "sk-abcdef1234567890" not in user_turns[0]
     assert "[clé secrète masquée]" in user_turns[0]
+
+
+def test_filtered_input_not_persisted_raw_on_allowed_path():
+    # D9-03 : sur le chemin AUTORISÉ (allowed=True, action="filter"), l'entrée
+    # effective de `memory.write` doit être `gate_in.filtered_text`, jamais le
+    # message brut — symétrie avec le chemin bloqué (cf. les tests
+    # `test_blocked_*_input_is_redacted_before_memory_write` ci-dessus).
+    guardrails = _FilterAllowsInputGuardrails(filtered_text="ma carte [masquée]")
+    agent = Agent(
+        llm=_RecordingLLM(),
+        memory=MemoryManager(db_url="sqlite:///:memory:"),
+        guardrails=guardrails,
+        session=seeded_session(),
+        kb=LocalKB(),
+    )
+    agent.respond("acc-filter-persist", "Au fait ma carte c'est 4111 1111 1111 1111.")
+
+    history = agent.memory.read("acc-filter-persist", "peu importe").history
+    user_turns = [content for role, content in history if role == "user"]
+    assert user_turns
+    assert "4111" not in user_turns[0]
+    assert user_turns[0] == "ma carte [masquée]"
 
 
 def test_respond_traced_yields_error_final_when_downstream_raises():
