@@ -127,7 +127,7 @@ class MemoryTombstone(Base):
     __tablename__ = "memory_tombstone"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
-    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "procedure_trigger"
+    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "fact_value" | "procedure_trigger"
     target: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
