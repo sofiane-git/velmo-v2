@@ -23,6 +23,7 @@ from sqlalchemy import (
     Engine,
     Float,
     ForeignKey,
+    Integer,
     String,
     create_engine,
     event,
@@ -83,6 +84,22 @@ class EvalCaseResult(Base):
     latency_ms: Mapped[float] = mapped_column(Float)
     retried: Mapped[bool] = mapped_column(Boolean, default=False)
     error_kind: Mapped[str | None] = mapped_column(String, nullable=True)  # infra|agent|None
+
+
+class DriftCheckRun(Base):
+    """Mesure d'un run de drift ciblé (hors gate `EvalRun`, dont les 3 notes
+    sont NOT NULL — un run partiel ne peut pas s'y persister). Historique
+    requis par la règle « deux nuits consécutives » (conception ch.3
+    §Rollback, audit D8-03)."""
+
+    __tablename__ = "drift_check_run"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    suite: Mapped[str] = mapped_column(String)  # memory|guardrails|quality
+    cases: Mapped[int] = mapped_column(Integer)
+    passed: Mapped[int] = mapped_column(Integer)
+    note: Mapped[float] = mapped_column(Float)
+    ran_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    triggered_by: Mapped[str] = mapped_column(String, default="model-drift")
 
 
 def _default_sqlite_path() -> Path:
