@@ -601,8 +601,9 @@ class MemoryManager:
 
         # Purge des checkpoints hors session (le checkpointer gère sa propre
         # connexion — même chemin que purge_inactive_threads).
-        for thread_id in thread_ids:
-            self._checkpointer.delete_thread(thread_id)
+        with self._graph_lock:
+            for thread_id in thread_ids:
+                self._checkpointer.delete_thread(thread_id)
 
         return report
 

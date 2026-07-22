@@ -463,9 +463,7 @@ def list_threads(session: Session, user_id: str) -> list[Thread]:
     """Tous les threads d'un utilisateur (pour collecter les thread_id avant
     une suppression en cascade — le droit à l'oubli doit ensuite purger les
     checkpoints LangGraph correspondants, hors des tables métier)."""
-    return list(
-        session.scalars(select(Thread).where(Thread.user_id == user_id)).all()
-    )
+    return list(session.scalars(select(Thread).where(Thread.user_id == user_id)).all())
 
 
 def list_recent_audit(session: Session, user_id: str, limit: int = 50) -> list[MemoryAudit]:
