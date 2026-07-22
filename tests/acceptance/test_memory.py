@@ -79,3 +79,49 @@ def test_clear_session_resets_history_but_keeps_facts():
     after = mm.read(user, "Rappel ?").render()
     assert "garantis" not in after
     assert "L" in after
+
+
+def test_forget_all_purges_langgraph_checkpoints():
+    # B1 (R5/art. 17) : l'effacement total supprime aussi le verbatim
+    # conversationnel des checkpoints LangGraph, pas seulement les tables métier.
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    user = "acc-forget-checkpoints"
+    mm.write(user, "Mon IBAN perso est FR76 3000 4000 0500 0600 0700 895.", "C'est noté.")
+
+    from velmo.memory.db import list_threads
+
+    with mm._Session() as session:
+        thread_ids = [t.thread_id for t in list_threads(session, user)]
+    assert thread_ids, "le tour doit avoir créé au moins un thread"
+    # Le checkpoint contient bien le verbatim avant l'oubli.
+    assert any(
+        mm._checkpointer.get_tuple({"configurable": {"thread_id": tid}}) is not None
+        for tid in thread_ids
+    )
+
+    mm.forget_all(user)
+
+    # Après l'oubli total : plus aucun checkpoint pour ces threads.
+    for tid in thread_ids:
+        assert mm._checkpointer.get_tuple({"configurable": {"thread_id": tid}}) is None
+
+
+def test_forget_all_tombstones_survive_cascade():
+    # B2 : après forget_all, les tombstones doivent survivre — ils ne doivent
+    # pas être emportés par la cascade FK de la suppression de l'utilisateur.
+    # (La résurrection bloquée via l'extracteur en arrière-plan est couverte
+    # déterministiquement par la Task 2 / D9-04, pas ici : un `remember_fact`
+    # explicite, lui, lève délibérément le tombstone — comportement voulu.)
+    mm = MemoryManager(db_url="sqlite:///:memory:")
+    user = "acc-forget-tombstone"
+    mm.remember_fact(user, "adresse", "12 rue des Lilas")
+
+    mm.forget_all(user)
+
+    from velmo.memory.db import is_tombstoned
+
+    with mm._Session() as session:
+        mm._bind_user(session, user)
+        assert is_tombstoned(session, user, "fact_key", "adresse"), (
+            "le tombstone doit survivre à l'effacement total"
+        )

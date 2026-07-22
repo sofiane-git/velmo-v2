@@ -34,6 +34,7 @@ from .db import (
     list_episodes,
     list_facts,
     list_procedures,
+    list_threads,
     make_memory_engine,
     resolve_tombstone,
     set_tombstone,
@@ -564,6 +565,10 @@ class MemoryManager:
             facts = list_facts(session, user_id)
             procedures = list_procedures(session, user_id)
             episodes = list_episodes(session, user_id)
+            # Collecte AVANT la cascade : les lignes Thread vont disparaître, mais
+            # les checkpoints LangGraph vivent dans un store séparé (non FK) qu'il
+            # faut purger explicitement, sinon le verbatim survit (B1).
+            thread_ids = [t.thread_id for t in list_threads(session, user_id)]
             for episode in episodes:
                 self.episodic_store.delete(episode.id)
 
@@ -576,23 +581,30 @@ class MemoryManager:
                 episodes=[e.summary for e in episodes],
             )
 
-            for fact in facts:
-                set_tombstone(session, user_id, "fact_key", fact.key)
-            for proc in procedures:
-                # Cf. `forget()` : levé par `remember_procedure` si besoin.
-                set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
-
             user = session.get(MemoryUser, user_id)
             if user is not None:
                 session.delete(user)
                 session.flush()
 
             get_or_create_user(session, user_id)
+            # Tombstones posés APRÈS la recréation de l'utilisateur : sinon la
+            # cascade FK (memory_tombstone.user_id ON DELETE CASCADE) les emporte
+            # dans la même transaction et l'anti-résurrection est inopérante (B2).
+            for fact in facts:
+                set_tombstone(session, user_id, "fact_key", fact.key)
+            for proc in procedures:
+                set_tombstone(session, user_id, "procedure_trigger", proc.trigger)
             write_audit(session, user_id, "delete", "all")
             session.commit()
-            return report
         finally:
             session.close()
+
+        # Purge des checkpoints hors session (le checkpointer gère sa propre
+        # connexion — même chemin que purge_inactive_threads).
+        for thread_id in thread_ids:
+            self._checkpointer.delete_thread(thread_id)
+
+        return report
 
     def clear_session(self, user_id: str) -> None:
         """Termine la conversation active sans toucher à la mémoire long terme.
