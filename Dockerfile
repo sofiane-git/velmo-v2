@@ -15,6 +15,6 @@ COPY alembic.ini ./alembic.ini
 COPY scripts ./scripts
 COPY kb ./kb
 
-RUN uv sync --no-dev --extra vector --extra llm --extra guardrails
+RUN uv sync --no-dev --extra vector --extra llm --extra guardrails --extra graph
 
 CMD ["uv", "run", "python", "-m", "velmo.cli"]
