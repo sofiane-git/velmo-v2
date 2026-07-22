@@ -101,6 +101,16 @@ jobs:
     needs: check-model-drift
     if: needs.check-model-drift.outputs.quality_memory == 'true' || needs.check-model-drift.outputs.guardrails == 'true'
     runs-on: ubuntu-latest
+    # Vrai modèle + baseline persistante (audit B4/B5) : un drift-check sur le
+    # stub hors-ligne ne mesurerait rien. Mêmes secrets que release.yml.
+    env:
+      DB_URL: ${{ secrets.DB_URL }}
+      AZURE_AI_INFERENCE_ENDPOINT: ${{ secrets.AZURE_AI_INFERENCE_ENDPOINT }}
+      AZURE_AI_INFERENCE_API_KEY: ${{ secrets.AZURE_AI_INFERENCE_API_KEY }}
+      AZURE_OPENAI_GUARD_ENDPOINT: ${{ secrets.AZURE_OPENAI_GUARD_ENDPOINT }}
+      AZURE_OPENAI_GUARD_API_KEY: ${{ secrets.AZURE_OPENAI_GUARD_API_KEY }}
+      ANTHROPIC_FOUNDRY_ENDPOINT: ${{ secrets.ANTHROPIC_FOUNDRY_ENDPOINT }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
@@ -120,6 +130,15 @@ jobs:
 
   scheduled-eval:
     runs-on: ubuntu-latest
+    # Vrai modèle + baseline persistante (audit B4/B5), cf. drift-check-eval.
+    env:
+      DB_URL: ${{ secrets.DB_URL }}
+      AZURE_AI_INFERENCE_ENDPOINT: ${{ secrets.AZURE_AI_INFERENCE_ENDPOINT }}
+      AZURE_AI_INFERENCE_API_KEY: ${{ secrets.AZURE_AI_INFERENCE_API_KEY }}
+      AZURE_OPENAI_GUARD_ENDPOINT: ${{ secrets.AZURE_OPENAI_GUARD_ENDPOINT }}
+      AZURE_OPENAI_GUARD_API_KEY: ${{ secrets.AZURE_OPENAI_GUARD_API_KEY }}
+      ANTHROPIC_FOUNDRY_ENDPOINT: ${{ secrets.ANTHROPIC_FOUNDRY_ENDPOINT }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5

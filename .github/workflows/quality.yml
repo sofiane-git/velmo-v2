@@ -41,5 +41,11 @@ jobs:
       - name: Acceptance suite
         run: uv run pytest tests/acceptance/ -v
 
-      - name: Quality gate
-        run: uv run python -m velmo.mlops.score --min-score 0.8
+      # Gate hybride (audit B4) : par-PR = mode dégradé hors-ligne ASSUMÉ
+      # (EchoLLM + SQLite éphémère, aucun secret) — déterministe, rapide,
+      # gratuit, compatible PRs de forks. Le VRAI modèle est gaté aux
+      # frontières de livraison : release.yml (tags) et nightly.yml (drift +
+      # bihebdo), avec secrets + baseline Postgres persistante (audit B5).
+      # Jamais de juge LLM non-déterministe dans le chemin bloquant par-PR.
+      - name: Quality gate (mode dégradé hors-ligne — déterministe)
+        run: uv run python -m velmo.mlops.score
