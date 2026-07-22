@@ -78,3 +78,36 @@ def test_no_runs_no_alert(tmp_path) -> None:
     session = _session(tmp_path, "empty")
     assert consecutive_breaches(session, min_score=0.80) == []
     session.close()
+
+
+def test_intercalated_release_run_is_not_counted_as_a_night(tmp_path) -> None:
+    # Revue Lot 3 : « deux nuits » ne compte que les runs de surveillance
+    # planifiée. Une nuit sous plancher + un run release (ci) sous plancher
+    # intercalé NE doivent PAS déclencher l'alerte (ce n'est pas deux nuits).
+    session = _session(tmp_path, "intercalated")
+    _seed_run(session, note_guardrails=0.5, days_ago=2)  # nuit ancienne sous plancher
+    session.add_all([])
+    # run release (ci) plus récent, sous plancher lui aussi mais NON nightly
+    release = EvalRun(
+        id="run-release-ci",
+        version_tag="v-test",
+        note_memory=1.0,
+        note_guardrails=0.4,
+        note_quality=1.0,
+        note_globale=0.4,
+        global_gate=0.4,
+        gate_passed=False,
+        block_rate=0.0,
+        false_positive_rate=0.0,
+        latency_p50_ms=10.0,
+        latency_p95_ms=20.0,
+        cost_per_conv=0.001,
+        ran_at=utcnow() - timedelta(days=1),
+        triggered_by="ci",
+    )
+    session.add(release)
+    session.commit()
+
+    # Un seul run nightly sous plancher dans l'historique → pas deux nuits.
+    assert consecutive_breaches(session, min_score=0.80) == []
+    session.close()

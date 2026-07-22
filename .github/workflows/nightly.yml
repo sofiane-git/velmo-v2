@@ -116,17 +116,28 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
       - run: uv sync --locked
+      - name: Garde anti-silence — le drift-check NE DOIT PAS évaluer le stub
+        # Secrets absents => repli EchoLLM/SQLite silencieux : le drift-check
+        # mesurerait le stub et écrirait une baseline bidon (audit B4/B5).
+        run: |
+          if [ -z "$AZURE_AI_INFERENCE_API_KEY" ]; then
+            echo "::error::AZURE_AI_INFERENCE_API_KEY absent — drift-check évaluerait le stub (audit B4)."
+            exit 1
+          fi
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DB_URL absent — mesures drift non persistantes (audit B5)."
+            exit 1
+          fi
       - name: Qualité + Mémoire (drift Mistral-Large-3 / claude-opus-4-5)
         if: needs.check-model-drift.outputs.quality_memory == 'true'
         run: uv run python -m velmo.mlops.drift_check --suites quality,memory --triggered-by model-drift
       - name: Garde-fous (drift gpt-5-mini)
         if: needs.check-model-drift.outputs.guardrails == 'true'
         run: uv run python -m velmo.mlops.drift_check --suites guardrails --triggered-by model-drift
-      # L'échec de ce step EST le canal d'alerte (notification GitHub du job
-      # rouge) : dimension gate sous plancher deux runs consécutifs → décision
-      # humaine de rollback (conception ch.3 §Rollback, audit D8-04).
-      - name: Alerte deux-nuits (dimensions gate)
-        run: uv run python -m velmo.mlops.alerting
+      # Pas de step « alerte deux-nuits » ici : drift_check sort déjà en exit 1
+      # sous le plancher (audit D8-03), et l'alerte deux-nuits lit les EvalRun
+      # nightly (pas la table drift_check_run) — elle appartient au job
+      # scheduled-eval, pas au drift ponctuel (revue Lot 3).
 
   scheduled-eval:
     runs-on: ubuntu-latest
@@ -144,6 +155,18 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
       - run: uv sync --locked
+      - name: Garde anti-silence — le run bihebdomadaire NE DOIT PAS évaluer le stub
+        # Sans secrets, la baseline EvalRun persistée serait celle du stub —
+        # exactement B4/B5, et l'alerte deux-nuits relirait des runs bidon.
+        run: |
+          if [ -z "$AZURE_AI_INFERENCE_API_KEY" ]; then
+            echo "::error::AZURE_AI_INFERENCE_API_KEY absent — le run bihebdo évaluerait le stub (audit B4)."
+            exit 1
+          fi
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DB_URL absent — baseline non persistante (audit B5)."
+            exit 1
+          fi
       - name: Décide si le run complet bihebdomadaire doit tourner (1 lundi sur 2)
         id: gate
         run: |

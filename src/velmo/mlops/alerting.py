@@ -18,14 +18,26 @@ from velmo.config import get_settings
 from velmo.mlops.db import EvalRun, make_mlops_engine
 
 _GATE_DIMENSIONS = ("memory", "guardrails", "quality")
+# Seuls les runs de surveillance planifiée comptent comme « nuits » : un run
+# release (`ci`) ou hotfix intercalé ne doit pas se faire passer pour une nuit
+# et fausser la règle deux-nuits (revue Lot 3).
+_NIGHTLY_SOURCES = ("nightly", "model-drift")
 
 
 def consecutive_breaches(session: Session, min_score: float) -> list[str]:
-    """Dimensions gate sous `min_score` sur les DEUX derniers runs persistés.
+    """Dimensions gate sous `min_score` sur les DEUX derniers runs de
+    surveillance planifiée (triggered_by nightly/model-drift).
 
     Moins de deux runs en base → aucune alerte possible (pas assez
     d'historique pour distinguer une tendance d'un aléa)."""
-    runs = list(session.scalars(select(EvalRun).order_by(EvalRun.ran_at.desc()).limit(2)).all())
+    runs = list(
+        session.scalars(
+            select(EvalRun)
+            .where(EvalRun.triggered_by.in_(_NIGHTLY_SOURCES))
+            .order_by(EvalRun.ran_at.desc())
+            .limit(2)
+        ).all()
+    )
     if len(runs) < 2:
         return []
     latest, previous = runs[0], runs[1]
