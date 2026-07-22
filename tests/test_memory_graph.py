@@ -3,7 +3,24 @@ une nouvelle instance de checkpointer pointant sur le même fichier/URL."""
 
 from __future__ import annotations
 
-from velmo.memory.graph import build_graph, get_checkpointer
+from velmo.memory.graph import _to_psycopg_conninfo, build_graph, get_checkpointer
+
+
+def test_to_psycopg_conninfo_strips_sqlalchemy_driver_suffix():
+    # psycopg3's Connection.connect() (appelé par PostgresSaver.from_conn_string)
+    # rejette le suffixe SQLAlchemy `+psycopg` avec ProgrammingError — voir
+    # docstring de `_to_psycopg_conninfo`.
+    assert (
+        _to_psycopg_conninfo("postgresql+psycopg://app:app@localhost:5432/velmo")
+        == "postgresql://app:app@localhost:5432/velmo"
+    )
+
+
+def test_to_psycopg_conninfo_leaves_plain_postgresql_url_unchanged():
+    assert (
+        _to_psycopg_conninfo("postgresql://app:app@localhost:5432/velmo")
+        == "postgresql://app:app@localhost:5432/velmo"
+    )
 
 
 def test_graph_persists_messages_across_checkpointer_instances(tmp_path) -> None:
