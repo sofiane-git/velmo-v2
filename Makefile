@@ -1,4 +1,4 @@
-.PHONY: install up down migrate seed seed-kb chat eval ci test fmt lint typecheck
+.PHONY: install up down migrate seed seed-kb chat eval ci test fmt fmt-check lint lint-imports typecheck acceptance eval-gate
 
 install:
 	uv sync
@@ -24,7 +24,9 @@ chat:
 eval:
 	uv run python -m velmo.mlops.score
 
-ci: test
+# Parité locale/CI : mêmes étapes, même ordre que .github/workflows/quality.yml
+# (audit D10-07 — `make ci` doit rejouer exactement le gate).
+ci: lint fmt-check typecheck lint-imports acceptance eval-gate
 
 test:
 	uv run pytest tests/ -v
@@ -33,8 +35,20 @@ fmt:
 	uv run ruff format .
 	uv run ruff check --fix .
 
+fmt-check:
+	uv run ruff format --check src tests
+
 lint:
-	uv run ruff check .
+	uv run ruff check src tests
+
+lint-imports:
+	uv run lint-imports --config pyproject.toml
 
 typecheck:
 	uv run mypy src
+
+acceptance:
+	uv run pytest tests/acceptance/ -v
+
+eval-gate:
+	uv run python -m velmo.mlops.score --min-score 0.8

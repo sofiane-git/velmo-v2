@@ -117,9 +117,7 @@ def bind_user(session: Session, user_id: str | None) -> None:
     """
     if user_id is None or session.get_bind().dialect.name != "postgresql":
         return
-    session.execute(
-        text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id}
-    )
+    session.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
 
 
 def write_audit(

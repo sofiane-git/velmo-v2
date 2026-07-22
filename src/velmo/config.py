@@ -159,7 +159,9 @@ def validate_startup(settings: Settings | None = None) -> None:
         key = getattr(settings, key_field)
         if bool(endpoint) != bool(key):
             missing_field = key_field if endpoint else endpoint_field
-            errors.append(f"`{missing_field.upper()}` manquant (l'autre variable du couple est définie)")
+            errors.append(
+                f"`{missing_field.upper()}` manquant (l'autre variable du couple est définie)"
+            )
     if errors:
         raise ConfigurationError(
             "Configuration incohérente :\n" + "\n".join(f"- {e}" for e in errors)

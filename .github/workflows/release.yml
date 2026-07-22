@@ -5,20 +5,26 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: read
+
 jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
-      - run: uv sync
+      - run: uv sync --locked
       - name: 3 suites contre le tag (gate bloquant)
         run: uv run python -m velmo.mlops.score --min-score 0.8 --triggered-by ci
 
   approve-and-promote:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # gh release create
+
     # GitHub Environment "production" : configurer les required reviewers dans
     # Settings → Environments → production (geste manuel unique du cycle
     # normal, cf. conception_chantier3_evaluation_mlops.md §Boucle qualité).
@@ -26,7 +32,7 @@ jobs:
     # seul reviewer aujourd'hui, à étendre dès qu'une 2e personne rejoint.
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Marque le tag comme promu (GitHub Release, pas de rebuild)
         env:
           GH_TOKEN: ${{ github.token }}

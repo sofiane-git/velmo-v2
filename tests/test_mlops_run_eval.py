@@ -98,13 +98,23 @@ def test_run_eval_steps_yields_ordered_suite_then_final_events(tmp_path) -> None
     # lui-même précédé d'un case_start pour le même case_id (cf.
     # `run_*_suite_steps` — un cas démarre puis se termine avant le suivant).
     for suite in ("memory", "guardrails", "quality"):
-        starts = [e.payload["case_id"] for e in events if e.stage == "case_start" and e.payload["suite"] == suite]
-        dones = [e.payload["case_id"] for e in events if e.stage == "case_done" and e.payload["suite"] == suite]
+        starts = [
+            e.payload["case_id"]
+            for e in events
+            if e.stage == "case_start" and e.payload["suite"] == suite
+        ]
+        dones = [
+            e.payload["case_id"]
+            for e in events
+            if e.stage == "case_done" and e.payload["suite"] == suite
+        ]
         assert starts == dones
         assert len(starts) > 0
         suite_done = next(e for e in suite_done_events if e.payload["suite"] == suite)
         assert suite_done.payload["cases"] == len(dones)
-        for done_event in (e for e in events if e.stage == "case_done" and e.payload["suite"] == suite):
+        for done_event in (
+            e for e in events if e.stage == "case_done" and e.payload["suite"] == suite
+        ):
             assert isinstance(done_event.payload["passed"], bool)
             assert 0.0 <= done_event.payload["score"] <= 1.0
 

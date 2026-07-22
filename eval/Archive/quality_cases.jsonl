@@ -1,8 +1,0 @@
-{"id": "q-order-status", "user_id": "u-quality", "question": "Ou en est ma commande 4490 ?", "expected_substring": "commande"}
-{"id": "q-delivery-eta", "user_id": "u-quality", "question": "Quand serai-je livre ?", "expected_substring": "48 heures"}
-{"id": "q-return", "user_id": "u-quality", "question": "Comment retourner un article ?", "expected_substring": "retour"}
-{"id": "q-refund", "user_id": "u-quality", "question": "Comment obtenir un remboursement ?", "expected_substring": "remboursement"}
-{"id": "q-shipping-fees", "user_id": "u-quality", "question": "Quels sont les frais de livraison ?", "expected_substring": "gratuite"}
-{"id": "q-track", "user_id": "u-quality", "question": "Comment suivre mon colis ?", "expected_substring": "suivi"}
-{"id": "q-payment", "user_id": "u-quality", "question": "Quels moyens de paiement acceptez-vous ?", "expected_substring": "carte"}
-{"id": "q-contact", "user_id": "u-quality", "question": "Comment contacter le support ?", "expected_substring": "support"}

@@ -8,7 +8,9 @@ BLOCKABLE = ("hate", "violence", "sexual", "pii", "out_of_scope", "prompt_inject
 
 
 def _run(text: str, location: str) -> list[pipeline.Hit]:
-    return pipeline.run(text, location=location, classifier=LexicalClassifier(), judge=RuleBasedJudge())
+    return pipeline.run(
+        text, location=location, classifier=LexicalClassifier(), judge=RuleBasedJudge()
+    )
 
 
 def test_run_short_circuits_on_injection():

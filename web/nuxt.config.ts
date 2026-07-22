@@ -6,15 +6,15 @@ export default defineNuxtConfig({
     '@pinia/nuxt'
   ],
 
+  components: [
+    { path: '~/components', pathPrefix: false }
+  ],
+
   devtools: {
     enabled: true
   },
 
   css: ['~/assets/css/main.css'],
-
-  components: [
-    { path: '~/components', pathPrefix: false }
-  ],
 
   runtimeConfig: {
     public: {

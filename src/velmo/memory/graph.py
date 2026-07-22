@@ -51,9 +51,7 @@ def replace_messages(messages: list[dict[str, str]]) -> dict[str, list[dict[str,
     return {_REPLACE_KEY: messages}
 
 
-def _extend_messages(
-    existing: list[dict[str, str]], new: Any
-) -> list[dict[str, str]]:
+def _extend_messages(existing: list[dict[str, str]], new: Any) -> list[dict[str, str]]:
     """Reducer : chaque `graph.invoke(...)` doit accumuler les messages du tour,
     pas écraser le fil (comportement par défaut de LangGraph sans reducer
     explicite) — sinon `write()` perdrait l'historique à chaque nouveau tour.

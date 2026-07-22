@@ -106,11 +106,7 @@ def _fetch_previous_quality_scores(session: Session) -> list[float]:
     previous_run = session.query(EvalRun).order_by(EvalRun.ran_at.desc()).first()
     if previous_run is None:
         return []
-    cases = (
-        session.query(EvalCaseResult)
-        .filter_by(run_id=previous_run.id, suite="quality")
-        .all()
-    )
+    cases = session.query(EvalCaseResult).filter_by(run_id=previous_run.id, suite="quality").all()
     return [c.score for c in cases]
 
 
@@ -267,9 +263,7 @@ def run_eval_steps(
                 quality_gate_score = 0.0
 
         nf_gate_ok = latency_p95 <= LATENCY_P95_CEILING_MS and cost <= COST_PER_CONV_CEILING
-        global_gate = (
-            min(note_memory, note_guardrails, quality_gate_score) if nf_gate_ok else 0.0
-        )
+        global_gate = min(note_memory, note_guardrails, quality_gate_score) if nf_gate_ok else 0.0
 
         _persist_version(session, hashes, commit, version_tag)
         run_id = f"run-{uuid.uuid4().hex[:8]}"

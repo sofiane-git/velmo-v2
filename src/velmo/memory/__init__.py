@@ -95,7 +95,7 @@ SUMMARY_SYSTEM = (
     "1994), agent confirme expédition prévue le 12/03, client précise taille 44 et "
     "signale qu'un précédent colis (commande #4108) est arrivé déchiré, agent "
     "propose un avoir de 15€.\n"
-    "→ \"Le client (taille 44) suit la commande #4471, expédition prévue le 12/03. "
+    '→ "Le client (taille 44) suit la commande #4471, expédition prévue le 12/03. '
     "Litige ouvert sur la commande #4108 (colis déchiré), avoir de 15€ proposé par "
     "l'agent.\""
 )
@@ -420,9 +420,7 @@ class MemoryManager:
             # True)`), sans appelant synchrone pour observer/relancer l'échec —
             # doit rester visible côté ops plutôt qu'avalé en silence (cf.
             # `LLMExtractor.extract`, même logique).
-            logger.exception(
-                "MemoryManager._extract_and_persist: échec pour user_id=%s", user_id
-            )
+            logger.exception("MemoryManager._extract_and_persist: échec pour user_id=%s", user_id)
             return WriteReport()
         finally:
             session.close()
@@ -466,9 +464,7 @@ class MemoryManager:
                 session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
             )
             if changed:
-                write_audit(
-                    session, user_id, "write", f"procedure:{ep.trigger}", actor="extractor"
-                )
+                write_audit(session, user_id, "write", f"procedure:{ep.trigger}", actor="extractor")
 
         # 2. Résumé LLM (remplace la concaténation brute).
         try:
@@ -501,7 +497,9 @@ class MemoryManager:
             )
             for target in tombstoned:
                 persisted_summary = re.sub(
-                    rf"(?<!\w){re.escape(target)}(?!\w)", "[information supprimée]", persisted_summary
+                    rf"(?<!\w){re.escape(target)}(?!\w)",
+                    "[information supprimée]",
+                    persisted_summary,
                 )
         thread.summary = (thread.summary + " " if thread.summary else "") + persisted_summary
         if not tombstoned:
@@ -630,9 +628,7 @@ class MemoryManager:
             report = ForgetReport(
                 count=len(facts) + len(procedures) + len(episodes),
                 facts=[RemovedFact(key=f.key, value=f.value) for f in facts],
-                procedures=[
-                    RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in procedures
-                ],
+                procedures=[RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in procedures],
                 episodes=[e.summary for e in episodes],
             )
 

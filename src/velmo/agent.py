@@ -201,9 +201,7 @@ class Agent:
         self.session = session
         self.kb = kb
 
-    def respond_traced(
-        self, user_id: str, message: str
-    ) -> Iterator[tuple[str, dict[str, Any]]]:
+    def respond_traced(self, user_id: str, message: str) -> Iterator[tuple[str, dict[str, Any]]]:
         start = time.monotonic()
         gate_in = self.guardrails.check_input(message, user_id=user_id)
         yield "input_guardrail", _guardrail_payload(gate_in)
@@ -222,11 +220,14 @@ class Agent:
             elif gate_in.category == "secret_leak":
                 stored_message = redact_secret_leak(message)
             self.memory.write(user_id, stored_message, refusal, background=True)
-            yield "final", {
-                "answer": refusal,
-                "status": "blocked_input",
-                "latency_ms": _elapsed_ms(start),
-            }
+            yield (
+                "final",
+                {
+                    "answer": refusal,
+                    "status": "blocked_input",
+                    "latency_ms": _elapsed_ms(start),
+                },
+            )
             return
 
         context = self.memory.read(user_id, message)
@@ -241,11 +242,14 @@ class Agent:
             # pas interrompre le flux SSE au milieu — le client verrait une
             # connexion coupée sans event "final" exploitable.
             logger.exception("respond_traced: échec en aval pour user_id=%s", user_id)
-            yield "final", {
-                "answer": DEFAULT_REFUSAL,
-                "status": "error",
-                "latency_ms": _elapsed_ms(start),
-            }
+            yield (
+                "final",
+                {
+                    "answer": DEFAULT_REFUSAL,
+                    "status": "error",
+                    "latency_ms": _elapsed_ms(start),
+                },
+            )
             return
         yield "routing", _routing_payload(routing)
         if routing.tool_result is not None:
@@ -446,8 +450,7 @@ class Agent:
                 RoutingInfo(handler="tool", tool_name="memory_forget", tool_result=result),
             )
         return (
-            f"C'est fait, j'ai oublié cette information ({report.count} élément(s) "
-            "supprimé(s)).",
+            f"C'est fait, j'ai oublié cette information ({report.count} élément(s) supprimé(s)).",
             RoutingInfo(handler="tool", tool_name="memory_forget", tool_result=result),
         )
 

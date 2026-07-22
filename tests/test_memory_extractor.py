@@ -119,7 +119,9 @@ def test_llm_extractor_returns_empty_on_garbage():
     assert result.procedures == []
 
 
-def test_get_extractor_falls_back_to_rule_based_without_anthropic_foundry_config(monkeypatch) -> None:
+def test_get_extractor_falls_back_to_rule_based_without_anthropic_foundry_config(
+    monkeypatch,
+) -> None:
     from velmo.memory.extractor import RuleBasedExtractor, get_extractor
 
     monkeypatch.delenv("ANTHROPIC_FOUNDRY_ENDPOINT", raising=False)
@@ -138,7 +140,9 @@ def test_get_extractor_uses_llm_extractor_when_anthropic_foundry_configured(monk
 def test_memory_confidence_cases_fixture_exists_and_well_formed() -> None:
     path = Path(__file__).resolve().parent.parent / "eval" / "memory_confidence_cases.jsonl"
     assert path.exists()
-    cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    cases = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     assert len(cases) >= 25  # "une trentaine" — tolérance basse pour ne pas figer un compte exact
     for case in cases:
         assert case["decision"] in ("retain", "discard")

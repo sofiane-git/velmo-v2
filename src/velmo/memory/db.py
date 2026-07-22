@@ -127,7 +127,9 @@ class MemoryTombstone(Base):
     __tablename__ = "memory_tombstone"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
-    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "fact_value" | "procedure_trigger"
+    target_kind: Mapped[str] = mapped_column(
+        String
+    )  # "fact_key" | "fact_value" | "procedure_trigger"
     target: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -354,9 +356,7 @@ def upsert_procedure(
     Retourne (procédure, booléen) où le booléen indique si la procédure a changé.
     """
     existing = session.scalars(
-        select(Procedure).where(
-            Procedure.user_id == user_id, Procedure.trigger == trigger
-        )
+        select(Procedure).where(Procedure.user_id == user_id, Procedure.trigger == trigger)
     ).first()
     now = utcnow()
     if existing is None:
@@ -382,9 +382,7 @@ def upsert_procedure(
     return existing, True
 
 
-def delete_procedure_matching(
-    session: Session, user_id: str, target: str
-) -> list[Procedure]:
+def delete_procedure_matching(session: Session, user_id: str, target: str) -> list[Procedure]:
     """Supprimer les procédures dont le trigger ou la règle contient target.
 
     Retourne la liste des procédures supprimées.
@@ -442,7 +440,12 @@ def write_audit(
 ) -> None:
     session.add(
         MemoryAudit(
-            id=new_id("aud"), user_id=user_id, action=action, target=target, actor=actor, at=utcnow()
+            id=new_id("aud"),
+            user_id=user_id,
+            action=action,
+            target=target,
+            actor=actor,
+            at=utcnow(),
         )
     )
 

@@ -8,8 +8,14 @@ from velmo.mlops.report import write_report
 
 def _sample_scores() -> Scores:
     return Scores(
-        memory=0.98, guardrails=0.91, quality=0.85, global_=0.85,
-        block_rate=0.95, false_positive_rate=0.05, latency_ms=320.0, cost=0.012,
+        memory=0.98,
+        guardrails=0.91,
+        quality=0.85,
+        global_=0.85,
+        block_rate=0.95,
+        false_positive_rate=0.05,
+        latency_ms=320.0,
+        cost=0.012,
     )
 
 

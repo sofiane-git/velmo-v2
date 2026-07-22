@@ -48,7 +48,7 @@
 - **Fix :** code · **Plugin :** oui — un marqueur d'effacement doit survivre à la suppression qu'il protège (pas de FK CASCADE vers l'entité effacée).
 - **Reco :** poser les tombstones après le `get_or_create_user` de recréation (ou exclure la table de la cascade) + test « forget_all puis extraction différée ne réécrit rien ».
 
-### B3 · `uv.lock` gitignoré : builds non déterministes — `D5-01` + `D6-01` + `D10-01`
+### ✅ B3 · `uv.lock` gitignoré : builds non déterministes — `D5-01` + `D6-01` + `D10-01` *(corrigé : 9b170eb — lockfile commité, `--locked` dans les 4 workflows + Dockerfile)*
 - **Fichier :** `.gitignore:21`
 - **Constat :** `uv.lock` ignoré (`git check-ignore` confirme) alors que le Dockerfile fait `COPY pyproject.toml uv.lock ./` (casse sur clone frais) et que les 4 workflows font `uv sync` (re-résolution à chaque run : supply-chain + non-reproductibilité). `pyproject.toml:129-130` suppose pourtant l'inverse (« le wheel CPU est fixé dans uv.lock »).
 - **Fix :** infra · **Plugin :** oui — check : lockfile commité obligatoire ; `git check-ignore <lockfile>` doit échouer ; croiser avec `COPY` du Dockerfile.
@@ -68,7 +68,7 @@
 - **Fix :** infra · **Plugin :** oui — un gate de non-régression doit prouver que sa baseline persiste entre deux runs (DB externe, cache, artefact).
 - **Reco :** base mlops persistante pour le gate CI + step qui échoue si baseline vide alors qu'un run précédent existe.
 
-### B6 · mypy strict + ruff jamais exécutés en CI — `D10-02`
+### ✅ B6 · mypy strict + ruff jamais exécutés en CI — `D10-02` *(corrigé : c2e2447 — steps ruff check/format + mypy dans quality.yml, sync --all-extras pour un env mypy stable ; baseline format 1465160)*
 - **Fichier :** `.github/workflows/quality.yml:11`
 - **Constat :** `[tool.mypy] strict=true` et Ruff configurés dans pyproject, mais `grep mypy|ruff .github/workflows/` → rien. Les gates annoncées ne bloquent pas.
 - **Fix :** infra · **Plugin :** oui — vérifier la correspondance outils-configurés ↔ outils-gatés en CI ; poser ces steps dès j0.
@@ -105,8 +105,8 @@
 
 ### CI/CD supply-chain (D5)
 
-- **`D5-02`** · `.github/workflows/quality.yml:12` — Aucune action pinnée par SHA (tags mutables @v4/@v5/@v2 partout, priorité azure/login + setup-uv). **Fix :** code. **Reco :** pin SHA 40 + commentaire version, Dependabot pour maintenir.
-- **`D5-03`** · `.github/workflows/release.yml:1` — quality/release/hotfix sans bloc `permissions:` → GITHUB_TOKEN au défaut du repo (potentiellement write partout). **Fix :** code. **Reco :** `contents: read` au niveau workflow ; `contents: write` scoppé au seul job qui fait `gh release create`.
+- ✅ **`D5-02`** *(corrigé : 9547813 — 13 uses: pinnés par SHA-40 + commentaire version)* · `.github/workflows/quality.yml:12` — Aucune action pinnée par SHA (tags mutables @v4/@v5/@v2 partout, priorité azure/login + setup-uv). **Fix :** code. **Reco :** pin SHA 40 + commentaire version, Dependabot pour maintenir.
+- ✅ **`D5-03`** *(corrigé : 9547813 — contents: read partout, write scoppé au job release)* · `.github/workflows/release.yml:1` — quality/release/hotfix sans bloc `permissions:` → GITHUB_TOKEN au défaut du repo (potentiellement write partout). **Fix :** code. **Reco :** `contents: read` au niveau workflow ; `contents: write` scoppé au seul job qui fait `gh release create`.
 - *(3e majeur D5 = uv.lock, regroupé en B3.)*
 
 ### Reproductibilité (D6)
@@ -133,7 +133,7 @@
 - **`D8-03`** · `src/velmo/mlops/drift_check.py:103` — Post-drift : print puis `sys.exit(0)` inconditionnel — pas de seuil, pas de persistance, pas d'alerte ; la règle « deux nuits consécutives » documentée est inimplémentable. **Fix :** les-deux.
 - **`D8-04`** · `.github/workflows/nightly.yml:133` — Run bihebdo à `--min-score 0.0` : ne peut jamais être rouge, et l'alerte documentée n'existe dans aucun workflow. **Fix :** les-deux.
 - **`D8-05`** · `src/velmo/mlops/__init__.py:284` — Seuils de gate en dur et dupliqués (0.80 ×2, plafonds NF, défaut CLI), hors config et hors `compute_version_hashes` — la conception exige « chiffres versionnés dans un fichier de config (donc hashés) ». **Fix :** code.
-- **`D8-06`** · `eval/Archive.zip` — Artefact zip + copies périmées de fixtures commités (l'intention `.gitignore archives/` existe mais casse différente). **Fix :** infra. **Reco :** `git rm`, l'historique git est l'archive.
+- ✅ **`D8-06`** *(corrigé : 38a4e8f — git rm + règles .gitignore)* · `eval/Archive.zip` — Artefact zip + copies périmées de fixtures commités (l'intention `.gitignore archives/` existe mais casse différente). **Fix :** infra. **Reco :** `git rm`, l'historique git est l'archive.
 - **`D8-07`** · `README.md:10-12` — README décrit les 3 chantiers « (à construire) » alors qu'ils sont livrés et que le gate bloque déjà la CI. **Fix :** doc.
 - **`D8-08`** · `README.md:19` — README annonce « Kimi-K2.6 » ; config/CI réelles : Mistral-Large-3, claude-opus-4-5, gpt-5-mini. **Fix :** doc.
 
@@ -147,7 +147,7 @@
 ### Bootstrap (D10)
 
 - **`D10-03`** · `README.md:10` — README périmé (features « à construire », Kimi-K2.6, aucune étape `.env` dans le quickstart). **Fix :** doc. *(Recoupe D8-07/D8-08 — une seule réécriture du README règle les trois.)*
-- **`D10-05`** (+`D8-12`) · `web/.github/workflows/ci.yml` — Workflow CI commité dans `web/.github/` : jamais exécuté par GitHub (seule la racine compte) → le front n'a aucune gate effective, fichier trompeur. **Fix :** infra. **Reco :** job racine avec `paths: [web/**]`, supprimer le répertoire mort.
+- ✅ **`D10-05`** (+`D8-12`) *(corrigé : 8076a45 — web-ci.yml racine avec paths filter + actions pinnées, répertoire mort supprimé)* · `web/.github/workflows/ci.yml` — Workflow CI commité dans `web/.github/` : jamais exécuté par GitHub (seule la racine compte) → le front n'a aucune gate effective, fichier trompeur. **Fix :** infra. **Reco :** job racine avec `paths: [web/**]`, supprimer le répertoire mort.
 
 ---
 
@@ -167,7 +167,7 @@
 | D3-06 | agent.py:1 | agent.py 535 lignes : orchestration + routage regex + 6 formatters + escalade + payloads de trace | code | Extraire routage/formatters (velmo/routing.py) |
 | D4-04 | guardrails/pipeline.py:110 | Redaction PII texte libre en sortie uniquement ; en entrée seules les PII structurées sont couvertes (référentiel exige I/O) | les-deux | Étendre à l'entrée ou documenter/justifier l'asymétrie |
 | D4-05 | guardrails/pii_redaction.py:28 | Dégradations silencieuses : scan→[] sur erreur Azure, prompt_shields→None si non configuré, classifier→lexical — zéro log | code | Warning au démarrage (étages non configurés) + à l'occurrence |
-| D5-04 | nightly.yml:19 | `contents: write` + `id-token: write` au niveau workflow, hérités par 3 jobs dont 2 n'en ont pas besoin | code | Scoper les permissions élevées au seul job check-model-drift |
+| ✅ D5-04 *(corrigé : 9547813 — write/id-token scoppés au job check-model-drift)* | nightly.yml:19 | `contents: write` + `id-token: write` au niveau workflow, hérités par 3 jobs dont 2 n'en ont pas besoin | code | Scoper les permissions élevées au seul job check-model-drift |
 | D5-05 | pyproject.toml:9 | `python-dotenv>=1.0` et `azure-ai-inference>=1.0.0b9` sans borne supérieure | code | Borner `<2` comme le reste du fichier |
 | D5-06 | nightly.yml:96 | Push bot direct sur main (model-versions.json) : contourne branch protection, normalise un token write-main | les-deux | Artefact/branche dédiée/repo variable |
 | D6-05 | .dockerignore (absent) | Contexte de build embarque .git, .venv, **.env (secrets)** ; aggravé côté web/ (`COPY . .`) | code | .dockerignore racine + web/ |
@@ -192,7 +192,7 @@
 | D9-09 | api.py:290 | Aucun export/portabilité (art. 20) : `inspect()` existe mais n'est exposé ni API ni CLI | les-deux | GET /memory/{user_id}/export réutilisant inspect() |
 | ✅ D9-10 *(corrigé : 7d6ddd4)* | memory/retention.py:48-61 | purge_inactive_threads commit les Thread AVANT delete_thread : crash entre les deux = checkpoints orphelins définitifs (idempotence revendiquée fausse) | code | Inverser l'ordre (store secondaire d'abord) |
 | D10-06 | scripts/seed_kb.py:20 | os.getenv direct contournant la config centralisée, défauts divergents de .env.example | code | Passer par Settings |
-| D10-07 | Makefile:27 | `make ci` = pytest seul ≠ gate CI réelle (lint-imports + acceptance + mlops score) | les-deux | Invariant « make ci == pipeline CI » |
+| ✅ D10-07 *(corrigé : c2e2447 — make ci = lint fmt-check typecheck lint-imports acceptance eval-gate)* | Makefile:27 | `make ci` = pytest seul ≠ gate CI réelle (lint-imports + acceptance + mlops score) | les-deux | Invariant « make ci == pipeline CI » |
 | D10-08 | .pre-commit-config.yaml (absent) | Pas de hook pre-commit (ruff/mypy à la main ou en CI seulement) | infra | Config minimale ruff + ruff-format |
 | D10-09 | docker-compose.yml:28 | Credentials Postgres app/app en dur, dupliqués (compose + défaut db_url) | infra | Interpolation `${VAR}` depuis .env *(recoupe D6-10)* |
 | D2-08 | conception_chantier2:20 | Ch2 affirme encore « les trois consommateurs partagent gpt-5-mini » — révision actée ailleurs (claude-opus-4-5), code conforme à la révision | doc | Propager la révision (croiser les chantiers) |
@@ -280,7 +280,7 @@ Gabarit de tuto exigible : section Prérequis ; graphe de dépendances des étap
 
 Réparation par lots → **writing-plans #2**, ordonnée par sévérité :
 1. ✅ **Lot RGPD/mémoire** (B1, B2, D9-03, D9-04, D9-10) — FAIT (commits e101bc3..b1daccd, 5 tests d'acceptance/unitaires ajoutés). Note D9-03 : cas atteignable déjà mitigé par af89c2d, invariant durci en défense.
-2. **Lot supply-chain/CI** (B3, B6, D5-02/03/04, D8-06, D10-05/07) — infra rapide, fort effet.
+2. ✅ **Lot supply-chain/CI** (B3, B6, D5-02/03/04, D8-06, D10-05/07) — FAIT (commits 9b170eb..8076a45). Bonus : baseline ruff format (31 fichiers), lint web autofixé.
 3. **Lot gate MLOps** (B4, B5, D8-03/04/05) — décisions d'infra à prendre (DB persistante ou mode dégradé assumé).
 4. **Lot guardrails** (D2-02, D4-01/02/03/05) — durcissement pipeline.
 5. **Lot Docker** (D6-*) — mécanique.
