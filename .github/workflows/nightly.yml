@@ -128,6 +128,12 @@ jobs:
             echo "::error::DB_URL absent — mesures drift non persistantes (audit B5)."
             exit 1
           fi
+      - name: Migrations Alembic — Postgres, unique source du schéma (D2-04/D7-17)
+        run: |
+          if uv run python -c "import os,sys,sqlalchemy as sa; insp=sa.inspect(sa.create_engine(os.environ['DB_URL'])); sys.exit(0 if insp.has_table('customers') and not insp.has_table('alembic_version') else 1)"; then
+            uv run alembic stamp head
+          fi
+          uv run alembic upgrade head
       - name: Qualité + Mémoire (drift Mistral-Large-3 / claude-opus-4-5)
         if: needs.check-model-drift.outputs.quality_memory == 'true'
         run: uv run python -m velmo.mlops.drift_check --suites quality,memory --triggered-by model-drift
@@ -167,6 +173,12 @@ jobs:
             echo "::error::DB_URL absent — baseline non persistante (audit B5)."
             exit 1
           fi
+      - name: Migrations Alembic — Postgres, unique source du schéma (D2-04/D7-17)
+        run: |
+          if uv run python -c "import os,sys,sqlalchemy as sa; insp=sa.inspect(sa.create_engine(os.environ['DB_URL'])); sys.exit(0 if insp.has_table('customers') and not insp.has_table('alembic_version') else 1)"; then
+            uv run alembic stamp head
+          fi
+          uv run alembic upgrade head
       - name: Décide si le run complet bihebdomadaire doit tourner (1 lundi sur 2)
         id: gate
         run: |

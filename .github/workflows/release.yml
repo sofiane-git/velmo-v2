@@ -44,6 +44,15 @@ jobs:
             echo "::error::DB_URL absent — baseline de non-régression non persistante (audit B5)."
             exit 1
           fi
+      - name: Migrations Alembic — Postgres, unique source du schéma (D2-04/D7-17)
+        # Base historique créée par create_all avant ce câblage (jamais stampée) :
+        # si les tables applicatives existent sans alembic_version, stamp head une
+        # fois (schéma create_all == schéma head, vérifié) ; sinon chaîne normale.
+        run: |
+          if uv run python -c "import os,sys,sqlalchemy as sa; insp=sa.inspect(sa.create_engine(os.environ['DB_URL'])); sys.exit(0 if insp.has_table('customers') and not insp.has_table('alembic_version') else 1)"; then
+            uv run alembic stamp head
+          fi
+          uv run alembic upgrade head
       - name: 3 suites contre le tag (gate bloquant, vrai modèle)
         run: uv run python -m velmo.mlops.score --triggered-by ci
 

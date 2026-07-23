@@ -451,9 +451,10 @@ Le rôle applicatif (`velmo_app`) ne doit recevoir que `INSERT`/`SELECT`/`UPDATE
 les tables métier — **jamais** `CREATE`/`ALTER`/`DROP` en production. Les migrations tournent
 avec un rôle distinct (`velmo_migrator`, à créer explicitement — `CREATE ROLE velmo_migrator
 LOGIN PASSWORD '...'; GRANT CREATE ON DATABASE velmo TO velmo_migrator;`), exécuté **au moment
-du déploiement** via `alembic upgrade head` (voir ci-dessus). ⚠️ À ce jour ce sont des
-**migrations manuelles** : aucun workflow GitHub Actions ne lance encore Alembic (à ajouter
-dans un futur job de déploiement). Jamais l'application en runtime.
+du déploiement** via `alembic upgrade head`. En CI, les workflows Postgres (`release.yml` job
+`gate`, `nightly.yml` jobs `drift-check-eval`/`scheduled-eval`) lancent `alembic upgrade head`
+avant toute évaluation — Alembic est l'**unique** source du schéma sur Postgres, l'application
+ne fait plus de `create_all` hors SQLite (audit D2-04/D7-17). Jamais l'application en runtime.
 
 ---
 

@@ -106,7 +106,10 @@ def make_guardrails_engine(url: str | None = None) -> Engine:
             if isinstance(dbapi_connection, sqlite3.Connection):
                 dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
-    Base.metadata.create_all(engine)
+    # Schéma créé par l'app seulement en SQLite (repli hors-ligne/tests) ; sur
+    # Postgres, Alembic est l'unique source du schéma (D2-04).
+    if engine.url.drivername.startswith("sqlite"):
+        Base.metadata.create_all(engine)
     return engine
 
 
