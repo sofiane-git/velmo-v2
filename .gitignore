@@ -17,9 +17,6 @@ htmlcov/
 dist/
 build/
 
-# uv
-uv.lock
-
 # Env
 .env
 .env.local
@@ -54,6 +51,8 @@ mlops/report.md
 mlops/*.json
 
 archives/
+Archive/
+*.zip
 
 # Superpowers skill specs/plans (local working docs, not committed)
 docs/superpowers/
@@ -62,6 +61,6 @@ docs/superpowers/
 # Playwright
 .playwright-mcp/
 
-docs/job/conceptions/agnostic/
+docs/
 
 .claude/skills/

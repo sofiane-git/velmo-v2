@@ -17,9 +17,7 @@ def test_null_sink_does_nothing_and_returns_no_url() -> None:
 
 
 def test_estimate_cost_uses_configured_pricing(monkeypatch) -> None:
-    monkeypatch.setenv(
-        "TOKEN_PRICING", '{"gpt-5-mini": 0.002, "Mistral-Large-3": 0.004}'
-    )
+    monkeypatch.setenv("TOKEN_PRICING", '{"gpt-5-mini": 0.002, "Mistral-Large-3": 0.004}')
     cost = estimate_cost(tokens=1000, model="gpt-5-mini")
     assert cost == 0.002
 
@@ -39,9 +37,7 @@ def test_mask_sensitive_data_redacts_pii_and_secrets() -> None:
 def test_mask_sensitive_data_recurses_into_dict_and_list() -> None:
     from velmo.mlops.observability import mask_sensitive_data
 
-    masked = mask_sensitive_data(
-        data={"messages": ["carte 4242 4242 4242 4242", {"nested": "ok"}]}
-    )
+    masked = mask_sensitive_data(data={"messages": ["carte 4242 4242 4242 4242", {"nested": "ok"}]})
     assert "4242" not in masked["messages"][0]
     assert masked["messages"][1]["nested"] == "ok"
 
@@ -97,7 +93,7 @@ class _FakeClassifier:
 
 
 class _FakeJudge:
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+    def evaluate(self, text: str) -> dict[str, float | str]:
         return {"manipulation": 0.0, "secret_interne": 0.0, "hors_role": 0.0, "reasoning": "ok"}
 
 
@@ -138,7 +134,7 @@ def test_instrumented_classifier_emits_one_call_per_score_call() -> None:
 def test_instrumented_judge_forwards_result_and_emits_one_call() -> None:
     sink = _RecordingSink()
     judge = InstrumentedJudge(_FakeJudge(), sink, "guardrails_judge", "gpt-5-mini")
-    verdict = judge.evaluate("texte", "reponse agent")
+    verdict = judge.evaluate("texte")
     assert verdict["manipulation"] == 0.0
     assert len(sink.calls) == 1
     component, tokens, latency_ms, cost, *_ = sink.calls[0]

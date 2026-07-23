@@ -41,7 +41,9 @@ def test_scan_pii_detects_password_mention():
 
 
 def test_scan_pii_detects_iban():
-    assert patterns.scan_pii("Voici l'IBAN du client : FR76 3000 6000 0112 3456 7890 189.") is not None
+    assert (
+        patterns.scan_pii("Voici l'IBAN du client : FR76 3000 6000 0112 3456 7890 189.") is not None
+    )
 
 
 def test_luhn_valid_known_test_card():

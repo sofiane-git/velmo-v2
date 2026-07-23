@@ -1,8 +1,8 @@
 """Agent Velmo 2.0 : garde-fou d'entrée → mémoire → routage outils → garde-fou
 de sortie → écriture mémoire.
 
-Le routage, les outils, la mémoire et les garde-fous de contenu sont
-opérationnels. Seul le MLOps (chantier 3) reste à construire.
+Le routage, les outils, la mémoire, les garde-fous de contenu et la chaîne
+qualité MLOps (évaluation + gate + observabilité) sont opérationnels.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Any, Callable, Literal
 from sqlalchemy.orm import Session
 
 from . import tools
-from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine, redact_pii, redact_secret_leak
+from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine
 from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
 from .memory import FACT_KEY_ALIASES, ForgetReport, MemoryContext, MemoryManager, WriteReport
@@ -201,9 +201,7 @@ class Agent:
         self.session = session
         self.kb = kb
 
-    def respond_traced(
-        self, user_id: str, message: str
-    ) -> Iterator[tuple[str, dict[str, Any]]]:
+    def respond_traced(self, user_id: str, message: str) -> Iterator[tuple[str, dict[str, Any]]]:
         start = time.monotonic()
         gate_in = self.guardrails.check_input(message, user_id=user_id)
         yield "input_guardrail", _guardrail_payload(gate_in)
@@ -216,17 +214,18 @@ class Agent:
                     f"garde-fou {gate_in.category} (entrée)",
                     channel=_escalation_channel(gate_in.category),
                 )
-            stored_message = message
-            if gate_in.category == "pii":
-                stored_message = redact_pii(message)
-            elif gate_in.category == "secret_leak":
-                stored_message = redact_secret_leak(message)
+            # Texte à persister déjà redacté par l'engine (D3-05) — l'agent ne
+            # re-dispatch pas sur la catégorie du garde-fou.
+            stored_message = gate_in.stored_text if gate_in.stored_text is not None else message
             self.memory.write(user_id, stored_message, refusal, background=True)
-            yield "final", {
-                "answer": refusal,
-                "status": "blocked_input",
-                "latency_ms": _elapsed_ms(start),
-            }
+            yield (
+                "final",
+                {
+                    "answer": refusal,
+                    "status": "blocked_input",
+                    "latency_ms": _elapsed_ms(start),
+                },
+            )
             return
 
         context = self.memory.read(user_id, message)
@@ -241,11 +240,14 @@ class Agent:
             # pas interrompre le flux SSE au milieu — le client verrait une
             # connexion coupée sans event "final" exploitable.
             logger.exception("respond_traced: échec en aval pour user_id=%s", user_id)
-            yield "final", {
-                "answer": DEFAULT_REFUSAL,
-                "status": "error",
-                "latency_ms": _elapsed_ms(start),
-            }
+            yield (
+                "final",
+                {
+                    "answer": DEFAULT_REFUSAL,
+                    "status": "error",
+                    "latency_ms": _elapsed_ms(start),
+                },
+            )
             return
         yield "routing", _routing_payload(routing)
         if routing.tool_result is not None:
@@ -446,8 +448,7 @@ class Agent:
                 RoutingInfo(handler="tool", tool_name="memory_forget", tool_result=result),
             )
         return (
-            f"C'est fait, j'ai oublié cette information ({report.count} élément(s) "
-            "supprimé(s)).",
+            f"C'est fait, j'ai oublié cette information ({report.count} élément(s) supprimé(s)).",
             RoutingInfo(handler="tool", tool_name="memory_forget", tool_result=result),
         )
 

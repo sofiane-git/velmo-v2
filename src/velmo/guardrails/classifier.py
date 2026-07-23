@@ -206,7 +206,7 @@ class LlamaGuardClassifier:
         if self.last_latency_ms > self._latency_threshold_ms:
             logger.warning(
                 "LlamaGuardClassifier : latence %.0fms > seuil %.0fms (modèle %s) — "
-                "envisager la bascule vers llama-guard3:1b (voir docs/job/"
+                "envisager la bascule vers llama-guard3:1b (voir docs/reference/"
                 "conceptions/conception_chantier2_guardrails.md §Seuil de bascule).",
                 self.last_latency_ms,
                 self._latency_threshold_ms,
@@ -248,7 +248,12 @@ class CombinedClassifier:
             # Panne du backend primaire (Ollama down/timeout non absorbé) : le
             # lexical, déjà calculé, reste le seul signal — mieux qu'un échec
             # total qui priverait aussi la matrice de repli (pipeline.py) du
-            # signal lexical qu'elle aurait pu exploiter.
+            # signal lexical qu'elle aurait pu exploiter. Dégradation
+            # journalisée, jamais silencieuse (D4-05).
+            logger.warning(
+                "Classifieur : backend primaire (Llama Guard/Ollama) en échec — "
+                "repli sur le lexique FR seul pour ce message (G1/G2/G3 dégradé)."
+            )
             primary_result = ClassifierResult(scores={}, reasoning={})
         scores: dict[str, float] = {}
         reasoning: dict[str, str] = {}

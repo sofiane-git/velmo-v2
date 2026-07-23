@@ -11,12 +11,26 @@ def test_run_eval_blocks_when_latency_slo_exceeded(tmp_path, monkeypatch) -> Non
     """M2/Gates non-fonctionnels : un p95 au-dessus du plancher doit faire
     chuter `global_` à 0.0 même si les 3 notes de dimension sont parfaites —
     sinon la latence ne "gate" pas vraiment (conception §Gates non-fonctionnels)."""
-    import velmo.mlops as mlops_module
-
-    monkeypatch.setattr(mlops_module, "LATENCY_P95_CEILING_MS", -1.0)  # tout dépasse
+    monkeypatch.setenv("GATE_LATENCY_P95_CEILING_MS", "-1.0")  # tout dépasse
     db_url = f"sqlite:///{tmp_path}/mlops_latency.db"
     scores = run_eval(build_reference_agent(), db_url=db_url)
     assert scores.global_ == 0.0
+
+
+def test_gate_passed_derives_from_configured_min_score(tmp_path, monkeypatch) -> None:
+    # D8-05 : `gate_passed` persisté doit dériver de `settings.gate_min_score`
+    # (source unique), pas d'un littéral 0.80 dupliqué — un plancher remonté à
+    # 1.01 (inatteignable) doit faire échouer le gate persisté.
+    monkeypatch.setenv("GATE_MIN_SCORE", "1.01")
+    db_url = f"sqlite:///{tmp_path}/mlops_gate_cfg.db"
+    run_eval(build_reference_agent(), db_url=db_url)
+
+    engine = make_mlops_engine(db_url)
+    session = sessionmaker(bind=engine, future=True)()
+    runs = session.query(EvalRun).all()
+    assert len(runs) == 1
+    assert runs[0].gate_passed is False
+    session.close()
 
 
 def test_run_eval_persists_version_run_and_cases(tmp_path) -> None:
@@ -98,13 +112,23 @@ def test_run_eval_steps_yields_ordered_suite_then_final_events(tmp_path) -> None
     # lui-même précédé d'un case_start pour le même case_id (cf.
     # `run_*_suite_steps` — un cas démarre puis se termine avant le suivant).
     for suite in ("memory", "guardrails", "quality"):
-        starts = [e.payload["case_id"] for e in events if e.stage == "case_start" and e.payload["suite"] == suite]
-        dones = [e.payload["case_id"] for e in events if e.stage == "case_done" and e.payload["suite"] == suite]
+        starts = [
+            e.payload["case_id"]
+            for e in events
+            if e.stage == "case_start" and e.payload["suite"] == suite
+        ]
+        dones = [
+            e.payload["case_id"]
+            for e in events
+            if e.stage == "case_done" and e.payload["suite"] == suite
+        ]
         assert starts == dones
         assert len(starts) > 0
         suite_done = next(e for e in suite_done_events if e.payload["suite"] == suite)
         assert suite_done.payload["cases"] == len(dones)
-        for done_event in (e for e in events if e.stage == "case_done" and e.payload["suite"] == suite):
+        for done_event in (
+            e for e in events if e.stage == "case_done" and e.payload["suite"] == suite
+        ):
             assert isinstance(done_event.payload["passed"], bool)
             assert 0.0 <= done_event.payload["score"] <= 1.0
 

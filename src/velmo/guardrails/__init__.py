@@ -9,17 +9,23 @@ Orchestre `patterns.py` (étage 1, regex), `classifier.py`/`judge.py`/
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import sessionmaker
 
+from velmo.config import Settings, get_settings
+
 from . import pipeline
 from .classifier import ModerationClassifier, get_classifier
 from .db import bind_user, count_recent_audit, make_guardrails_engine, write_audit
 from .judge import Judge, get_judge
 from .patterns import redact_pii, redact_secret_leak
+from .pii_redaction import redact_spans
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "GENERIC_REFUSAL",
@@ -94,8 +100,33 @@ class Decision:
     reason: str = ""
     refusal: str | None = None
     filtered_text: str | None = None  # texte masqué si action == "filter"
+    # Texte à persister par l'appelant (agent), déjà redacté par l'engine selon
+    # la décision — l'appelant ne re-dispatch PAS sur la catégorie pour choisir
+    # le masquage (fuite de connaissance guardrails→agent, D3-05).
+    stored_text: str | None = None
     escalate: bool = False
     hits: list[pipeline.Hit] = field(default_factory=list)
+
+
+def _warn_unconfigured_stages(settings: Settings) -> None:
+    """Journalise au démarrage les étages 2/3 non configurés / dégradés — une
+    dégradation ne doit jamais être silencieuse (D4-05). Baseline manquante =
+    `warning` ; feature-flag optionnel absent = `info`."""
+    if not settings.ollama_url:
+        logger.warning(
+            "Garde-fous : OLLAMA_URL absent — classifieur en repli lexical seul (G1/G2/G3 dégradé)."
+        )
+    if not (settings.azure_openai_guard_endpoint and settings.azure_openai_guard_api_key):
+        logger.warning(
+            "Garde-fous : juge cloud non configuré — RuleBasedJudge seul (G5/G6/G7 dégradé)."
+        )
+    if not (settings.azure_content_safety_endpoint and settings.azure_content_safety_key):
+        logger.info("Garde-fous : Prompt Shields non configuré (renfort G6 désactivé).")
+    if not (settings.azure_language_endpoint and settings.azure_language_key):
+        logger.info(
+            "Garde-fous : PII redaction (Azure AI Language) non configurée "
+            "(G4 texte libre en sortie désactivé)."
+        )
 
 
 class GuardrailEngine:
@@ -111,6 +142,7 @@ class GuardrailEngine:
         self.events: list[dict[str, Any]] = []
         engine = make_guardrails_engine(db_url)
         self._Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        _warn_unconfigured_stages(get_settings())
         self.classifier = classifier or get_classifier()
         self.judge = judge or get_judge()
 
@@ -169,8 +201,19 @@ class GuardrailEngine:
             action="filter",
             category="pii",
             filtered_text=filtered,
+            stored_text=filtered,
             hits=decision.hits,
         )
+
+    @staticmethod
+    def _redact_for_storage(text: str, category: str | None) -> str:
+        """Texte à persister sans laisser survivre une valeur sensible en clair
+        — l'engine porte la connaissance guardrails, pas l'agent (D3-05)."""
+        if category == "pii":
+            return redact_pii(text)
+        if category == "secret_leak":
+            return redact_secret_leak(text)
+        return text
 
     def _check(
         self, text: str, *, location: str, user_id: str | None, source_thread_id: str | None
@@ -222,11 +265,18 @@ class GuardrailEngine:
                     refusal=REFUSAL_MESSAGES.get(blocking.category, GENERIC_REFUSAL),
                     escalate=escalate,
                     hits=relevant_hits,
+                    stored_text=self._redact_for_storage(text, blocking.category),
                 )
 
             filtering = [h for h in relevant_hits if h.action == "filter"]
             if filtering:
                 filtered_text = text
+                # Spans PII (texte libre Azure) d'abord : offsets calculés sur le
+                # texte d'origine, appliqués avant tout masquage regex qui en
+                # changerait la longueur (D4-03).
+                spans = [s for h in filtering if h.category == "pii" and h.spans for s in h.spans]
+                if spans:
+                    filtered_text = redact_spans(filtered_text, spans)
                 for hit in filtering:
                     if hit.category == "pii":
                         filtered_text = redact_pii(filtered_text)
@@ -241,10 +291,11 @@ class GuardrailEngine:
                     action="filter",
                     category=filtering[0].category,
                     filtered_text=filtered_text,
+                    stored_text=filtered_text,
                     escalate=escalate,
                     hits=relevant_hits,
                 )
 
-            return Decision(allowed=True, action="allow", hits=relevant_hits)
+            return Decision(allowed=True, action="allow", hits=relevant_hits, stored_text=text)
         finally:
             session.close()

@@ -1,6 +1,6 @@
 """Observabilité : interface pluggable (`ObservabilitySink`), implémentation
 par défaut no-op (`NullSink`), implémentation réelle (`LangfuseSink`, Langfuse
-Cloud EU — voir deploy/langfuse/README.md pour la config). `eval_run` ne stocke qu'un pointeur
+Cloud EU — voir docs/how-to/langfuse-setup.md pour la config). `eval_run` ne stocke qu'un pointeur
 (`langfuse_trace_url`), jamais la donnée de décision — voir
 conception_chantier3_evaluation_mlops.md §Observabilité.
 
@@ -247,7 +247,9 @@ def get_langfuse_client() -> "Langfuse | None":
     from velmo.config import get_settings
 
     settings = get_settings()
-    if not (settings.langfuse_public_key and settings.langfuse_secret_key and settings.langfuse_base_url):
+    if not (
+        settings.langfuse_public_key and settings.langfuse_secret_key and settings.langfuse_base_url
+    ):
         return None
     try:
         from langfuse import Langfuse
@@ -262,11 +264,28 @@ def get_langfuse_client() -> "Langfuse | None":
         return None
 
 
-_STAGE_EVENTS = ("input_guardrail", "memory_read", "routing", "tool_result", "output_guardrail", "memory_write")
+_STAGE_EVENTS = (
+    "input_guardrail",
+    "memory_read",
+    "routing",
+    "tool_result",
+    "output_guardrail",
+    "memory_write",
+)
 
 
-def _stage_as_type(event_type: str) -> Literal[
-    "generation", "embedding", "span", "agent", "tool", "chain", "retriever", "evaluator", "guardrail"
+def _stage_as_type(
+    event_type: str,
+) -> Literal[
+    "generation",
+    "embedding",
+    "span",
+    "agent",
+    "tool",
+    "chain",
+    "retriever",
+    "evaluator",
+    "guardrail",
 ]:
     if event_type in ("input_guardrail", "output_guardrail"):
         return "guardrail"
@@ -403,8 +422,13 @@ class InstrumentedLLM:
         tokens = _estimate_tokens(system, context, message, result)
         cost = estimate_cost(tokens, self._model)
         _resolve_sink(self._sink).on_llm_call(
-            self._component, tokens, latency_ms, cost,
-            input=message, output=result, model=self._model,
+            self._component,
+            tokens,
+            latency_ms,
+            cost,
+            input=message,
+            output=result,
+            model=self._model,
         )
         return result
 
@@ -428,8 +452,13 @@ class InstrumentedExtractor:
         tokens = _estimate_tokens(user_message, assistant_message)
         cost = estimate_cost(tokens, self._model)
         _resolve_sink(self._sink).on_llm_call(
-            self._component, tokens, latency_ms, cost,
-            input=user_message, output=str(result), model=self._model,
+            self._component,
+            tokens,
+            latency_ms,
+            cost,
+            input=user_message,
+            output=str(result),
+            model=self._model,
         )
         return result
 
@@ -447,13 +476,20 @@ class InstrumentedClassifier:
         self._sink = sink
         self._component = component
 
-    def _record(self, text: str, start: float, output: dict[str, float] | "ClassifierResult" | None = None) -> None:
+    def _record(
+        self, text: str, start: float, output: dict[str, float] | "ClassifierResult" | None = None
+    ) -> None:
         latency_ms = (time.monotonic() - start) * 1000
         tokens = _estimate_tokens(text)
         cost = estimate_cost(tokens, "local-classifier")
         _resolve_sink(self._sink).on_llm_call(
-            self._component, tokens, latency_ms, cost,
-            input=text, output=str(output), model="local-classifier",
+            self._component,
+            tokens,
+            latency_ms,
+            cost,
+            input=text,
+            output=str(output),
+            model="local-classifier",
         )
 
     def score(self, text: str) -> dict[str, float]:
@@ -481,14 +517,19 @@ class InstrumentedJudge:
         self._component = component
         self._model = model
 
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+    def evaluate(self, text: str) -> dict[str, float | str]:
         start = time.monotonic()
-        result = self._inner.evaluate(text, agent_response)
+        result = self._inner.evaluate(text)
         latency_ms = (time.monotonic() - start) * 1000
-        tokens = _estimate_tokens(text, agent_response or "")
+        tokens = _estimate_tokens(text, "")
         cost = estimate_cost(tokens, self._model)
         _resolve_sink(self._sink).on_llm_call(
-            self._component, tokens, latency_ms, cost,
-            input=text, output=str(result), model=self._model,
+            self._component,
+            tokens,
+            latency_ms,
+            cost,
+            input=text,
+            output=str(result),
+            model=self._model,
         )
         return result

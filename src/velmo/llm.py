@@ -30,7 +30,7 @@ class EchoLLM:
 
     Permet au harness de conversation de démarrer sans identifiants Azure — en
     dev/CI uniquement (cf. `get_llm`) ; jamais censé être atteint en production
-    (contrat de démarrage, `docs/job/conceptions/conception_chantier1_memoire.md`
+    (contrat de démarrage, `docs/reference/conceptions/conception_chantier1_memoire.md`
     §Contrat de démarrage). Loggue un warning à chaque instanciation : un repli
     non voulu doit être visible immédiatement, pas découvert après coup.
     """

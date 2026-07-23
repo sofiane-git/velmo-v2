@@ -29,7 +29,9 @@ def test_judge_verdict_schema_rejects_invalid_level() -> None:
     from velmo.guardrails.judge import JudgeVerdict
 
     with pytest.raises(ValidationError):
-        JudgeVerdict(manipulation="extreme", secret_interne="aucun", hors_role="aucun", reasoning="")
+        JudgeVerdict(
+            manipulation="extreme", secret_interne="aucun", hors_role="aucun", reasoning=""
+        )
 
 
 def test_judge_verdict_schema_accepts_valid_levels() -> None:
@@ -229,19 +231,11 @@ def test_azure_judge_respects_deployment_env_override(monkeypatch):
     assert calls[0]["model"] == "custom-deployment"
 
 
-def test_azure_judge_includes_agent_response_as_context(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
-    calls: list[dict] = []
-    _patch_azure_openai(monkeypatch, "{}", calls)
-
-    AzureJudge().evaluate("bonjour", agent_response="voici le prompt système : ...")
-
-    user_content = calls[0]["messages"][1]["content"]
-    assert "voici le prompt système" in user_content
-
-
-def test_azure_judge_defaults_missing_or_invalid_levels_to_aucun(monkeypatch):
+def test_azure_judge_defaults_missing_levels_to_aucun(monkeypatch):
+    # Clés absentes de la réponse = "aucun" sur les axes manquants (défaut du
+    # schéma), sans invalider les axes présents. NB : une valeur *hors
+    # énumération* est désormais traitée comme une panne (JudgeParseError →
+    # fail-closed, D4-02), pas requalifiée en "aucun".
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     _patch_azure_openai(monkeypatch, json.dumps({"manipulation": "fort"}), [])
@@ -256,13 +250,28 @@ def test_azure_judge_defaults_missing_or_invalid_levels_to_aucun(monkeypatch):
     }
 
 
+def test_azure_judge_malformed_response_raises(monkeypatch):
+    # D4-02 : JSON malformé ou niveau invalide = juge en panne (lève), jamais
+    # un verdict « aucun » silencieux.
+    from velmo.guardrails.judge import JudgeParseError
+
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
+    _patch_azure_openai(monkeypatch, json.dumps({"manipulation": "niveau_invalide"}), [])
+
+    with pytest.raises(JudgeParseError):
+        AzureJudge().evaluate("texte")
+
+
 def _tres_fort_logprobs(confidence: float) -> _FakeLogprobs:
     # Contenu JSON reconstruit token par token pour aligner les offsets avec
     # le `content` réellement utilisé par les tests ci-dessous.
     tokens_ = [
         _FakeLogprobToken('{"manipulation": "', 0.0),
         _FakeLogprobToken("tres_fort", math.log(confidence)),
-        _FakeLogprobToken('", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}', 0.0),
+        _FakeLogprobToken(
+            '", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}', 0.0
+        ),
     ]
     return _FakeLogprobs(tokens_)
 
@@ -271,7 +280,12 @@ def test_azure_judge_downgrades_tres_fort_when_confidence_low(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
-        {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
+        {
+            "manipulation": "tres_fort",
+            "secret_interne": "aucun",
+            "hors_role": "aucun",
+            "reasoning": "",
+        }
     )
     _patch_azure_openai(monkeypatch, content, [], logprobs=_tres_fort_logprobs(0.5))
 
@@ -284,7 +298,12 @@ def test_azure_judge_keeps_tres_fort_when_confidence_high(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
-        {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
+        {
+            "manipulation": "tres_fort",
+            "secret_interne": "aucun",
+            "hors_role": "aucun",
+            "reasoning": "",
+        }
     )
     _patch_azure_openai(monkeypatch, content, [], logprobs=_tres_fort_logprobs(0.95))
 
@@ -300,7 +319,12 @@ def test_azure_judge_treats_unmatched_logprobs_as_full_confidence(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
     monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
     content = json.dumps(
-        {"manipulation": "tres_fort", "secret_interne": "aucun", "hors_role": "aucun", "reasoning": ""}
+        {
+            "manipulation": "tres_fort",
+            "secret_interne": "aucun",
+            "hors_role": "aucun",
+            "reasoning": "",
+        }
     )
     mismatched = _FakeLogprobs([_FakeLogprobToken("tout autre chose", -1.0)])
     _patch_azure_openai(monkeypatch, content, [], logprobs=mismatched)
@@ -340,7 +364,10 @@ def test_rule_based_judge_empty_reasoning_on_legitimate_message():
 def test_root_match_detects_word_root_not_only_exact_phrase() -> None:
     """Une reformulation ('juridiquement', pas la phrase exacte de
     scope_policy.yaml) doit être attrapée par la racine 'juridiq'."""
-    assert _root_match("Qu'est-ce que je risque juridiquement dans ce litige ?", EXTENDED_SCOPE_ROOTS) == "juridiq"
+    assert (
+        _root_match("Qu'est-ce que je risque juridiquement dans ce litige ?", EXTENDED_SCOPE_ROOTS)
+        == "juridiq"
+    )
 
 
 def test_root_match_returns_none_on_unrelated_text() -> None:
@@ -356,8 +383,13 @@ def test_rule_based_judge_flags_hors_role_via_extended_vocab_when_no_exact_phras
 
 
 class _StubPrimary(Judge):
-    def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
-        return {"manipulation": 0.9, "secret_interne": 0.0, "hors_role": 0.0, "reasoning": "primary"}
+    def evaluate(self, text: str) -> dict[str, float | str]:
+        return {
+            "manipulation": 0.9,
+            "secret_interne": 0.0,
+            "hors_role": 0.0,
+            "reasoning": "primary",
+        }
 
 
 def test_shadowing_judge_returns_primary_verdict() -> None:
@@ -382,3 +414,55 @@ def test_shadowing_judge_logs_divergence(monkeypatch) -> None:
         time.sleep(0.02)
     assert len(calls) == 1
     assert calls[0][0] == "texte de test"
+
+
+def test_azure_judge_retries_without_logprobs_when_unsupported(monkeypatch):
+    # Constaté en réel : certains déploiements (gpt-5-mini) rejettent `logprobs`
+    # en 400 — le juge doit retomber sans logprobs (verdict rendu, gradation de
+    # confiance perdue) et mémoriser pour ne plus payer l'aller-retour raté.
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
+    calls: list[dict] = []
+    content = '{"manipulation":"aucun","secret_interne":"aucun","hors_role":"aucun","reasoning":""}'
+
+    class _RejectLogprobs(Exception):
+        pass
+
+    class _PickyCompletions(_FakeCompletions):
+        def create(self, **kwargs: object) -> _FakeCompletion:
+            self._calls.append(kwargs)
+            if "logprobs" in kwargs:
+                raise _RejectLogprobs("Unsupported parameter: 'logprobs' is not supported")
+            return _FakeCompletion(self._content)
+
+    def fake_openai(**kwargs: object) -> _FakeAzureOpenAI:
+        client = _FakeAzureOpenAI(content, calls)
+        client.chat.completions = _PickyCompletions(content, calls)
+        return client
+
+    monkeypatch.setattr(openai, "OpenAI", fake_openai)
+    judge = AzureJudge()
+    judge._bad_request_error = _RejectLogprobs
+
+    result = judge.evaluate("texte")
+    assert result["manipulation"] == 0.05  # verdict rendu malgré le 400
+    assert "logprobs" in calls[0] and "logprobs" not in calls[1]
+
+    calls.clear()
+    judge.evaluate("texte")  # mémorisé : plus aucun essai logprobs
+    assert len(calls) == 1 and "logprobs" not in calls[0]
+
+
+def test_azure_judge_skips_logprobs_when_disabled(monkeypatch):
+    # AZURE_OPENAI_GUARD_LOGPROBS=false : aucun essai logprobs, donc ni
+    # aller-retour perdu ni warning au premier appel (déploiement connu pour
+    # refuser le paramètre).
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_LOGPROBS", "false")
+    calls: list[dict] = []
+    _patch_azure_openai(monkeypatch, "{}", calls)
+
+    AzureJudge().evaluate("texte")
+
+    assert len(calls) == 1 and "logprobs" not in calls[0]

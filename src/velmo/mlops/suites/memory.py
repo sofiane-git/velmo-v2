@@ -17,7 +17,12 @@ from typing import Any, cast
 from velmo.config import get_settings
 from velmo.memory import MemoryManager
 from velmo.memory.extractor import FactExtractor, get_extractor
-from velmo.mlops.observability import InstrumentedExtractor, InstrumentedLLM, NullSink, ObservabilitySink
+from velmo.mlops.observability import (
+    InstrumentedExtractor,
+    InstrumentedLLM,
+    NullSink,
+    ObservabilitySink,
+)
 from velmo.mlops.results import CaseResult, CaseStepEvent, with_retry
 
 EVAL_PATH = Path(__file__).resolve().parents[4] / "eval" / "memory_cases.jsonl"
@@ -88,17 +93,26 @@ def _run_recall_or_persistence_case(
         rendered = manager.read(case["user_id"], case["evaluation"]["question"]).render()
         passed = case["evaluation"]["expected_substring"] in rendered
         return CaseResult(
-            case_id=case["id"], suite="memory", passed=passed,
-            score=1.0 if passed else 0.0, latency_ms=(time.monotonic() - start) * 1000,
+            case_id=case["id"],
+            suite="memory",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
         )
     except Exception:
         return CaseResult(
-            case_id=case["id"], suite="memory", passed=False, score=0.0,
-            latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
+            case_id=case["id"],
+            suite="memory",
+            passed=False,
+            score=0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
+            error_kind="infra",
         )
 
 
-def _run_forget_case(case: dict[str, Any], db_url: str | None, sink: ObservabilitySink) -> CaseResult:
+def _run_forget_case(
+    case: dict[str, Any], db_url: str | None, sink: ObservabilitySink
+) -> CaseResult:
     start = time.monotonic()
     try:
         manager = _build_manager(db_url, sink, token_budget=8000)
@@ -112,17 +126,26 @@ def _run_forget_case(case: dict[str, Any], db_url: str | None, sink: Observabili
         rendered = manager.read(case["user_id"], case["evaluation"]["question"]).render()
         passed = case["evaluation"]["forbidden_substring"] not in rendered
         return CaseResult(
-            case_id=case["id"], suite="memory", passed=passed,
-            score=1.0 if passed else 0.0, latency_ms=(time.monotonic() - start) * 1000,
+            case_id=case["id"],
+            suite="memory",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
         )
     except Exception:
         return CaseResult(
-            case_id=case["id"], suite="memory", passed=False, score=0.0,
-            latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
+            case_id=case["id"],
+            suite="memory",
+            passed=False,
+            score=0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
+            error_kind="infra",
         )
 
 
-def _run_inspect_case(case: dict[str, Any], db_url: str | None, sink: ObservabilitySink) -> CaseResult:
+def _run_inspect_case(
+    case: dict[str, Any], db_url: str | None, sink: ObservabilitySink
+) -> CaseResult:
     start = time.monotonic()
     try:
         manager = _build_manager(db_url, sink, token_budget=8000)
@@ -131,20 +154,29 @@ def _run_inspect_case(case: dict[str, Any], db_url: str | None, sink: Observabil
         evaluation = case["evaluation"]
         facts = cast(list[dict[str, Any]], inspection["facts"])
         matching = [
-            f for f in facts
-            if f["key"] == evaluation["expected_key"] and evaluation["expected_substring"] in f["value"]
+            f
+            for f in facts
+            if f["key"] == evaluation["expected_key"]
+            and evaluation["expected_substring"] in f["value"]
         ]
         passed = len(matching) > 0
         if passed and evaluation.get("expect_source"):
             passed = matching[0]["source_thread_id"] is not None
         return CaseResult(
-            case_id=case["id"], suite="memory", passed=passed,
-            score=1.0 if passed else 0.0, latency_ms=(time.monotonic() - start) * 1000,
+            case_id=case["id"],
+            suite="memory",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
         )
     except Exception:
         return CaseResult(
-            case_id=case["id"], suite="memory", passed=False, score=0.0,
-            latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
+            case_id=case["id"],
+            suite="memory",
+            passed=False,
+            score=0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
+            error_kind="infra",
         )
 
 
@@ -166,23 +198,28 @@ def _run_r3_group(
         try:
             rendered = manager.read(case["user_id"], case["evaluation"]["question"]).render()
             own = case["evaluation"]["expected_substring"]
-            others = [
-                c["evaluation"]["expected_substring"] for c in cases if c["id"] != case["id"]
-            ]
+            others = [c["evaluation"]["expected_substring"] for c in cases if c["id"] != case["id"]]
             recall_ok = own in rendered
             no_leak = _check_no_cross_leak(own, others, rendered)
             passed = recall_ok and no_leak
             results.append(
                 CaseResult(
-                    case_id=case["id"], suite="memory", passed=passed,
-                    score=1.0 if passed else 0.0, latency_ms=(time.monotonic() - start) * 1000,
+                    case_id=case["id"],
+                    suite="memory",
+                    passed=passed,
+                    score=1.0 if passed else 0.0,
+                    latency_ms=(time.monotonic() - start) * 1000,
                 )
             )
         except Exception:
             results.append(
                 CaseResult(
-                    case_id=case["id"], suite="memory", passed=False, score=0.0,
-                    latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
+                    case_id=case["id"],
+                    suite="memory",
+                    passed=False,
+                    score=0.0,
+                    latency_ms=(time.monotonic() - start) * 1000,
+                    error_kind="infra",
                 )
             )
     return results
@@ -218,9 +255,13 @@ def run_memory_suite_steps(
         # autres cas gardent le budget par défaut (8000, cf. Chantier 1) pour
         # ne jamais déclencher de résumé sur des conversations courtes.
         if case["evaluation"].get("requires_summarization"):
-            result = with_retry(functools.partial(_run_recall_with_small_budget, case, db_url, sink))
+            result = with_retry(
+                functools.partial(_run_recall_with_small_budget, case, db_url, sink)
+            )
         elif evaluation_type in ("recall", "persistence"):
-            result = with_retry(functools.partial(_run_recall_or_persistence_case, case, db_url, sink))
+            result = with_retry(
+                functools.partial(_run_recall_or_persistence_case, case, db_url, sink)
+            )
         elif evaluation_type == "forget":
             result = with_retry(functools.partial(_run_forget_case, case, db_url, sink))
         elif evaluation_type == "inspect":
@@ -268,11 +309,18 @@ def _run_recall_with_small_budget(
         rendered = manager.read(case["user_id"], case["evaluation"]["question"]).render()
         passed = case["evaluation"]["expected_substring"] in rendered
         return CaseResult(
-            case_id=case["id"], suite="memory", passed=passed,
-            score=1.0 if passed else 0.0, latency_ms=(time.monotonic() - start) * 1000,
+            case_id=case["id"],
+            suite="memory",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
         )
     except Exception:
         return CaseResult(
-            case_id=case["id"], suite="memory", passed=False, score=0.0,
-            latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
+            case_id=case["id"],
+            suite="memory",
+            passed=False,
+            score=0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
+            error_kind="infra",
         )

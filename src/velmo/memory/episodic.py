@@ -91,11 +91,16 @@ class PgVectorEpisodic:
 
 def get_episodic_backend(db_url: str | None = None) -> EpisodicVectorStore:
     """pgvector si `db_url` (ou `Settings.db_url`) pointe vers un Postgres
-    joignable ; sinon `LocalEpisodic`. Ne lève jamais — toute base injoignable
-    retombe sur le repli local."""
+    joignable ; sinon `LocalEpisodic`. En production, un Postgres configuré mais
+    injoignable lève plutôt que de dégrader silencieusement la mémoire
+    épisodique (`require_durable_store`, audit D3-03) ; en dev/CI le repli local
+    reste toléré."""
+    from velmo.config import require_durable_store
     from velmo.memory.db import _postgres_reachable
 
     resolved = db_url or get_settings().db_url
-    if resolved.startswith("postgresql") and _postgres_reachable(resolved):
-        return PgVectorEpisodic()
+    if resolved.startswith("postgresql"):
+        if _postgres_reachable(resolved):
+            return PgVectorEpisodic()
+        require_durable_store("mémoire épisodique", resolved)
     return LocalEpisodic()

@@ -95,7 +95,7 @@ SUMMARY_SYSTEM = (
     "1994), agent confirme expédition prévue le 12/03, client précise taille 44 et "
     "signale qu'un précédent colis (commande #4108) est arrivé déchiré, agent "
     "propose un avoir de 15€.\n"
-    "→ \"Le client (taille 44) suit la commande #4471, expédition prévue le 12/03. "
+    '→ "Le client (taille 44) suit la commande #4471, expédition prévue le 12/03. '
     "Litige ouvert sur la commande #4108 (colis déchiré), avoir de 15€ proposé par "
     "l'agent.\""
 )
@@ -144,7 +144,7 @@ class RemovedProcedure:
 @dataclass
 class ForgetReport:
     """Détail de ce qu'une suppression (`forget`/`forget_all`) a réellement
-    effacé — la traçabilité (`docs/reco_expert.md`) exige de pouvoir inspecter
+    effacé — la traçabilité (`docs/reference/reco_expert.md`) exige de pouvoir inspecter
     ce qui a été retenu, donc aussi ce qui a été rendu à l'oubli."""
 
     count: int
@@ -172,7 +172,7 @@ class MemoryManager:
     def __init__(
         self,
         *,
-        token_budget: int = 2000,
+        token_budget: int | None = None,
         confidence_threshold: float | None = None,
         session_gap_hours: float = 4.0,
         keep_last_n_turns: int = 10,
@@ -181,7 +181,9 @@ class MemoryManager:
         episodic_store: EpisodicVectorStore | None = None,
         llm: LLM | None = None,
     ) -> None:
-        self.token_budget = token_budget
+        self.token_budget = (
+            token_budget if token_budget is not None else get_settings().memory_token_budget
+        )
         self.confidence_threshold = (
             confidence_threshold
             if confidence_threshold is not None
@@ -420,9 +422,7 @@ class MemoryManager:
             # True)`), sans appelant synchrone pour observer/relancer l'échec —
             # doit rester visible côté ops plutôt qu'avalé en silence (cf.
             # `LLMExtractor.extract`, même logique).
-            logger.exception(
-                "MemoryManager._extract_and_persist: échec pour user_id=%s", user_id
-            )
+            logger.exception("MemoryManager._extract_and_persist: échec pour user_id=%s", user_id)
             return WriteReport()
         finally:
             session.close()
@@ -466,9 +466,7 @@ class MemoryManager:
                 session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
             )
             if changed:
-                write_audit(
-                    session, user_id, "write", f"procedure:{ep.trigger}", actor="extractor"
-                )
+                write_audit(session, user_id, "write", f"procedure:{ep.trigger}", actor="extractor")
 
         # 2. Résumé LLM (remplace la concaténation brute).
         try:
@@ -501,7 +499,9 @@ class MemoryManager:
             )
             for target in tombstoned:
                 persisted_summary = re.sub(
-                    rf"(?<!\w){re.escape(target)}(?!\w)", "[information supprimée]", persisted_summary
+                    rf"(?<!\w){re.escape(target)}(?!\w)",
+                    "[information supprimée]",
+                    persisted_summary,
                 )
         thread.summary = (thread.summary + " " if thread.summary else "") + persisted_summary
         if not tombstoned:
@@ -604,7 +604,7 @@ class MemoryManager:
         return report
 
     def forget_all(self, user_id: str) -> ForgetReport:
-        """Droit à l'oubli total (`docs/reco_expert.md`, R5) : purge toute la
+        """Droit à l'oubli total (`docs/reference/reco_expert.md`, R5) : purge toute la
         mémoire d'un utilisateur, court terme comme long terme.
 
         `forget(target)` ne cible qu'un élément ; ceci supprime tout — faits,
@@ -630,9 +630,7 @@ class MemoryManager:
             report = ForgetReport(
                 count=len(facts) + len(procedures) + len(episodes),
                 facts=[RemovedFact(key=f.key, value=f.value) for f in facts],
-                procedures=[
-                    RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in procedures
-                ],
+                procedures=[RemovedProcedure(trigger=p.trigger, rule=p.rule) for p in procedures],
                 episodes=[e.summary for e in episodes],
             )
 

@@ -5,48 +5,52 @@ services:
     env_file:
       - .env
     environment:
-      CHROMA_URL: http://chroma:8000
       OLLAMA_URL: http://ollama:11434
-      DB_URL: postgresql+psycopg://app:app@postgres:5432/velmo
+      # Construit à partir des mêmes variables que le service postgres (source
+      # unique .env, D6-10/D10-09) — plus de credentials littéraux dupliqués.
+      DB_URL: postgresql+psycopg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-velmo}
     depends_on:
       postgres:
         condition: service_healthy
-      chroma:
-        condition: service_started
       ollama:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8000:8000"
-    # Conteneur maintenu actif ; ouvrir le chat avec :
-    #   docker compose exec app uv run python -m velmo.cli
-    # command: [ "tail", "-f", "/dev/null" ]
-    command: ["uv", "run", "--no-sync", "uvicorn", "velmo.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    # L'image lance uvicorn par défaut (CMD du Dockerfile) — pas d'override ici,
+    # workload identique image ↔ compose. Ouvrir la CLI avec :
+    #   docker compose exec app python -m velmo.cli
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   postgres:
-    image: pgvector/pgvector:pg16
+    # Tag lisible + digest immuable (D6-04).
+    image: pgvector/pgvector:pg18@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: velmo
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-velmo}
     ports:
       - "5432:5432"
+    # pg18+ : PGDATA = /var/lib/postgresql/<major>/docker (breaking change image
+    # officielle, docker-library/postgres#1259) — monter le parent, plus
+    # /var/lib/postgresql/data (layout pg16, cassé sous pg18).
     volumes:
-      - .docker-data/postgres:/var/lib/postgresql/data
+      - .docker-data/postgres:/var/lib/postgresql
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U app -d velmo" ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-velmo}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  chroma:
-    image: chromadb/chroma:latest
-    ports:
-      - "8001:8000"
-    volumes:
-      - .docker-data/chroma:/chroma/chroma
-
   ollama:
-    image: ollama/ollama:latest
+    # Pinné par digest (D6-04).
+    image: ollama/ollama@sha256:6345fbc18bd73a1e16404be681dbc6fd291a027cab43ed541abe78c4c81051b0
     ports:
       - "11434:11434"
     volumes:
@@ -59,6 +63,14 @@ services:
         ollama pull llama-guard3:8b &&
         echo "llama-guard3:8b pulled" &&
         wait
+    healthcheck:
+      # `ollama list` réussit dès que le daemon répond (avant même la fin du
+      # pull) — la garde vaut « serveur prêt », pas « modèle téléchargé ».
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   web:
     build: ./web

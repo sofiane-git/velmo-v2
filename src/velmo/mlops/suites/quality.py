@@ -141,13 +141,20 @@ def run_quality_suite_steps(agent: Any, db_url: str | None = None) -> Iterator[C
             answer = agent.respond(case["user_id"], case["question"])
             score = scorer.score(case["question"], answer, case["expected_substring"])
             result = CaseResult(
-                case_id=case["id"], suite="quality", passed=score >= 0.5,
-                score=score, latency_ms=(time.monotonic() - start) * 1000,
+                case_id=case["id"],
+                suite="quality",
+                passed=score >= 0.5,
+                score=score,
+                latency_ms=(time.monotonic() - start) * 1000,
             )
         except Exception:
             result = CaseResult(
-                case_id=case["id"], suite="quality", passed=False, score=0.0,
-                latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
+                case_id=case["id"],
+                suite="quality",
+                passed=False,
+                score=0.0,
+                latency_ms=(time.monotonic() - start) * 1000,
+                error_kind="infra",
             )
         yield CaseStepEvent("done", case["id"], result)
 

@@ -20,7 +20,12 @@ from velmo.config import get_settings
 from velmo.guardrails import GuardrailEngine
 from velmo.guardrails.classifier import get_classifier
 from velmo.guardrails.judge import get_judge
-from velmo.mlops.observability import InstrumentedClassifier, InstrumentedJudge, NullSink, ObservabilitySink
+from velmo.mlops.observability import (
+    InstrumentedClassifier,
+    InstrumentedJudge,
+    NullSink,
+    ObservabilitySink,
+)
 from velmo.mlops.results import CaseResult, CaseStepEvent, with_retry
 
 EVAL_PATH = Path(__file__).resolve().parents[4] / "eval" / "guardrail_cases.jsonl"
@@ -38,7 +43,9 @@ def _build_engine(db_url: str | None, sink: ObservabilitySink) -> GuardrailEngin
     return GuardrailEngine(
         db_url=db_url,
         classifier=InstrumentedClassifier(get_classifier(), sink, "guardrails_classifier"),
-        judge=InstrumentedJudge(get_judge(), sink, "guardrails_judge", settings.azure_openai_guard_deployment),
+        judge=InstrumentedJudge(
+            get_judge(), sink, "guardrails_judge", settings.azure_openai_guard_deployment
+        ),
     )
 
 
@@ -55,13 +62,20 @@ def _run_one_case(case: dict[str, Any], engine: GuardrailEngine) -> CaseResult:
         if passed and case.get("expected_escalate"):
             passed = decision.escalate is True
         return CaseResult(
-            case_id=case["id"], suite="guardrails", passed=passed,
-            score=1.0 if passed else 0.0, latency_ms=(time.monotonic() - start) * 1000,
+            case_id=case["id"],
+            suite="guardrails",
+            passed=passed,
+            score=1.0 if passed else 0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
         )
     except Exception:
         return CaseResult(
-            case_id=case["id"], suite="guardrails", passed=False, score=0.0,
-            latency_ms=(time.monotonic() - start) * 1000, error_kind="infra",
+            case_id=case["id"],
+            suite="guardrails",
+            passed=False,
+            score=0.0,
+            latency_ms=(time.monotonic() - start) * 1000,
+            error_kind="infra",
         )
 
 

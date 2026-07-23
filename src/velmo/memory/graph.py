@@ -1,7 +1,7 @@
 """Orchestration du tour via LangGraph : un `StateGraph` à un nœud
 (`append_turn`), persisté par thread_id via un checkpointer Postgres (prod) ou
 SQLite (hors-ligne) — remplace les tables maison `Conversation`/`Message`
-supprimées en LangChain 1.x (`docs/job/conceptions/conception_chantier1_memoire.md`).
+supprimées en LangChain 1.x (`docs/reference/conceptions/conception_chantier1_memoire.md`).
 
 `get_checkpointer` suit la même convention que `memory.db.make_memory_engine` :
 Postgres réel si joignable, sinon repli SQLite fichier persistant (jamais
@@ -51,9 +51,7 @@ def replace_messages(messages: list[dict[str, str]]) -> dict[str, list[dict[str,
     return {_REPLACE_KEY: messages}
 
 
-def _extend_messages(
-    existing: list[dict[str, str]], new: Any
-) -> list[dict[str, str]]:
+def _extend_messages(existing: list[dict[str, str]], new: Any) -> list[dict[str, str]]:
     """Reducer : chaque `graph.invoke(...)` doit accumuler les messages du tour,
     pas écraser le fil (comportement par défaut de LangGraph sans reducer
     explicite) — sinon `write()` perdrait l'historique à chaque nouveau tour.
@@ -102,6 +100,9 @@ def get_checkpointer(db_url: str) -> Iterator[BaseCheckpointSaver[str]]:
         return
 
     if db_url.startswith("postgresql"):
+        from velmo.config import require_durable_store
+
+        require_durable_store("checkpoints LangGraph", db_url)
         logger.warning(
             "Postgres injoignable (%r) pour les checkpoints LangGraph : repli SQLite.", db_url
         )

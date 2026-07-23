@@ -2,7 +2,7 @@
 `eval_run` (résultat agrégé d'une exécution), `eval_case_result` (détail par
 cas). Append-only par convention applicative (voir §Robustesse du plan) — la
 restriction stricte au niveau rôle Postgres (INSERT/SELECT seuls) est une
-tâche d'exploitation documentée dans `docs/job/tuto_azure_deploiement.md`,
+tâche d'exploitation documentée dans `docs/tutorials/tuto_azure_deploiement.md`,
 pas quelque chose qu'une migration Alembic peut imposer sur un rôle qui
 n'existe pas encore dans ce projet à connexion unique.
 
@@ -23,6 +23,7 @@ from sqlalchemy import (
     Engine,
     Float,
     ForeignKey,
+    Integer,
     String,
     create_engine,
     event,
@@ -45,6 +46,9 @@ class AgentVersion(Base):
     prompt_hash: Mapped[str] = mapped_column(String)
     memory_config_hash: Mapped[str] = mapped_column(String)
     guardrail_config_hash: Mapped[str] = mapped_column(String)
+    # Seuils de gate hashés (Settings.gate_*, audit D8-05) — nullable : les
+    # versions enregistrées avant la migration 0011 n'en ont pas.
+    gate_config_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     git_commit: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -82,6 +86,22 @@ class EvalCaseResult(Base):
     error_kind: Mapped[str | None] = mapped_column(String, nullable=True)  # infra|agent|None
 
 
+class DriftCheckRun(Base):
+    """Mesure d'un run de drift ciblé (hors gate `EvalRun`, dont les 3 notes
+    sont NOT NULL — un run partiel ne peut pas s'y persister). Historique
+    requis par la règle « deux nuits consécutives » (conception ch.3
+    §Rollback, audit D8-03)."""
+
+    __tablename__ = "drift_check_run"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    suite: Mapped[str] = mapped_column(String)  # memory|guardrails|quality
+    cases: Mapped[int] = mapped_column(Integer)
+    passed: Mapped[int] = mapped_column(Integer)
+    note: Mapped[float] = mapped_column(Float)
+    ran_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    triggered_by: Mapped[str] = mapped_column(String, default="model-drift")
+
+
 def _default_sqlite_path() -> Path:
     return Path(__file__).resolve().parents[3] / "var" / "velmo_mlops.db"
 
@@ -110,12 +130,13 @@ def make_mlops_engine(url: str | None = None) -> Engine:
     défaut — sinon `GET /mlops/gate/history` ne verrait jamais les lignes
     qu'un test vient de persister via `DB_URL=sqlite:///...`.
     """
-    from velmo.config import get_settings
+    from velmo.config import get_settings, require_durable_store
 
     if url is None:
         url = get_settings().db_url
 
     if url.startswith("postgresql") and not _postgres_reachable(url):
+        require_durable_store("MLOps", url)
         warnings.warn(
             f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
             RuntimeWarning,
@@ -134,5 +155,8 @@ def make_mlops_engine(url: str | None = None) -> Engine:
             if isinstance(dbapi_connection, sqlite3.Connection):
                 dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
-    Base.metadata.create_all(engine)
+    # Schéma créé par l'app seulement en SQLite (repli hors-ligne/tests) ; sur
+    # Postgres, Alembic est l'unique source du schéma (D2-04).
+    if engine.url.drivername.startswith("sqlite"):
+        Base.metadata.create_all(engine)
     return engine

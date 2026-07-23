@@ -5,20 +5,63 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: read
+
 jobs:
   gate:
     runs-on: ubuntu-latest
+    # Gate hybride (audit B4) : contrairement au gate par-PR (quality.yml,
+    # mode dégradé déterministe), le gate de release évalue le VRAI modèle
+    # avec les secrets applicatifs, et persiste sa baseline dans le Postgres
+    # partagé (audit B5). Secrets à poser une fois :
+    #   gh secret set DB_URL --body "postgresql+psycopg://velmo_app:...@<srv>.postgres.database.azure.com:5432/velmo"
+    #   gh secret set AZURE_AI_INFERENCE_ENDPOINT / AZURE_AI_INFERENCE_API_KEY
+    #   gh secret set AZURE_OPENAI_GUARD_ENDPOINT / AZURE_OPENAI_GUARD_API_KEY
+    #   gh secret set ANTHROPIC_FOUNDRY_ENDPOINT / ANTHROPIC_API_KEY
+    env:
+      DB_URL: ${{ secrets.DB_URL }}
+      AZURE_AI_INFERENCE_ENDPOINT: ${{ secrets.AZURE_AI_INFERENCE_ENDPOINT }}
+      AZURE_AI_INFERENCE_API_KEY: ${{ secrets.AZURE_AI_INFERENCE_API_KEY }}
+      AZURE_OPENAI_GUARD_ENDPOINT: ${{ secrets.AZURE_OPENAI_GUARD_ENDPOINT }}
+      AZURE_OPENAI_GUARD_API_KEY: ${{ secrets.AZURE_OPENAI_GUARD_API_KEY }}
+      ANTHROPIC_FOUNDRY_ENDPOINT: ${{ secrets.ANTHROPIC_FOUNDRY_ENDPOINT }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
-      - run: uv sync
-      - name: 3 suites contre le tag (gate bloquant)
-        run: uv run python -m velmo.mlops.score --min-score 0.8 --triggered-by ci
+      - run: uv sync --locked
+      - name: Garde anti-silence — le gate release NE DOIT PAS évaluer le stub
+        # Sans ce garde, secrets absents => repli EchoLLM/SQLite silencieux :
+        # exactement les findings B4/B5 de l'audit, de retour sans bruit.
+        run: |
+          if [ -z "$AZURE_AI_INFERENCE_API_KEY" ]; then
+            echo "::error::AZURE_AI_INFERENCE_API_KEY absent — le gate release évaluerait le stub (audit B4)."
+            exit 1
+          fi
+          if [ -z "$DB_URL" ]; then
+            echo "::error::DB_URL absent — baseline de non-régression non persistante (audit B5)."
+            exit 1
+          fi
+      - name: Migrations Alembic — Postgres, unique source du schéma (D2-04/D7-17)
+        # Base historique créée par create_all avant ce câblage (jamais stampée) :
+        # si les tables applicatives existent sans alembic_version, stamp head une
+        # fois (schéma create_all == schéma head, vérifié) ; sinon chaîne normale.
+        run: |
+          if uv run python -c "import os,sys,sqlalchemy as sa; insp=sa.inspect(sa.create_engine(os.environ['DB_URL'])); sys.exit(0 if insp.has_table('customers') and not insp.has_table('alembic_version') else 1)"; then
+            uv run alembic stamp head
+          fi
+          uv run alembic upgrade head
+      - name: 3 suites contre le tag (gate bloquant, vrai modèle)
+        run: uv run python -m velmo.mlops.score --triggered-by ci
 
   approve-and-promote:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # gh release create
+
     # GitHub Environment "production" : configurer les required reviewers dans
     # Settings → Environments → production (geste manuel unique du cycle
     # normal, cf. conception_chantier3_evaluation_mlops.md §Boucle qualité).
@@ -26,7 +69,7 @@ jobs:
     # seul reviewer aujourd'hui, à étendre dès qu'une 2e personne rejoint.
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Marque le tag comme promu (GitHub Release, pas de rebuild)
         env:
           GH_TOKEN: ${{ github.token }}

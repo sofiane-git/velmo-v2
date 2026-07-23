@@ -51,6 +51,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if client is not None:
         client.flush()
 
+
 # Échoue tôt si une intégration Azure est à moitié configurée (endpoint sans
 # clé ou l'inverse) — avant que le process ne serve du trafic, pas à la
 # première requête qui la découvre.

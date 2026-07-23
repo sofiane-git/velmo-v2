@@ -8,7 +8,9 @@ BLOCKABLE = ("hate", "violence", "sexual", "pii", "out_of_scope", "prompt_inject
 
 
 def _run(text: str, location: str) -> list[pipeline.Hit]:
-    return pipeline.run(text, location=location, classifier=LexicalClassifier(), judge=RuleBasedJudge())
+    return pipeline.run(
+        text, location=location, classifier=LexicalClassifier(), judge=RuleBasedJudge()
+    )
 
 
 def test_run_short_circuits_on_injection():
@@ -61,7 +63,7 @@ def test_pipeline_filter_hit_still_runs_stage_2_3(monkeypatch) -> None:
             return ClassifierResult(scores={"hate": 0.9}, reasoning={"hate": "test"})
 
     class StubJudge(Judge):
-        def evaluate(self, text: str, agent_response: str | None = None) -> dict[str, float | str]:
+        def evaluate(self, text: str) -> dict[str, float | str]:
             return {"manipulation": 0.0, "secret_interne": 0.0, "hors_role": 0.0, "reasoning": ""}
 
     hits = pipeline.run(
@@ -143,7 +145,7 @@ def test_total_outage_fails_closed_on_moderation_categories(monkeypatch) -> None
             raise ConnectionError("down")
 
     class BrokenJudge(Judge):
-        def evaluate(self, text: str, agent_response: str | None = None):
+        def evaluate(self, text: str):
             raise ConnectionError("down")
 
     hits = pipeline.run(
@@ -156,8 +158,11 @@ def test_total_outage_fails_closed_on_moderation_categories(monkeypatch) -> None
 
 
 def test_total_outage_fails_open_on_filter_categories(monkeypatch) -> None:
-    """G4/G7 restent fail-open (loggé) même en panne totale — pas de blocage dur."""
-    from velmo.guardrails import pipeline
+    """G4/G7 restent fail-open (loggé) quand LEUR détecteur configuré tombe —
+    pas de blocage dur. G7 = juge en panne ; G4 = PII redaction configurée mais
+    en erreur (le repli par étage ne se déclenche que sur une source
+    *défaillante*, pas une source non configurée — D4-01/D4-05)."""
+    from velmo.guardrails import pii_redaction, pipeline
     from velmo.guardrails.classifier import ModerationClassifier
     from velmo.guardrails.judge import Judge
 
@@ -169,8 +174,13 @@ def test_total_outage_fails_open_on_filter_categories(monkeypatch) -> None:
             raise ConnectionError("down")
 
     class BrokenJudge(Judge):
-        def evaluate(self, text: str, agent_response: str | None = None):
+        def evaluate(self, text: str):
             raise ConnectionError("down")
+
+    def _broken_scan(text: str, settings=None):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(pii_redaction, "scan", _broken_scan)
 
     hits = pipeline.run(
         "message quelconque", location="output", classifier=BrokenClassifier(), judge=BrokenJudge()
@@ -179,6 +189,24 @@ def test_total_outage_fails_open_on_filter_categories(monkeypatch) -> None:
     for category in ("pii", "secret_leak"):
         assert category in fallback_hits
         assert fallback_hits[category].action == "flag"
+
+
+def test_unconfigured_pii_redaction_does_not_trigger_fallback(monkeypatch) -> None:
+    """Une source seulement *non configurée* (feature-flag off → `None`) ne
+    déclenche aucun repli — feature désactivée « n'ajoute rien » (D4-05)."""
+    from velmo.guardrails import pii_redaction, pipeline
+    from velmo.guardrails.classifier import LexicalClassifier
+    from velmo.guardrails.judge import RuleBasedJudge
+
+    monkeypatch.setattr(pii_redaction, "scan", lambda text, settings=None: None)
+
+    hits = pipeline.run(
+        "message tout à fait normal",
+        location="output",
+        classifier=LexicalClassifier(),
+        judge=RuleBasedJudge(),
+    )
+    assert not [h for h in hits if h.category == "pii"]
 
 
 def test_out_of_scope_is_fail_closed_not_fail_open() -> None:

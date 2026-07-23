@@ -47,10 +47,14 @@ class AllowAllGuardrails:
 
 
 def build_reference_agent() -> Agent:
+    # `db_url` explicite (SQLite en mémoire, isolé par instance) : sans lui,
+    # MemoryManager/GuardrailEngine retombent sur `Settings.db_url` — un
+    # Postgres ambiant (démarré à côté, ex. `make up`) ou un fichier SQLite
+    # partagé (`var/velmo_*.db`) entre tests, au lieu d'un état isolé.
     return Agent(
         llm=EchoLLM(),
-        memory=MemoryManager(),
-        guardrails=GuardrailEngine(),
+        memory=MemoryManager(db_url="sqlite:///:memory:"),
+        guardrails=GuardrailEngine(db_url="sqlite:///:memory:"),
         session=seeded_session(),
         kb=LocalKB(),
     )
@@ -59,7 +63,7 @@ def build_reference_agent() -> Agent:
 def build_degraded_agent() -> Agent:
     return Agent(
         llm=EchoLLM(),
-        memory=MemoryManager(),
+        memory=MemoryManager(db_url="sqlite:///:memory:"),
         guardrails=AllowAllGuardrails(),
         session=seeded_session(),
         kb=LocalKB(),

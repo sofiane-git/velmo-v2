@@ -18,9 +18,16 @@ from velmo.mlops.runner import build_gate_agent
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gate qualité MLOps Velmo 2.0")
-    parser.add_argument("--min-score", type=float, default=0.80)
+    # Défaut résolu à l'exécution depuis Settings.gate_min_score (source
+    # unique, audit D8-05) — `None` au parse pour rester surchargeable par
+    # variable d'env en test comme en CI.
+    parser.add_argument("--min-score", type=float, default=None)
     parser.add_argument("--triggered-by", default="ci")
     args = parser.parse_args()
+
+    from velmo.config import get_settings
+
+    min_score = args.min_score if args.min_score is not None else get_settings().gate_min_score
 
     from velmo.mlops.observability import CostAccumulatingSink, get_sink
 
@@ -45,7 +52,7 @@ def main() -> None:
         close()
 
     try:
-        enforce_threshold(scores, args.min_score)
+        enforce_threshold(scores, min_score)
     except DeliveryBlocked as exc:
         print(f"GATE BLOQUÉ : {exc}", file=sys.stderr)
         sys.exit(1)

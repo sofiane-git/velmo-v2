@@ -176,9 +176,7 @@ def test_compression_does_not_corrupt_dispute_fact_from_concatenated_block():
     )
 
     inspected = mm.inspect("cdispute")
-    assert any(
-        f["type"] == "dispute" and f["value"] == dispute_msg for f in inspected["facts"]
-    )
+    assert any(f["type"] == "dispute" and f["value"] == dispute_msg for f in inspected["facts"])
 
 
 def test_write_persists_procedures_from_extractor():
@@ -214,7 +212,9 @@ def test_remember_procedure_bypasses_extractor():
     mm = _mm()
     mm.remember_procedure("up2", "refund_offer", "Proposer un bon de 10%.")
     procs = mm.inspect("up2")["procedures"]
-    assert any(p["trigger"] == "refund_offer" and p["rule"] == "Proposer un bon de 10%." for p in procs)
+    assert any(
+        p["trigger"] == "refund_offer" and p["rule"] == "Proposer un bon de 10%." for p in procs
+    )
 
 
 def test_forget_removes_matching_procedure():
@@ -235,7 +235,9 @@ def test_forget_removes_matching_procedure():
     assert mm.inspect("fp")["procedures"]
     removed = mm.forget("fp", "refund")
     assert removed.count >= 1
-    assert removed.procedures == [RemovedProcedure(trigger="refund_offer", rule="Proposer un bon de 10%.")]
+    assert removed.procedures == [
+        RemovedProcedure(trigger="refund_offer", rule="Proposer un bon de 10%.")
+    ]
     assert mm.inspect("fp")["procedures"] == []
 
 
@@ -243,8 +245,9 @@ def test_read_exposes_facts_detailed_with_confidence():
     mm = MemoryManager(db_url="sqlite:///:memory:")
     mm.write("fd1", "Ma taille est L, tu peux le noter ?", "Note.")
     ctx = mm.read("fd1", "Rappelle-moi ma taille.")
-    assert any(f.key == "shoe_size" and f.value == "L" and f.confidence >= 0.7
-               for f in ctx.facts_detailed)
+    assert any(
+        f.key == "shoe_size" and f.value == "L" and f.confidence >= 0.7 for f in ctx.facts_detailed
+    )
 
 
 def test_write_returns_report_with_facts_written():
@@ -371,7 +374,9 @@ def test_remember_procedure_resolves_tombstone_and_unblocks_extractor() -> None:
     # L'extracteur peut désormais écrire à nouveau sur ce trigger.
     mm._extract_and_persist(user, "peu importe", "ok")
     procs = mm.inspect(user)["procedures"]
-    assert any(p["trigger"] == "refund_offer" and p["rule"] == "Proposer un remboursement." for p in procs)
+    assert any(
+        p["trigger"] == "refund_offer" and p["rule"] == "Proposer un remboursement." for p in procs
+    )
 
 
 def test_concurrent_writes_do_not_corrupt_shared_checkpointer() -> None:
@@ -406,7 +411,6 @@ def test_concurrent_writes_do_not_corrupt_shared_checkpointer() -> None:
         t.start()
     for t in threads:
         t.join(timeout=30)
-
 
     assert not errors, f"écriture(s) concurrente(s) en échec : {errors}"
 

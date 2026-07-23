@@ -22,7 +22,7 @@ from pathlib import Path
 from sqlalchemy import DateTime, Engine, Float, String, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-from velmo.config import get_settings
+from velmo.config import get_settings, require_durable_store
 
 
 class Base(DeclarativeBase):
@@ -87,6 +87,7 @@ def make_guardrails_engine(url: str | None = None) -> Engine:
         url = get_settings().db_url
 
     if url.startswith("postgresql") and not _postgres_reachable(url):
+        require_durable_store("guardrail_audit", url)
         warnings.warn(
             f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
             RuntimeWarning,
@@ -105,7 +106,10 @@ def make_guardrails_engine(url: str | None = None) -> Engine:
             if isinstance(dbapi_connection, sqlite3.Connection):
                 dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
-    Base.metadata.create_all(engine)
+    # Schéma créé par l'app seulement en SQLite (repli hors-ligne/tests) ; sur
+    # Postgres, Alembic est l'unique source du schéma (D2-04).
+    if engine.url.drivername.startswith("sqlite"):
+        Base.metadata.create_all(engine)
     return engine
 
 
@@ -117,9 +121,7 @@ def bind_user(session: Session, user_id: str | None) -> None:
     """
     if user_id is None or session.get_bind().dialect.name != "postgresql":
         return
-    session.execute(
-        text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id}
-    )
+    session.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id})
 
 
 def write_audit(

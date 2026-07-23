@@ -49,7 +49,9 @@ def test_llama_guard_classifier_uses_timeout_below_pipeline_call_timeout(monkeyp
 
 
 def test_lexical_classifier_detects_hate():
-    scores = LexicalClassifier().score("Ces clients sont des sous-humains qui devraient disparaitre.")
+    scores = LexicalClassifier().score(
+        "Ces clients sont des sous-humains qui devraient disparaitre."
+    )
     assert scores["hate"] >= 0.7
 
 
@@ -195,7 +197,9 @@ def test_combined_classifier_score_detailed_prefers_primary_reasoning_on_tie():
     assert result.reasoning["violence"] == "Llama Guard 3 : unsafe (S1)"
 
 
-def _logprobs_for(token: str, alt_token: str, token_logprob: float, alt_logprob: float) -> list[dict]:
+def _logprobs_for(
+    token: str, alt_token: str, token_logprob: float, alt_logprob: float
+) -> list[dict]:
     return [
         {
             "token": token,
@@ -224,7 +228,11 @@ def test_extract_p_unsafe_favors_safe_when_more_likely():
 
 def test_extract_p_unsafe_returns_none_when_safe_missing_from_top_logprobs():
     logprobs = [
-        {"token": "unsafe", "logprob": -0.01, "top_logprobs": [{"token": "unsafe", "logprob": -0.01}]}
+        {
+            "token": "unsafe",
+            "logprob": -0.01,
+            "top_logprobs": [{"token": "unsafe", "logprob": -0.01}],
+        }
     ]
     assert _extract_p_unsafe(logprobs) is None
 
