@@ -23,7 +23,7 @@ flowchart LR
     CTX --> LLM["🤖 LLM répond"]
     LLM --> W["MemoryManager.write()"]
     W --> DB[("PostgreSQL")]
-    W --> CH[("ChromaDB")]
+    W --> CH[("PostgreSQL + pgvector")]
     W -.->|"extraction auto"| DB
 
     classDef db fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20;
@@ -75,7 +75,7 @@ erDiagram
     }
     episode {
         text summary
-        string chroma_id
+        vector embedding
     }
     memory_audit {
         string action
@@ -185,7 +185,7 @@ flowchart TB
 flowchart LR
     F["forget('adresse')"] --> D1["DELETE fact"]
     D1 --> D2["Caviarde les messages<br/>qui contenaient la valeur"]
-    D2 --> D3["DELETE episodes liés<br/>+ suppression dans ChromaDB"]
+    D2 --> D3["DELETE episodes liés<br/>(texte + embedding, même ligne pgvector)"]
     D3 --> D4["DELETE procedures liées"]
     D4 --> A["memory_audit : action=delete"]
 ```
@@ -212,15 +212,15 @@ flowchart LR
 
 ---
 
-## 9. Deux bases, deux rôles
+## 9. Une base, deux rôles
 
-| | PostgreSQL | ChromaDB |
+| | PostgreSQL (classeur) | PostgreSQL + `pgvector` (recherche) |
 |---|---|---|
 | Rôle | **le classeur** — vérité exacte | **le moteur de recherche** — similarité sémantique |
-| Contient | faits, procédures, messages, audit | résumés d'épisodes (embeddings) |
+| Contient | faits, procédures, messages, audit | résumés d'épisodes + embedding, même ligne |
 | Pourquoi | suppression propre et garantie (R5) | retrouver "un litige qui ressemble à celui-ci" sans mot-clé exact |
 
-`get_episodic_backend()` : Chroma réel si dispo, sinon repli **local** (recherche par tokens) — pas de dépendance dure en dev/test.
+`get_episodic_backend()` : `pgvector` réel si Postgres joignable, sinon repli **local** (recherche par tokens) — pas de dépendance dure en dev/test.
 
 ---
 

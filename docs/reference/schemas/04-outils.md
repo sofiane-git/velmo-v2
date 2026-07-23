@@ -9,8 +9,7 @@ flowchart TB
     subgraph MAIN[" "]
         subgraph AGENT["🤖⚙️ En fonctionnement (agent + garde-fous)"]
             LC["LangGraph + LangChain 1.x<br/>orchestration du tour (StateGraph + checkpointer Postgres)<br/>LangChain 1.x = client LLM Azure + sortie structurée"]
-            PG[("PostgreSQL<br/>mémoire court/long terme, isolation par user_id,<br/>audit garde-fous, versions & verdicts CI")]
-            CH[("ChromaDB<br/>embeddings des épisodes mémoire<br/>+ recherche par similarité")]
+            PG[("PostgreSQL + pgvector<br/>mémoire court/long terme (+ embeddings épisodes/FAQ), isolation par user_id,<br/>audit garde-fous, versions & verdicts CI")]
             LGM["Llama Guard 3 8B (Ollama, local)<br/>+ repli lexical FR<br/>classifieur haine/violence/sexuel"]
             AZ["Azure OpenAI<br/>LLM-juge (garde-fous sortie,<br/>anti-injection, hors périmètre)"]
         end
@@ -52,7 +51,7 @@ flowchart TB
     classDef eval fill:#fff9c4,stroke:#f9a825,color:#5c4400;
     classDef ci fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
     classDef obs fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;
-    class LC,PG,CH,LGM,AZ,LG1 agent;
+    class LC,PG,LGM,AZ,LG1 agent;
     class JSONL,DE,LG2 eval;
     class GHA,GH,LG3 ci;
     class LF,LG4 obs;
@@ -112,10 +111,10 @@ chantier indiqué.
 
 ## Les points traités dans ce document
 
-- **Un outil, une responsabilité** : PostgreSQL décide (verdicts, isolation, pass/fail) ; Langfuse observe (coût, latence, détail de chaque appel) ; ChromaDB retrouve par similarité (embeddings) ; aucun ne duplique le travail d'un autre — le détail de chaque choix est justifié dans le chantier correspondant.
+- **Un outil, une responsabilité** : PostgreSQL décide (verdicts, isolation, pass/fail) et retrouve par similarité (`pgvector`, embeddings épisodes/FAQ) ; Langfuse observe (coût, latence, détail de chaque appel) ; aucun ne duplique le travail d'un autre — le détail de chaque choix est justifié dans le chantier correspondant.
 - **Trois natures de détection dans les garde-fous, trois outils différents** : regex/motifs (déterministe, gratuit, pour PII/formats connus), Llama Guard 3 8B via Ollama + repli lexical FR (classifieur local, rapide, pour haine/violence/sexuel explicite), Azure OpenAI en LLM-juge (coûteux mais contextuel, pour l'injection de prompt et le hors-périmètre) — chacun couvre l'angle mort de l'autre (détail : [`conception_chantier2_guardrails.md`](../conceptions/conception_chantier2_guardrails.md)).
 - **DeepEval en local, pas de compte externe** : les résultats restent dans `EVAL_RUN` (Postgres) et `mlops/report.md` — pas de dépendance à un service tiers pour un gate qui bloque la livraison.
-- **LangGraph comme colonne vertébrale mémoire** : le `checkpointer PostgresSaver` persiste l'état de thread (fil + résumé glissant R4) ; les classes `*Memory` de LangChain 0.x sont **supprimées en 1.x**, LangChain 1.x se limite au client LLM Azure + sortie structurée ; ChromaDB est accédé en client natif (détail : [`conception_chantier1_memoire.md`](../conceptions/conception_chantier1_memoire.md)).
+- **LangGraph comme colonne vertébrale mémoire** : le `checkpointer PostgresSaver` persiste l'état de thread (fil + résumé glissant R4) ; les classes `*Memory` de LangChain 0.x sont **supprimées en 1.x**, LangChain 1.x se limite au client LLM Azure + sortie structurée ; la recherche par similarité passe par `pgvector`, même Postgres (détail : [`conception_chantier1_memoire.md`](../conceptions/conception_chantier1_memoire.md)).
 - **GitHub à trois niveaux** : le dépôt (tronc `main` toujours livrable + `feature/*` courtes + **tags semver**, PR, revue) *et* Actions (exécution CI, paliers différenciés par déclencheur) *et* Environments (`staging` redéployé à chaque merge dans `main` ; `production` par **promotion du tag validé**, sans rebuild) — trois usages du même outil, pas trois outils.
 - **LLM principal de l'agent — écart assumé au brief** : `reco_expert.md` **impose** Azure AI Inference / **Kimi-K2.6** ; le déploiement réel utilise **Mistral-Large-3** (même fournisseur Azure AI Inference, variable `AZURE_AI_INFERENCE_MODEL`, cf. `llm.py`). Déviation **tracée et assumée** : la contrainte structurante du brief (« Azure AI Inference, **aucun modèle local** ») reste **respectée** — seul le modèle exact change (choix effectif de déploiement sur le tenant Azure). Le pipeline d'orchestration (LangGraph) et les composants de contrôle (Llama Guard 3, LLM-juge `gpt-5-mini`) sont indépendants de ce choix.
 

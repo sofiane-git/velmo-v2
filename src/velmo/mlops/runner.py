@@ -18,7 +18,7 @@ from velmo.mlops.observability import (
 )
 
 
-def _seeded_session() -> Session:
+def _seeded_session(db_url: str | None = None) -> Session:
     """Session de l'agent évalué — schéma créé si absent (`checkfirst=True`,
     sans effet sur une base réelle déjà migrée), puis seedée avec le jeu de
     données de référence UNIQUEMENT si la table `orders` est vide (base
@@ -32,7 +32,7 @@ def _seeded_session() -> Session:
     from velmo.db import Base, Order, make_engine
     from velmo.sampledata import seed
 
-    engine = make_engine()
+    engine = make_engine(db_url)
     # SQLite seulement (repli hors-ligne/tests) — sur Postgres, le schéma vient
     # d'Alembic (D2-04), jamais d'un create_all concurrent.
     if engine.url.drivername.startswith("sqlite"):
@@ -44,13 +44,19 @@ def _seeded_session() -> Session:
     return session
 
 
-def build_gate_agent(sink: ObservabilitySink) -> Evaluable:
+def build_gate_agent(sink: ObservabilitySink, db_url: str | None = None) -> Evaluable:
     """Assemble l'agent par défaut avec chaque composant LLM instrumenté.
     Chaque `get_*()` respecte son propre repli déjà établi (Azure si
     configuré, sinon `EchoLLM`/`LexicalClassifier`/`RuleBasedJudge`/
     `RuleBasedExtractor`) — cette fonction ne fait que les envelopper, jamais
     ne les remplace. Partagée entre le CLI (`mlops/cli.py`) et la route API
-    `/mlops/gate/run` (`api.py`) — voir docstring de module."""
+    `/mlops/gate/run` (`api.py`) — voir docstring de module.
+
+    `db_url=None` (défaut CLI/API) résout `Settings.db_url` partout, comme
+    avant. Un `db_url` explicite (ex. `run_drift_check`, tests) isole aussi
+    la session métier/mémoire/garde-fous de cet agent — sinon la suite
+    qualité d'un run ciblé (`drift_check`) resterait dépendante d'un Postgres
+    ambiant malgré le `db_url` passé aux autres suites."""
     from velmo.agent import build_default_agent
     from velmo.config import get_settings
     from velmo.guardrails import GuardrailEngine
@@ -68,13 +74,15 @@ def build_gate_agent(sink: ObservabilitySink) -> Evaluable:
             get_extractor(), sink, "memory_extractor", settings.anthropic_async_model
         ),
         llm=InstrumentedLLM(raw_llm, sink, "memory_summary", settings.azure_ai_inference_model),
+        db_url=db_url,
     )
     guardrails = GuardrailEngine(
         classifier=InstrumentedClassifier(get_classifier(), sink, "guardrails_classifier"),
         judge=InstrumentedJudge(
             get_judge(), sink, "guardrails_judge", settings.azure_openai_guard_deployment
         ),
+        db_url=db_url,
     )
     return build_default_agent(
-        session=_seeded_session(), llm=llm, memory=memory, guardrails=guardrails
+        session=_seeded_session(db_url), llm=llm, memory=memory, guardrails=guardrails
     )

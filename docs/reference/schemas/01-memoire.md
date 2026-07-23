@@ -18,7 +18,7 @@ flowchart TB
         subgraph LT["🟩 MÉMOIRE LONGUE — ce qui survit d'une visite à l'autre"]
             FACT["LES FAITS — le « quoi »<br/>« il fait du 42 », « client pro »<br/><i>PostgreSQL</i>"]
             PROC["LES HABITUDES — le « comment »<br/>« préfère un avoir à un remboursement »<br/><i>PostgreSQL</i>"]
-            EPI["LES ÉVÉNEMENTS — le « quand »<br/>« litige contrefaçon le 12 juin, escaladé »<br/><i>PostgreSQL + ChromaDB</i>"]
+            EPI["LES ÉVÉNEMENTS — le « quand »<br/>« litige contrefaçon le 12 juin, escaladé »<br/><i>PostgreSQL + pgvector</i>"]
         end
 
         MSG -->|"la conversation entière<br/>(ou son résumé si trop longue)"| PROMPT
@@ -61,4 +61,4 @@ flowchart TB
 - **Cloisonnement strict** : chaque souvenir est étiqueté avec l'identifiant du client, et toute lecture est filtrée par cet identifiant. La mémoire d'un client n'est jamais visible d'un autre. L'identifiant vient de la session authentifiée, jamais du texte du message (sinon on pourrait se faire passer pour un autre).
 - **Droit à l'oubli (RGPD)** : « oublie mon numéro de commande » déclenche une suppression **physique** et réelle — pas un simple marquage — dans les deux bases à la fois, avec une trace prouvant la suppression.
 - **Transparence** : on peut à tout moment lister tout ce que l'agent a retenu d'un client, avec l'origine et la date de chaque souvenir (un journal inaltérable note chaque écriture et chaque effacement).
-- **Deux outils de stockage, deux rôles** : PostgreSQL est _le classeur_ (la vérité exacte, facile à supprimer proprement) ; ChromaDB est _le moteur de recherche_ (retrouver les événements passés qui ressemblent à la question du moment).
+- **Un seul outil de stockage, deux usages** : PostgreSQL est à la fois _le classeur_ (la vérité exacte, facile à supprimer proprement) et _le moteur de recherche_ (l'extension `pgvector` retrouve les événements passés qui ressemblent à la question du moment) — même base, suppression atomique (R5).

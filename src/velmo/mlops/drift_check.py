@@ -71,7 +71,7 @@ def run_drift_check(
         results.append(DriftCheckResult("guardrails", len(case_results), passed, note))
 
     if "quality" in suites:
-        agent = build_gate_agent(cost_sink)
+        agent = build_gate_agent(cost_sink, db_url=db_url)
         results.append(_pass_rate_note("quality", run_quality_suite(agent, db_url=db_url)))
 
     _persist_results(results, db_url=db_url, triggered_by=triggered_by)
