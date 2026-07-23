@@ -8,19 +8,29 @@ en production, SQLite en mémoire pour les tests.
 from __future__ import annotations
 
 import enum
-import os
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
     DateTime,
+    Engine,
     Enum,
     ForeignKey,
     Numeric,
     String,
     create_engine,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    relationship,
+    sessionmaker,
+)
+
+from velmo.config import get_settings
 
 
 class Base(DeclarativeBase):
@@ -109,7 +119,7 @@ class Order(Base):
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), default=OrderStatus.paid)
     total: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime(2024, 1, 1))
-    shipping_address: Mapped[dict] = mapped_column(JSON, default=dict)
+    shipping_address: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     customer: Mapped[Customer] = relationship(back_populates="orders")
     items: Mapped[list[OrderItem]] = relationship(back_populates="order")
 
@@ -159,21 +169,26 @@ class Escalation(Base):
     customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"))
     order_id: Mapped[str | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
     reason: Mapped[str] = mapped_column(String)
+    # "support" (risque humain : menace, litige) | "security" (risque
+    # technique : fuite confirmée, récidive d'injection) — deux destinataires
+    # distincts, cf. conception_chantier2_guardrails.md §Que fait l'agent.
+    channel: Mapped[str] = mapped_column(String, default="support")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime(2024, 1, 1))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
-def make_engine(url: str | None = None):
+def make_engine(url: str | None = None) -> Engine:
     """Crée un engine SQLAlchemy (Postgres en prod, fourni via `DB_URL`)."""
-    url = url or os.getenv("DB_URL", "postgresql+psycopg://app:app@localhost:5432/velmo")
+    if url is None:
+        url = get_settings().db_url
     return create_engine(url, future=True)
 
 
-def session_factory(url: str | None = None):
+def session_factory(url: str | None = None) -> sessionmaker[Session]:
     return sessionmaker(bind=make_engine(url), expire_on_commit=False, future=True)
 
 
-def fresh_sqlite_session():
+def fresh_sqlite_session() -> Session:
     """Session SQLite en mémoire avec le schéma créé (tests / évaluation hors-ligne)."""
     engine = create_engine("sqlite://", future=True)
     Base.metadata.create_all(engine)

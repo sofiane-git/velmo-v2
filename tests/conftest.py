@@ -35,10 +35,14 @@ class AllowAllGuardrails:
     def __init__(self) -> None:
         self.events: list[dict] = []
 
-    def check_input(self, message: str) -> Decision:
+    def check_input(
+        self, message: str, user_id: str | None = None, source_thread_id: str | None = None
+    ) -> Decision:
         return Decision(allowed=True, action="allow")
 
-    def check_output(self, text: str) -> Decision:
+    def check_output(
+        self, text: str, user_id: str | None = None, source_thread_id: str | None = None
+    ) -> Decision:
         return Decision(allowed=True, action="allow")
 
 

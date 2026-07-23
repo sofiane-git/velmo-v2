@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
 
-def search_kb(kb, query: str) -> dict:
+from ..kb_store import KnowledgeBase
+
+
+def search_kb(kb: KnowledgeBase, query: str) -> dict[str, Any]:
     """Cherche une réponse dans la FAQ Velmo et renvoie des extraits sourcés."""
     hits = kb.search(query, k=5)
     if not hits:

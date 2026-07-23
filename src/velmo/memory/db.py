@@ -6,12 +6,12 @@ utilisable hors-ligne (même esprit que `kb_store.get_kb()`).
 
 from __future__ import annotations
 
-import os
+import re
 import sqlite3
 import unicodedata
 import uuid
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import (
@@ -26,14 +26,24 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
+    or_,
     select,
     text,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.pool import StaticPool
+
+from velmo.config import get_settings
+from velmo.memory.entities import CONTRACT_RE, ORDER_RE
 
 
 class Base(DeclarativeBase):
     pass
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def new_id(prefix: str) -> str:
@@ -44,29 +54,17 @@ class MemoryUser(Base):
     __tablename__ = "memory_user"
     user_id: Mapped[str] = mapped_column(String, primary_key=True)
     locale: Mapped[str] = mapped_column(String, default="fr")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class Conversation(Base):
-    __tablename__ = "conversation"
+class Thread(Base):
+    __tablename__ = "thread"
     thread_id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
     summary: Mapped[str] = mapped_column(Text, default="")
     token_count: Mapped[int] = mapped_column(Integer, default=0)
-    summarized_up_to_turn: Mapped[int] = mapped_column(Integer, default=0)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_message_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-
-class Message(Base):
-    __tablename__ = "message"
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    thread_id: Mapped[str] = mapped_column(ForeignKey("conversation.thread_id", ondelete="CASCADE"))
-    user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
-    role: Mapped[str] = mapped_column(String)
-    content: Mapped[str] = mapped_column(Text)
-    turn: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Fact(Base):
@@ -78,8 +76,8 @@ class Fact(Base):
     type: Mapped[str] = mapped_column(String)
     confidence: Mapped[float] = mapped_column(Float)
     source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     __table_args__ = (UniqueConstraint("user_id", "key", name="uq_fact_user_key"),)
 
 
@@ -92,9 +90,12 @@ class Procedure(Base):
     confidence: Mapped[float] = mapped_column(Float)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     __table_args__ = (UniqueConstraint("user_id", "trigger", name="uq_procedure_user_trigger"),)
+
+
+_EMBEDDING_DIM = 384
 
 
 class Episode(Base):
@@ -102,9 +103,12 @@ class Episode(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
     summary: Mapped[str] = mapped_column(Text)
-    chroma_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(_EMBEDDING_DIM).with_variant(Text(), "sqlite"), nullable=True
+    )
+    embedding_model_id: Mapped[str | None] = mapped_column(String, nullable=True)
     source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class MemoryAudit(Base):
@@ -113,7 +117,23 @@ class MemoryAudit(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
     action: Mapped[str] = mapped_column(String)
     target: Mapped[str] = mapped_column(String)
-    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Qui a déclenché l'action : "user" (requête explicite), "extractor" (écriture
+    # automatique post-tour), "system" (purge TTL, job de réconciliation...).
+    actor: Mapped[str] = mapped_column(String, default="user")
+    at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class MemoryTombstone(Base):
+    __tablename__ = "memory_tombstone"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
+    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "procedure_trigger"
+    target: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    __table_args__ = (
+        UniqueConstraint("user_id", "target_kind", "target", name="uq_tombstone_target"),
+    )
 
 
 def _default_sqlite_path() -> Path:
@@ -155,10 +175,21 @@ def make_memory_engine(url: str | None = None) -> Engine:
             path = _default_sqlite_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             engine = create_engine(f"sqlite:///{path}", future=True)
+        elif ":memory:" in url:
+            # `write(background=True)` fait tourner l'extraction sur un thread
+            # du pool (cf. memory/__init__.py) : sans StaticPool, chaque thread
+            # obtiendrait sa propre base `:memory:` isolée (comportement par
+            # défaut de SQLAlchemy pour ce DSN) — les écritures de fond
+            # deviendraient invisibles au thread appelant. Sans objet pour
+            # Postgres/SQLite fichier (une vraie base partagée, pas un artefact
+            # par connexion).
+            engine = create_engine(
+                url, future=True, poolclass=StaticPool, connect_args={"check_same_thread": False}
+            )
         else:
             engine = create_engine(url, future=True)
     else:
-        pg_url = os.getenv("DB_URL", "postgresql+psycopg://app:app@localhost:5432/velmo")
+        pg_url = get_settings().db_url
         if _postgres_reachable(pg_url):
             engine = create_engine(pg_url, future=True)
         else:
@@ -183,17 +214,49 @@ def make_memory_engine(url: str | None = None) -> Engine:
 
 
 def _norm(s: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", s.lower()) if unicodedata.category(c) != "Mn")
+    return "".join(
+        c for c in unicodedata.normalize("NFD", s.lower()) if unicodedata.category(c) != "Mn"
+    )
 
 
 def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+_KEY_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_KEY_ENTITY_PATTERNS = (ORDER_RE, CONTRACT_RE)
+
+
+def _canonicalize_key(key: str) -> str:
+    """Rend équivalentes deux clés qui ne diffèrent que par l'ordre des mots.
+
+    `LLMExtractor` invente librement ses clés (pas de vocabulaire fixe comme
+    pour `RuleBasedExtractor`) : un tour écrit "order_status_O-2024-0101", un
+    autre "order_O-2024-0101_status" pour le même fait. `upsert_fact` matche
+    sur clé exacte : sans canonicalisation, ça crée un doublon au lieu d'une
+    mise à jour, et les deux copies peuvent diverger silencieusement au lieu
+    d'être une seule source de vérité par utilisateur (cf. `docs/reco_expert.md`,
+    traçabilité des écritures mémoire).
+
+    On isole les identifiants métier (commande, contrat) du reste des mots,
+    puis on reconstruit `mots-restants_dans-leur-ordre + entités` : ça fusionne
+    les deux variantes ci-dessus sans renommer les clés fixes déjà stables
+    (ex. "order_number" reste "order_number", aucune entité à isoler).
+    """
+    remainder = key
+    entities: list[str] = []
+    for pattern in _KEY_ENTITY_PATTERNS:
+        entities.extend(pattern.findall(key))
+        remainder = pattern.sub(" ", remainder)
+
+    concept_tokens = _KEY_TOKEN_RE.findall(remainder.lower())
+    return "_".join([*concept_tokens, *entities])
+
+
 def get_or_create_user(session: Session, user_id: str) -> MemoryUser:
     user = session.get(MemoryUser, user_id)
     if user is None:
-        user = MemoryUser(user_id=user_id, created_at=datetime.utcnow())
+        user = MemoryUser(user_id=user_id, created_at=utcnow())
         session.add(user)
         session.commit()
     return user
@@ -201,83 +264,25 @@ def get_or_create_user(session: Session, user_id: str) -> MemoryUser:
 
 def get_or_create_active_thread(
     session: Session, user_id: str, session_gap_hours: float, now: datetime | None = None
-) -> Conversation:
-    now = now or datetime.utcnow()
+) -> Thread:
+    now = now or utcnow()
     gap = timedelta(hours=session_gap_hours)
     latest = session.scalars(
-        select(Conversation).where(Conversation.user_id == user_id).order_by(Conversation.last_message_at.desc())
+        select(Thread).where(Thread.user_id == user_id).order_by(Thread.last_message_at.desc())
     ).first()
     if latest is not None and (now - latest.last_message_at) <= gap:
         return latest
-    thread = Conversation(
+    thread = Thread(
         thread_id=new_id("th"),
         user_id=user_id,
         summary="",
         token_count=0,
-        summarized_up_to_turn=0,
         started_at=now,
         last_message_at=now,
     )
     session.add(thread)
     session.commit()
     return thread
-
-
-def _next_turn(session: Session, thread_id: str) -> int:
-    last = session.scalars(
-        select(Message.turn).where(Message.thread_id == thread_id).order_by(Message.turn.desc())
-    ).first()
-    return (last or 0) + 1
-
-
-def append_message(
-    session: Session,
-    thread_id: str,
-    user_id: str,
-    role: str,
-    content: str,
-    now: datetime | None = None,
-) -> Message:
-    conv = session.get(Conversation, thread_id)
-    assert conv is not None
-    turn = _next_turn(session, thread_id)
-    msg = Message(id=new_id("msg"), thread_id=thread_id, user_id=user_id, role=role, content=content, turn=turn)
-    session.add(msg)
-    conv.token_count += max(1, len(content) // 4)
-    conv.last_message_at = now or datetime.utcnow()
-    return msg
-
-
-def recent_messages(session: Session, thread_id: str, limit: int | None) -> list[Message]:
-    query = select(Message).where(Message.thread_id == thread_id).order_by(Message.turn.desc())
-    if limit is not None:
-        query = query.limit(limit)
-    rows = session.scalars(query).all()
-    return list(reversed(rows))
-
-
-def older_messages(
-    session: Session, thread_id: str, keep_last_n_messages: int, summarized_up_to_turn: int
-) -> list[Message]:
-    max_turn = (
-        session.scalars(
-            select(Message.turn).where(Message.thread_id == thread_id).order_by(Message.turn.desc())
-        ).first()
-        or 0
-    )
-    cutoff = max_turn - keep_last_n_messages
-    if cutoff <= summarized_up_to_turn:
-        return []
-    rows = session.scalars(
-        select(Message)
-        .where(
-            Message.thread_id == thread_id,
-            Message.turn > summarized_up_to_turn,
-            Message.turn <= cutoff,
-        )
-        .order_by(Message.turn.asc())
-    ).all()
-    return list(rows)
 
 
 def upsert_fact(
@@ -289,8 +294,9 @@ def upsert_fact(
     confidence: float,
     source_thread_id: str | None,
 ) -> tuple[Fact, bool]:
+    key = _canonicalize_key(key)
     existing = session.scalars(select(Fact).where(Fact.user_id == user_id, Fact.key == key)).first()
-    now = datetime.utcnow()
+    now = utcnow()
     if existing is None:
         fact = Fact(
             id=new_id("fact"),
@@ -332,7 +338,9 @@ FACT_KEY_ALIASES = {
 def delete_facts_matching(session: Session, user_id: str, target: str) -> list[Fact]:
     key = FACT_KEY_ALIASES.get(_norm(target))
     if key:
-        matches = session.scalars(select(Fact).where(Fact.user_id == user_id, Fact.key == key)).all()
+        matches = session.scalars(
+            select(Fact).where(Fact.user_id == user_id, Fact.key == key)
+        ).all()
     else:
         pattern = f"%{_escape_like(target)}%"
         matches = session.scalars(
@@ -343,26 +351,85 @@ def delete_facts_matching(session: Session, user_id: str, target: str) -> list[F
     return list(matches)
 
 
-def redact_messages(session: Session, user_id: str, value: str) -> int:
-    pattern = f"%{_escape_like(value)}%"
-    rows = session.scalars(
-        select(Message).where(Message.user_id == user_id, Message.content.ilike(pattern, escape="\\"))
+def upsert_procedure(
+    session: Session,
+    user_id: str,
+    trigger: str,
+    rule: str,
+    confidence: float,
+    source_thread_id: str | None,
+) -> tuple[Procedure, bool]:
+    """Insérer ou mettre à jour une procédure.
+
+    Retourne (procédure, booléen) où le booléen indique si la procédure a changé.
+    """
+    existing = session.scalars(
+        select(Procedure).where(
+            Procedure.user_id == user_id, Procedure.trigger == trigger
+        )
+    ).first()
+    now = utcnow()
+    if existing is None:
+        proc = Procedure(
+            id=new_id("proc"),
+            user_id=user_id,
+            trigger=trigger,
+            rule=rule,
+            confidence=confidence,
+            active=True,
+            source_thread_id=source_thread_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(proc)
+        return proc, True
+    if existing.rule == rule:
+        return existing, False
+    existing.rule = rule
+    existing.confidence = confidence
+    existing.source_thread_id = source_thread_id
+    existing.updated_at = now
+    return existing, True
+
+
+def delete_procedure_matching(
+    session: Session, user_id: str, target: str
+) -> list[Procedure]:
+    """Supprimer les procédures dont le trigger ou la règle contient target.
+
+    Retourne la liste des procédures supprimées.
+    """
+    pattern = f"%{_escape_like(target)}%"
+    matches = session.scalars(
+        select(Procedure).where(
+            Procedure.user_id == user_id,
+            or_(
+                Procedure.trigger.ilike(pattern, escape="\\"),
+                Procedure.rule.ilike(pattern, escape="\\"),
+            ),
+        )
     ).all()
-    for msg in rows:
-        msg.content = msg.content.replace(value, "[information supprimée]")
-    return len(rows)
+    for proc in matches:
+        session.delete(proc)
+    return list(matches)
 
 
 def add_episode(
-    session: Session, user_id: str, summary: str, source_thread_id: str | None, chroma_id: str | None = None
+    session: Session,
+    user_id: str,
+    summary: str,
+    source_thread_id: str | None,
+    embedding: list[float] | None = None,
+    embedding_model_id: str | None = None,
 ) -> Episode:
     episode = Episode(
         id=new_id("epi"),
         user_id=user_id,
         summary=summary,
-        chroma_id=chroma_id,
+        embedding=embedding,
+        embedding_model_id=embedding_model_id,
         source_thread_id=source_thread_id,
-        occurred_at=datetime.utcnow(),
+        occurred_at=utcnow(),
     )
     session.add(episode)
     return episode
@@ -371,15 +438,23 @@ def add_episode(
 def delete_episodes_matching(session: Session, user_id: str, value: str) -> list[Episode]:
     pattern = f"%{_escape_like(value)}%"
     matches = session.scalars(
-        select(Episode).where(Episode.user_id == user_id, Episode.summary.ilike(pattern, escape="\\"))
+        select(Episode).where(
+            Episode.user_id == user_id, Episode.summary.ilike(pattern, escape="\\")
+        )
     ).all()
     for episode in matches:
         session.delete(episode)
     return list(matches)
 
 
-def write_audit(session: Session, user_id: str, action: str, target: str) -> None:
-    session.add(MemoryAudit(id=new_id("aud"), user_id=user_id, action=action, target=target, at=datetime.utcnow()))
+def write_audit(
+    session: Session, user_id: str, action: str, target: str, actor: str = "user"
+) -> None:
+    session.add(
+        MemoryAudit(
+            id=new_id("aud"), user_id=user_id, action=action, target=target, actor=actor, at=utcnow()
+        )
+    )
 
 
 def list_facts(session: Session, user_id: str) -> list[Fact]:
@@ -397,6 +472,56 @@ def list_episodes(session: Session, user_id: str) -> list[Episode]:
 def list_recent_audit(session: Session, user_id: str, limit: int = 50) -> list[MemoryAudit]:
     return list(
         session.scalars(
-            select(MemoryAudit).where(MemoryAudit.user_id == user_id).order_by(MemoryAudit.at.desc()).limit(limit)
+            select(MemoryAudit)
+            .where(MemoryAudit.user_id == user_id)
+            .order_by(MemoryAudit.at.desc())
+            .limit(limit)
         ).all()
     )
+
+
+def set_tombstone(session: Session, user_id: str, target_kind: str, target: str) -> None:
+    existing = session.scalars(
+        select(MemoryTombstone).where(
+            MemoryTombstone.user_id == user_id,
+            MemoryTombstone.target_kind == target_kind,
+            MemoryTombstone.target == target,
+        )
+    ).first()
+    if existing is not None:
+        existing.resolved_at = None
+        existing.created_at = utcnow()
+        return
+    session.add(
+        MemoryTombstone(
+            id=new_id("tomb"),
+            user_id=user_id,
+            target_kind=target_kind,
+            target=target,
+            created_at=utcnow(),
+        )
+    )
+
+
+def is_tombstoned(session: Session, user_id: str, target_kind: str, target: str) -> bool:
+    existing = session.scalars(
+        select(MemoryTombstone).where(
+            MemoryTombstone.user_id == user_id,
+            MemoryTombstone.target_kind == target_kind,
+            MemoryTombstone.target == target,
+            MemoryTombstone.resolved_at.is_(None),
+        )
+    ).first()
+    return existing is not None
+
+
+def resolve_tombstone(session: Session, user_id: str, target_kind: str, target: str) -> None:
+    existing = session.scalars(
+        select(MemoryTombstone).where(
+            MemoryTombstone.user_id == user_id,
+            MemoryTombstone.target_kind == target_kind,
+            MemoryTombstone.target == target,
+        )
+    ).first()
+    if existing is not None:
+        existing.resolved_at = utcnow()

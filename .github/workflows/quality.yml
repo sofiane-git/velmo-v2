@@ -20,6 +20,9 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Vérifie les contrats d'imports (isolation mémoire)
+        run: uv run lint-imports --config pyproject.toml
+
       - name: Acceptance suite
         run: uv run pytest tests/acceptance/ -v
 

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from ..db import Escalation, OrderStatus, Shipment
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from ..db import Escalation, OrderStatus, Shipment, Size
 from ._common import (
     MODIFIABLE_STATUSES,
     new_id,
@@ -12,7 +16,7 @@ from ._common import (
 )
 
 
-def get_order(session, order_id: str, user_id: str) -> dict:
+def get_order(session: Session, order_id: str, user_id: str) -> dict[str, Any]:
     """Renvoie le détail et le statut d'une commande appartenant au client."""
     order = owned_order(session, order_id, user_id)
     if order is None:
@@ -20,7 +24,7 @@ def get_order(session, order_id: str, user_id: str) -> dict:
     return order_to_dict(order)
 
 
-def track_shipment(session, order_id: str, user_id: str) -> dict:
+def track_shipment(session: Session, order_id: str, user_id: str) -> dict[str, Any]:
     """Renvoie le suivi transporteur et la date estimée de livraison d'une commande."""
     order = owned_order(session, order_id, user_id)
     if order is None:
@@ -37,7 +41,9 @@ def track_shipment(session, order_id: str, user_id: str) -> dict:
     }
 
 
-def update_order_item(session, order_id: str, user_id: str, new_size: str) -> dict:
+def update_order_item(
+    session: Session, order_id: str, user_id: str, new_size: str
+) -> dict[str, Any]:
     """Change la taille d'un article tant que la commande n'est pas expédiée."""
     order = owned_order(session, order_id, user_id)
     if order is None:
@@ -53,12 +59,14 @@ def update_order_item(session, order_id: str, user_id: str, new_size: str) -> di
         )
         session.commit()
         return {"action": "escalate", "reason": "already_shipped", "status": order.status.value}
-    order.items[0].size = new_size
+    order.items[0].size = Size(new_size)
     session.commit()
     return {"action": "updated", "order_id": order_id, "new_size": new_size}
 
 
-def update_shipping_address(session, order_id: str, user_id: str, address: dict) -> dict:
+def update_shipping_address(
+    session: Session, order_id: str, user_id: str, address: dict[str, Any]
+) -> dict[str, Any]:
     """Modifie l'adresse de livraison tant que la commande n'est pas expédiée."""
     order = owned_order(session, order_id, user_id)
     if order is None:
@@ -79,7 +87,7 @@ def update_shipping_address(session, order_id: str, user_id: str, address: dict)
     return {"action": "updated", "order_id": order_id, "address": address}
 
 
-def cancel_order(session, order_id: str, user_id: str) -> dict:
+def cancel_order(session: Session, order_id: str, user_id: str) -> dict[str, Any]:
     """Annule une commande tant qu'elle n'est pas expédiée."""
     order = owned_order(session, order_id, user_id)
     if order is None:

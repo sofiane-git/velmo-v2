@@ -1,0 +1,17 @@
+# G5 — sujets hors périmètre de l'agent de support Velmo.
+# Config versionnée, revue à chaque version d'agent (Chantier 3) — source de
+# vérité pour l'entrée (intention) et le LLM-juge (sortie).
+out_of_scope_topics:
+  - conseil_juridique
+  - conseil_medical
+  - estimation_cote
+  - engagement_financier_hors_mandat
+
+# Racines de mots (après suppression accents/casse) : un match exige que
+# chaque racine de la phrase soit présente (par préfixe) dans le message.
+keyword_phrases:
+  - [combien, vaut]
+  - [cote, revente]
+  - [bourse]
+  - [authentifier]
+  - [conseil, juridique]

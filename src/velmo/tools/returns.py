@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from sqlalchemy.orm import Session
+
 from ..db import Return, ReturnStatus
 from ._common import RETURNABLE_STATUSES, new_id, owned_order
 
 
-def create_return(session, order_id: str, user_id: str, reason: str) -> dict:
+def create_return(session: Session, order_id: str, user_id: str, reason: str) -> dict[str, Any]:
     """Ouvre une demande de retour/échange si la commande est dans la fenêtre de retour."""
     order = owned_order(session, order_id, user_id)
     if order is None:

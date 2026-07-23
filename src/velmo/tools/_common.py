@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from ..db import Order, OrderStatus
 
@@ -18,7 +20,7 @@ def new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
-def owned_order(session, order_id: str, user_id: str) -> Order | None:
+def owned_order(session: Session, order_id: str, user_id: str) -> Order | None:
     """Renvoie la commande si elle appartient bien au client, sinon None (isolation R3)."""
     order = session.get(Order, order_id)
     if order is None or order.customer_id != user_id:
@@ -26,13 +28,16 @@ def owned_order(session, order_id: str, user_id: str) -> Order | None:
     return order
 
 
-def order_to_dict(order: Order) -> dict:
+def order_to_dict(order: Order) -> dict[str, Any]:
     return {
         "order_id": order.id,
         "status": order.status.value,
         "total": float(order.total),
         "shipping_address": order.shipping_address,
-        "items": [{"item_id": it.id, "variant_id": it.variant_id, "size": it.size.value} for it in order.items],
+        "items": [
+            {"item_id": it.id, "variant_id": it.variant_id, "size": it.size.value}
+            for it in order.items
+        ],
     }
 
 

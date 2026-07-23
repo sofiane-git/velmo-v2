@@ -52,7 +52,9 @@ def test_isolation_other_customer_order(db_session):
 
 def test_no_fabulation_when_out_of_stock(reference_agent):
     # Variante om-1993 / M est à 0 : l'agent dit indisponible, ne fabule pas.
-    answer = reference_agent.respond("C-marc-dubois", "Le maillot om-1993 en taille M est-il disponible ?")
+    answer = reference_agent.respond(
+        "C-marc-dubois", "Le maillot om-1993 en taille M est-il disponible ?"
+    )
     assert "indisponible" in answer.lower()
 
 
