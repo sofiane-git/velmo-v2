@@ -172,7 +172,7 @@ class MemoryManager:
     def __init__(
         self,
         *,
-        token_budget: int = 2000,
+        token_budget: int | None = None,
         confidence_threshold: float | None = None,
         session_gap_hours: float = 4.0,
         keep_last_n_turns: int = 10,
@@ -181,7 +181,9 @@ class MemoryManager:
         episodic_store: EpisodicVectorStore | None = None,
         llm: LLM | None = None,
     ) -> None:
-        self.token_budget = token_budget
+        self.token_budget = (
+            token_budget if token_budget is not None else get_settings().memory_token_budget
+        )
         self.confidence_threshold = (
             confidence_threshold
             if confidence_threshold is not None

@@ -14,7 +14,7 @@
 
 | Brique         | Rôle dans la mémoire                                                                                                                                                                                                |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **LangGraph** _(dep à ajouter : `langgraph`, `langgraph-checkpoint-postgres`)_ | Orchestration du tour comme un `StateGraph` ; **persistance de l'état de thread** (messages + résumé + budget) via le checkpointer **`PostgresSaver`**. Remplace les classes `*Memory` supprimées. C'est **la** source de vérité du court terme — pas de table `MESSAGE` doublon. |
+| **LangGraph** _(dep : `langgraph`, `langgraph-checkpoint-postgres`)_ | **Persistance de l'état de thread** (messages + résumé + budget) via le checkpointer **`PostgresSaver`**. Le `StateGraph` se réduit à un **unique nœud `append_turn`** : LangGraph sert la persistance/reprise, pas l'orchestration multi-nœuds — la compression/résumé R4 et le routage restent du **Python simple**. Remplace les classes `*Memory` supprimées. C'est **la** source de vérité du court terme — pas de table `MESSAGE` doublon. |
 | **LangChain 1.x** (`langchain-core`, `langchain-azure-ai`) | Réduit à ce qui existe et sert : **client LLM Azure**, **sortie structurée** (`with_structured_output` + Pydantic pour l'extracteur), calcul d'embeddings. Pas d'abstraction mémoire. |
 | **PostgreSQL** (extension **`pgvector`**) | Stockage relationnel cloisonné : **faits** sémantiques, **règles** procédurales, **métadonnées + embeddings d'épisodes**, **en-tête de thread**, **journal d'audit RGPD**. Les checkpoints LangGraph vivent aussi en Postgres (tables gérées par la lib). L'index vectoriel de la mémoire épisodique (embeddings + recherche par similarité HNSW) vit **dans la même base**, via `pgvector` — voir §Store épisodique. |
 | **`EpisodicVectorStore`** (interface interne, implémentation `pgvector` par défaut) | Port d'accès à la recherche par similarité, **filtré par `user_id`** de façon non-contournable (client enveloppé, voir §R3). Découple le code appelant du store concret — une implémentation dédiée (ex. Chroma, Qdrant) reste substituable sans réécrire l'appelant, si un volume mesuré le justifie un jour (voir §Store épisodique). |
@@ -284,7 +284,7 @@ Trois leviers combinés :
   écrit en **asynchrone après le tour** : un write extracteur arrivant **après** un `DELETE` R5
   **ressusciterait** la donnée, que le store soit unique ou cross-store — ce risque tient à
   l'asynchronie de l'extracteur, pas à l'architecture de stockage. Parade : l'oubli pose un
-  **tombstone** (`memory_audit` + clé bloquée) que l'extracteur **consulte avant tout write** —
+  **tombstone** (table dédiée `memory_tombstone`, distincte de `memory_audit`) que l'extracteur **consulte avant tout write** —
   une clé/trigger sous tombstone reste bloquée **tant que l'écriture qui l'a posé n'est pas
   confirmée résolue des deux côtés du flux** (pas de TTL calendaire fixe : le tombstone se ferme
   quand l'état est confirmé, point).
@@ -489,6 +489,29 @@ défait l'intérêt même d'avoir résumé :
   (pas un âge absolu — un thread actif à J+91 n'est pas purgé), purge via
   `PostgresSaver.delete_thread` (même chemin idempotent que R5). À inscrire comme un **2ᵉ usage
   distinct** au registre de traitement RGPD, à côté de celui des épisodes.
+
+### Base légale (art. 6) & information de la personne
+
+La mémoire persistante traite des données personnelles : elle a donc une **base
+légale explicite**, pas seulement une justification technique.
+
+- **T1/T2/T3 (mémoire fonctionnelle : faits, épisodes, fil)** — base **art.
+  6(1)(b), exécution du contrat de support** : mémoriser les préférences et
+  l'historique d'un client fait partie du service de support de commande
+  attendu. Pas de consentement séparé requis pour cette finalité (elle est le
+  cœur de la prestation), mais l'utilisateur en est **informé** (mention « je
+  garde le contexte de vos échanges » dans la présentation de l'agent / CGU).
+- **T4 (journal garde-fous)** — base **art. 6(1)(f), intérêt légitime** de
+  sécurité : détecter et tracer les abus. C'est ce qui justifie qu'il **survive**
+  à l'effacement R5 (à anonymiser, pas à conserver identifiant en clair).
+- **Consentement (art. 6(1)(a))** : réservé à tout usage **hors support**
+  (marketing, profilage commercial) — **aucun tel usage ici**.
+
+Le registre consolidé de ces traitements (finalités, durées, sous-traitants,
+droits) vit dans [`docs/rgpd/registre_traitements.md`](../../rgpd/registre_traitements.md)
+(art. 30). Droits exposés : accès (R6, `memory_audit`), effacement (R5,
+`forget_all`) ; la **portabilité** (art. 20, export) reste un **gap connu** à
+implémenter côté API mémoire.
 
 ### Versioning du modèle d'embeddings
 

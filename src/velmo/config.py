@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     # constante gravée : voir aussi le seuil équivalent des garde-fous (Ch.2).
     memory_confidence_threshold: float = 0.7
 
+    # Budget de tokens de la fenêtre court terme avant compression/résumé (R4).
+    # Config versionnée (hashée dans `memory_config_hash`, mlops/versioning.py) :
+    # un changement de budget change l'identité de version évaluée.
+    memory_token_budget: int = 2000
+
     # Seuils du gate qualité MLOps (conception_chantier3_evaluation_mlops.md
     # §Seuils : « chiffres versionnés dans un fichier de config, donc hashés
     # dans la version ») — source unique lue par run_eval/cli/drift_check et

@@ -27,6 +27,7 @@ def _memory_config_hash() -> str:
     payload = {
         "memory_confidence_threshold": settings.memory_confidence_threshold,
         "embedding_model": settings.embedding_model,
+        "memory_token_budget": settings.memory_token_budget,
     }
     return _sha256(json.dumps(payload, sort_keys=True))
 
