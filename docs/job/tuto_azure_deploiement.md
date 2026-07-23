@@ -762,9 +762,29 @@ Les clés API du projet Langfuse Cloud (`langfuse-public-key`, `langfuse-secret-
 
 ## 11. Azure AI Language + Azure AI Content Safety — garde-fous Chantier 2
 
-Deux ressources distinctes, lues respectivement par `pii_redaction.py`
-(`TextAnalyticsClient`) et `prompt_shields.py` (appel REST `text:shieldPrompt`) —
-voir `src/velmo/guardrails/`.
+Lues respectivement par `pii_redaction.py` (`TextAnalyticsClient`) et
+`prompt_shields.py` (appel REST `text:shieldPrompt`) — voir `src/velmo/guardrails/`.
+
+> **Chemin court (recommandé) : réutiliser la ressource AIServices existante.** Une ressource
+> **Azure AI services** (kind `AIServices` — celle du §2, type Foundry) est **multi-service** :
+> Language et Content Safety y sont inclus d'office, **rien à « déployer »** dans le portail
+> Foundry (ce ne sont pas des modèles — chercher un bouton Deploy pour eux est un cul-de-sac).
+> Il suffit de pointer les variables sur la **racine** de la ressource, avec **sa clé** :
+>
+> ```
+> AZURE_LANGUAGE_ENDPOINT=https://<resource>.cognitiveservices.azure.com
+> AZURE_LANGUAGE_KEY=<clé de la ressource AIServices>
+> AZURE_CONTENT_SAFETY_ENDPOINT=https://<resource>.cognitiveservices.azure.com
+> AZURE_CONTENT_SAFETY_KEY=<même clé>
+> ```
+>
+> ⚠️ **Sans** `/openai/v1` — exception à la règle projet : ces services exposent leurs APIs
+> propres (`/contentsafety/text:shieldPrompt`, `/language/:analyze-text`), pas l'API
+> OpenAI-compatible. Vérifié en réel (200 sur les deux via la ressource AIServices). Leurs
+> quotas sont distincts des TPM du modèle (pas de contention avec l'agent).
+>
+> Les commandes ci-dessous restent le chemin **ressources dédiées** (isolation quota/facturation
+> par service) — optionnel si le chemin court suffit.
 
 ```bash
 # PII redaction en texte libre — Azure AI Language
