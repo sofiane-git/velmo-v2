@@ -25,6 +25,7 @@ fonctionnent quand même. C'est la ligne de partage qui structure tout le docume
 | **Langfuse (Cloud, EU)**           | **Observabilité fine, hors chemin de gate** : trace chaque appel LLM en prod pour le drill-down (quel composant dérape), dashboards, alerting. Branché derrière l'interface `ObservabilitySink`. Cloud EU (projet pédagogique, pas de vraies conversations client en prod — self-host resterait la bonne pratique sinon, voir §Gouvernance). `eval_run` ne stocke qu'un **pointeur** (URL de trace), pas la donnée. | Non (observabilité seule) |
 | **GitHub Actions** (`quality.yml`) | Exécute les suites, calcule les notes, applique les seuils par dimension, écrit `mlops/report.md`.                                                                                                                                                                                  | **Oui** (exécuteur)      |
 | **Git (trunk-based) + GitHub Environments** | `main` = tronc toujours livrable ; `feature/*` courtes ; **tags semver** = releases ; **Environments** `staging`/`production` = cibles de déploiement (pas des branches). Voir §Boucle qualité.                                                                          | Partiel (orchestration)  |
+| **Hébergement + stockage (Azure)** | Agent servi sur **Azure Container Apps** (l'image conteneur existe déjà, scale-to-zero, identité managée → Key Vault) ; mémoire + audit + MLOps + checkpoints + embeddings sur **PostgreSQL Flexible Server** (managé, PITR, `pgvector`) — **R2** persistance, **R3** isolation logique par `user_id`. Secrets hors dépôt (Key Vault, jamais dans l'image ni Git). Le *comment* : `tuto_azure_deploiement.md` §C/§D/§F. | Non (cible de run, hors gate) |
 
 > **Pourquoi rejouer des fixtures figées plutôt que générer les cas ?** Un cas généré
 > change d'une exécution à l'autre — impossible de dire si une note a bougé à cause d'une
@@ -359,6 +360,41 @@ ObservabilitySink (interface)
 > critique. Langfuse ajoute de la **visibilité**, jamais une **dépendance de blocage**.
 
 ---
+
+## Cible de déploiement : Azure Container Apps + PostgreSQL managé
+
+**Héberger l'agent — App Service vs conteneur.** L'app est **déjà packagée en image**
+(`Dockerfile` multi-stage, non-root, `CMD uvicorn`, cf. `deploy/README.md`) : le choix se joue
+entre deux façons de faire tourner ce conteneur sur Azure.
+
+| Critère | App Service (Web App for Containers) | **Azure Container Apps (retenu)** |
+| --- | --- | --- |
+| Facilité | PaaS le plus simple, un concept | un cran de concepts en plus (environnement, révisions) |
+| Coût | plan facturé en continu, même à vide | **scale-to-zero** → ≈ 0 quand personne ne parle |
+| Adéquation | mono-conteneur | natif conteneur, cohérent avec Ollama déjà sur ACI |
+
+**Décision : Azure Container Apps.** Décisif = **scale-to-zero** (projet à faible charge, pas
+de coût à l'arrêt) + **adéquation** avec l'artefact conteneur existant. L'identité managée
+native lit Key Vault sans clé en clair. Compromis assumé : *cold start* au premier appel après
+inactivité (`min-replicas 0`) — relevable à `1` si la latence de démarrage gêne ; le juge
+garde-fous bloquant, lui, reste toujours chaud côté Azure OpenAI, donc le chemin critique n'est
+pas concerné. App Service reste un repli légitime si l'on privilégie la facilité brute à
+l'économie.
+
+**Stockage persistant de la mémoire long terme (R2, R3).** La mémoire est un **seul Postgres**
+(source unique `DB_URL`) : faits durables relationnels **+** épisodique `pgvector` dans la même
+base. → **Azure Database for PostgreSQL Flexible Server** (managé), pas un conteneur Postgres
+jetable.
+
+- **R2 (persistance multi-session)** : service managé = durabilité + backups + PITR. Cohérent
+  avec `require_durable_store` (`config.py`) qui **fait échouer le démarrage en prod** si le
+  store durable manque — jamais de repli SQLite silencieux (audit D3-03).
+- **R3 (isolation par utilisateur)** : isolation **logique par `user_id`** (colonne + requêtes
+  filtrées, déjà dans le code), option de renfort Row-Level Security. Un serveur, isolation
+  applicative — pas un Postgres par utilisateur.
+
+Chroma ne porte plus que la KB FAQ (hors mémoire épisodique, migrée vers `pgvector`). Le schéma
+de déploiement cible complet est dans `docs/job/schemas/05-deploiement-azure.md`.
 
 ## Boucle qualité : trunk-based + tags + Environments
 

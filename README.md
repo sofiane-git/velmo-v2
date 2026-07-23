@@ -40,6 +40,7 @@ cp .env.example .env   # renseigner les clés Azure/Ollama (ou laisser vide : re
 make up           # docker compose : app + postgres + chroma + ollama
 make migrate      # alembic upgrade head
 make seed         # peuple Postgres (catalogue, clients, ~14 commandes)
+make seed-kb      # ingère la FAQ dans Chroma (sans ça, zéro réponse FAQ)
 make chat         # REPL — répond aux questions métier, avec mémoire + garde-fous
 ```
 

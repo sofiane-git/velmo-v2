@@ -13,6 +13,20 @@ ce contrat, pas une configuration divergente.
   `docker compose exec app python -m velmo.cli`, mais n'est pas le workload servi.
 - **Port** : 8000 (HTTP, endpoint de santé `GET /health`).
 
+## Cible d'hébergement (prod) — Azure Container Apps
+
+- **Hôte** : **Azure Container Apps** (ACA) — cette même image, `--target-port 8000`, ingress
+  HTTPS externe, `--min-replicas 0` (scale-to-zero). Le code n'a aucune adhérence à l'hôte :
+  config 12-factor, `GET /health` pour la sonde, `0.0.0.0:8000`.
+- **Registre** : Azure Container Registry (image poussée via `az acr build`, tag = sha git).
+- **Secrets** : identité managée de l'app → Key Vault (`secretref`/`keyvaultref`), jamais de
+  valeur en clair dans la config ACA ni dans l'image.
+- **Store** : Azure Database for PostgreSQL Flexible Server (managé, PITR, `pgvector`).
+
+Pas de manifeste IaC dédié ici : les commandes `az` de bout en bout sont dans
+`docs/job/tuto_azure_deploiement.md` §C/§D/§F (source unique), le *pourquoi* dans
+`docs/job/conceptions/conception_chantier3_evaluation_mlops.md` §Cible de déploiement.
+
 ## Services requis (backing services, 12-factor)
 
 | Service | Rôle | Pinning |

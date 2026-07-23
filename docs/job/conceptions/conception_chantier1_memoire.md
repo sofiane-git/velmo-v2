@@ -16,8 +16,8 @@
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **LangGraph** _(dep : `langgraph`, `langgraph-checkpoint-postgres`)_ | **Persistance de l'état de thread** (messages + résumé + budget) via le checkpointer **`PostgresSaver`**. Le `StateGraph` se réduit à un **unique nœud `append_turn`** : LangGraph sert la persistance/reprise, pas l'orchestration multi-nœuds — la compression/résumé R4 et le routage restent du **Python simple**. Remplace les classes `*Memory` supprimées. C'est **la** source de vérité du court terme — pas de table `MESSAGE` doublon. |
 | **LangChain 1.x** (`langchain-core`, `langchain-azure-ai`) | Réduit à ce qui existe et sert : **client LLM Azure**, **sortie structurée** (`with_structured_output` + Pydantic pour l'extracteur), calcul d'embeddings. Pas d'abstraction mémoire. |
-| **PostgreSQL** (extension **`pgvector`**) | Stockage relationnel cloisonné : **faits** sémantiques, **règles** procédurales, **métadonnées + embeddings d'épisodes**, **en-tête de thread**, **journal d'audit RGPD**. Les checkpoints LangGraph vivent aussi en Postgres (tables gérées par la lib). L'index vectoriel de la mémoire épisodique (embeddings + recherche par similarité HNSW) vit **dans la même base**, via `pgvector` — voir §Store épisodique. |
-| **`EpisodicVectorStore`** (interface interne, implémentation `pgvector` par défaut) | Port d'accès à la recherche par similarité, **filtré par `user_id`** de façon non-contournable (client enveloppé, voir §R3). Découple le code appelant du store concret — une implémentation dédiée (ex. Chroma, Qdrant) reste substituable sans réécrire l'appelant, si un volume mesuré le justifie un jour (voir §Store épisodique). |
+| **PostgreSQL** (extension **`pgvector`**) | Stockage relationnel cloisonné : **faits** sémantiques, **règles** procédurales, **métadonnées + embeddings d'épisodes**, **en-tête de thread**, **journal d'audit RGPD**. Les checkpoints LangGraph vivent aussi en Postgres (tables gérées par la lib). L'index vectoriel de la mémoire épisodique (embeddings + recherche par similarité HNSW) vit **dans la même base**, via `pgvector` — voir §Modèle de données de la mémoire. |
+| **`EpisodicVectorStore`** (interface interne, implémentation `pgvector` par défaut) | Port d'accès à la recherche par similarité, **filtré par `user_id`** de façon non-contournable (client enveloppé, voir §R3). Découple le code appelant du store concret — une implémentation dédiée (ex. Chroma, Qdrant) reste substituable sans réécrire l'appelant, si un volume mesuré le justifie un jour (voir §Modèle de données de la mémoire). |
 
 ---
 
@@ -225,7 +225,7 @@ La mémoire de **travail** (résumé recomposé, top-k épisodes rappelés, budg
 | `persiste` | **Persistance d'état par checkpointer** (`THREAD.thread_id` ↔ `LANGGRAPH_CHECKPOINT`, PostgresSaver) | Le fil des messages est l'état du graphe persisté par `thread_id` (LangGraph) ; supprimé avec le thread (R5 : purge des checkpoints).                                                                                                                               |
 | `trace`    | **Journalisation / audit trail** (append-only, `MEMORY_AUDIT.user_id`)                          | Chaque opération mémoire (write/update/recall/delete) écrit une entrée immuable horodatée. Table **append-only** servant de piste d'audit RGPD pour la traçabilité (R6) et la preuve de suppression (R5).                                                                      |
 
-**Store épisodique (`pgvector`) :** `EPISODE` (PostgreSQL) porte le texte + métadonnées + l'embedding, dans la **même ligne** — plus de relation cross-store à documenter (voir §Store épisodique).
+**Store épisodique (`pgvector`) :** `EPISODE` (PostgreSQL) porte le texte + métadonnées + l'embedding, dans la **même ligne** — plus de relation cross-store à documenter (voir §Modèle de données de la mémoire).
  -->
 
 ---
@@ -274,7 +274,7 @@ Trois leviers combinés :
   embeddings**, checkpoints) vivent dans **une seule base Postgres** — la suppression est **une
   transaction unique**, pas de risque de désynchronisation cross-store, pas de job de
   réconciliation à opérer. C'est un bénéfice direct du choix `pgvector` plutôt qu'un store
-  vectoriel séparé (§Store épisodique) : la complexité d'un delete cross-store n'existe
+  vectoriel séparé (§Modèle de données de la mémoire) : la complexité d'un delete cross-store n'existe
   simplement pas ici.
 - **Scrub du fil court terme.** Effacer un identifiant cité en **texte libre** dans les
   messages est flou : le défaut prod est de **purger le(s) checkpoint(s) du thread concerné**
@@ -482,7 +482,7 @@ défait l'intérêt même d'avoir résumé :
 - **Épisodes (résumé + embedding)** — servent la **personnalisation entre sessions** (R2), un
   usage légitimement long et déjà minimisé par construction. **TTL 24 mois** (configurable) +
   **job de purge** audité, `DELETE` unique (texte + embedding, même ligne — atomique par
-  construction, cf. §Store épisodique).
+  construction, cf. §Modèle de données de la mémoire).
 - **Fil brut (`THREAD` + checkpoints LangGraph)** — sert à soutenir **la conversation en cours**
   et, après clôture, une fenêtre de **preuve/litige** (authenticité, chargeback carte) : un
   usage plus court et plus ponctuel que la personnalisation. **TTL 90 jours d'inactivité**
