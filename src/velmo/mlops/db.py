@@ -130,12 +130,13 @@ def make_mlops_engine(url: str | None = None) -> Engine:
     défaut — sinon `GET /mlops/gate/history` ne verrait jamais les lignes
     qu'un test vient de persister via `DB_URL=sqlite:///...`.
     """
-    from velmo.config import get_settings
+    from velmo.config import get_settings, require_durable_store
 
     if url is None:
         url = get_settings().db_url
 
     if url.startswith("postgresql") and not _postgres_reachable(url):
+        require_durable_store("MLOps", url)
         warnings.warn(
             f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
             RuntimeWarning,

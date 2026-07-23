@@ -100,6 +100,9 @@ def get_checkpointer(db_url: str) -> Iterator[BaseCheckpointSaver[str]]:
         return
 
     if db_url.startswith("postgresql"):
+        from velmo.config import require_durable_store
+
+        require_durable_store("checkpoints LangGraph", db_url)
         logger.warning(
             "Postgres injoignable (%r) pour les checkpoints LangGraph : repli SQLite.", db_url
         )

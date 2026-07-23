@@ -34,7 +34,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.pool import StaticPool
 
-from velmo.config import get_settings
+from velmo.config import get_settings, require_durable_store
 from velmo.memory.entities import CONTRACT_RE, ORDER_RE
 
 
@@ -172,6 +172,7 @@ def make_memory_engine(url: str | None = None) -> Engine:
         url = get_settings().db_url
 
     if url.startswith("postgresql") and not _postgres_reachable(url):
+        require_durable_store("mémoire", url)
         warnings.warn(
             f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
             RuntimeWarning,

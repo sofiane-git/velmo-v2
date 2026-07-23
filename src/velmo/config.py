@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     # Base de données (Postgres en prod, SQLite en repli si injoignable).
     db_url: str = "postgresql+psycopg://app:app@localhost:5432/velmo"
 
+    # Autorise le repli local (SQLite fichier / store en mémoire) quand un
+    # Postgres est injoignable. Défaut `False` : combiné à `environment ==
+    # "production"`, un repli silencieux devient une erreur au démarrage
+    # (`require_durable_store`) — un store durable est opt-in en dev ou
+    # fail-fast en prod, jamais un downgrade silencieux (audit D3-03). En dev/CI
+    # (`environment != "production"`) le repli reste toléré quelle que soit
+    # cette valeur.
+    allow_sqlite_fallback: bool = False
+
     # Agent principal : Azure AI Inference (Mistral-Large-3).
     azure_ai_inference_endpoint: str | None = None
     azure_ai_inference_api_key: str | None = None
@@ -133,6 +142,25 @@ def get_settings() -> Settings:
 class ConfigurationError(RuntimeError):
     """Config incohérente détectée au démarrage — distinct du `KeyError` de
     `require()` (absence simple d'une variable optionnelle à l'usage)."""
+
+
+def require_durable_store(store: str, url: str, settings: Settings | None = None) -> None:
+    """À appeler avant tout repli local (SQLite fichier / store en mémoire)
+    d'un store durable dont le `url` Postgres s'est révélé injoignable. Lève
+    `ConfigurationError` en production (sauf `allow_sqlite_fallback=True`)
+    plutôt que de dégrader silencieusement : un store durable est opt-in en dev
+    ou fail-fast en prod (audit D3-03, même contrat que `EchoLLM`/`get_llm`).
+
+    No-op en dev/CI (`environment != "production"`) : le repli local y reste la
+    commodité attendue.
+    """
+    settings = settings or get_settings()
+    if settings.environment == "production" and not settings.allow_sqlite_fallback:
+        raise ConfigurationError(
+            f"{store} : Postgres injoignable ({url!r}) en production et repli local désactivé. "
+            f"Configurez un Postgres joignable, ou posez `ALLOW_SQLITE_FALLBACK=true` pour "
+            f"autoriser explicitement le repli (déconseillé en prod)."
+        )
 
 
 # (champ endpoint, champ clé) pour chaque intégration où les deux vont

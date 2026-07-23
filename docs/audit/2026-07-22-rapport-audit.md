@@ -95,7 +95,7 @@
 ### Architecture (D3)
 
 - **`D3-01`** · `src/velmo/api.py:22` — L'observabilité vit dans `velmo.mlops` : le runtime de service importe le package d'éval pour tracer, inversant la direction documentée « mlops → agent, jamais l'inverse ». **Fix :** code. **Reco :** extraire vers `velmo/observability.py` + contrat import-linter interdisant api/agent → mlops.
-- **`D3-03`** · `src/velmo/guardrails/db.py:89` — Repli silencieux des stores durables : Postgres injoignable → SQLite local automatique (audit garde-fous, mémoire, checkpoints) avec simple warning, sans profil prod fail-fast → fragmentation silencieuse en prod multi-instance. **Fix :** les-deux. **Reco :** `Settings.allow_sqlite_fallback` (défaut false en prod) + étendre la matrice de repli aux stores.
+- ✅ **`D3-03`** *(corrigé : 03eb5e0 — `Settings.allow_sqlite_fallback` + `require_durable_store` sur les 5 sites de repli)* · `src/velmo/guardrails/db.py:89` — Repli silencieux des stores durables : Postgres injoignable → SQLite local automatique (audit garde-fous, mémoire, checkpoints) avec simple warning, sans profil prod fail-fast → fragmentation silencieuse en prod multi-instance. **Fix :** les-deux. **Reco :** `Settings.allow_sqlite_fallback` (défaut false en prod) + étendre la matrice de repli aux stores.
 
 ### Sécurité applicative/LLM (D4)
 
@@ -111,9 +111,9 @@
 
 ### Reproductibilité (D6)
 
-- **`D6-02`** (+`D10-04`) · `Dockerfile:20` — Pas de directive `USER` : conteneur en root. **Fix :** code. **Reco :** `useradd` + `USER app` avant CMD.
-- **`D6-03`** · `Dockerfile:8` — `COPY --from=ghcr.io/astral-sh/uv:latest` : outillage de build non pinné. **Fix :** code. **Reco :** tag précis voire digest.
-- **`D6-04`** · `docker-compose.yml:42` — `chromadb/chroma:latest` et `ollama/ollama:latest` non pinnés (postgres correctement pinné pg16). **Fix :** code. **Reco :** pinner sur les versions validées en test.
+- ✅ **`D6-02`** (+`D10-04`) *(corrigé : 03eb5e0 — `useradd`+`USER app` uid 10001, vérifié `id` dans l'image)* · `Dockerfile:20` — Pas de directive `USER` : conteneur en root. **Fix :** code. **Reco :** `useradd` + `USER app` avant CMD.
+- ✅ **`D6-03`** *(corrigé : 03eb5e0 — `ghcr.io/astral-sh/uv:0.11.28`)* · `Dockerfile:8` — `COPY --from=ghcr.io/astral-sh/uv:latest` : outillage de build non pinné. **Fix :** code. **Reco :** tag précis voire digest.
+- ✅ **`D6-04`** *(corrigé : 03eb5e0 — chroma/ollama/postgres pinnés par digest sha256)* · `docker-compose.yml:42` — `chromadb/chroma:latest` et `ollama/ollama:latest` non pinnés (postgres correctement pinné pg16). **Fix :** code. **Reco :** pinner sur les versions validées en test.
 
 ### Tutos (D7)
 
@@ -170,11 +170,11 @@
 | ✅ D5-04 *(corrigé : 9547813 — write/id-token scoppés au job check-model-drift)* | nightly.yml:19 | `contents: write` + `id-token: write` au niveau workflow, hérités par 3 jobs dont 2 n'en ont pas besoin | code | Scoper les permissions élevées au seul job check-model-drift |
 | D5-05 | pyproject.toml:9 | `python-dotenv>=1.0` et `azure-ai-inference>=1.0.0b9` sans borne supérieure | code | Borner `<2` comme le reste du fichier |
 | D5-06 | nightly.yml:96 | Push bot direct sur main (model-versions.json) : contourne branch protection, normalise un token write-main | les-deux | Artefact/branche dédiée/repo variable |
-| D6-05 | .dockerignore (absent) | Contexte de build embarque .git, .venv, **.env (secrets)** ; aggravé côté web/ (`COPY . .`) | code | .dockerignore racine + web/ |
-| D6-06 | Dockerfile:1 | Mono-stage : image finale embarque uv, lockfile, outillage | code | Multi-stage builder/runtime |
-| D6-07 | Dockerfile:18 | `uv sync` sans `--frozen` : re-résolution silencieuse si pyproject↔lock divergent | code | Ajouter `--frozen` |
-| D6-08 | docker-compose.yml:2 | Aucun healthcheck app ; chroma/ollama en `service_started` (seul postgres en a un) | code | Healthcheck HTTP app + `service_healthy` |
-| D6-09 | deploy/langfuse/README.md | Parité compose↔deploy invérifiable : deploy/ = un README ; CMD image (CLI) ≠ workload servi (uvicorn via compose) ; web en `pnpm dev` | les-deux | CMD uvicorn par défaut, manifeste deploy/, target build prod web |
+| ✅ D6-05 (03eb5e0) | .dockerignore (absent) | Contexte de build embarque .git, .venv, **.env (secrets)** ; aggravé côté web/ (`COPY . .`) | code | .dockerignore racine créé (exclut .env/.venv/var/.docker-data/.git) ; web/ a déjà le sien |
+| ✅ D6-06 (03eb5e0) | Dockerfile:1 | Mono-stage : image finale embarque uv, lockfile, outillage | code | Multi-stage builder/runtime (uv absent du runtime, vérifié) |
+| ✅ D6-07 (03eb5e0) | Dockerfile:18 | `uv sync` sans `--frozen` : re-résolution silencieuse si pyproject↔lock divergent | code | `uv sync --locked` conservé (≥ --frozen : échoue si lock diverge, build déterministe) |
+| ✅ D6-08 (03eb5e0) | docker-compose.yml:2 | Aucun healthcheck app ; chroma/ollama en `service_started` (seul postgres en a un) | code | Healthcheck app (`/health`) + chroma + ollama ; `depends_on: service_healthy` |
+| ✅ D6-09 (03eb5e0) | deploy/langfuse/README.md | Parité compose↔deploy invérifiable : deploy/ = un README ; CMD image (CLI) ≠ workload servi (uvicorn via compose) ; web en `pnpm dev` | les-deux | CMD image = uvicorn (parité, vérifié) + `deploy/README.md` (manifeste workload). Web dev-server laissé tel quel (hors scope prod) |
 | D7-12 | tuto_azure:627 | `<org>/<repo>` non résolu (valeur connue) + procédure OIDC dupliquée avec noms divergents entre les 2 tutos | doc | Résoudre + renvoi unique vers release §2.3 |
 | D7-13 | tuto_azure:276 | « à implémenter dans validate_startup() » — déjà implémenté (llm.py:149-152) | doc | Pointer le comportement existant |
 | D7-14 | tuto_azure:365 | `--restore-time "2026-07-17…"` en dur : échoue sur un serveur créé après cette date | doc | Placeholder + règle de calcul |
@@ -194,7 +194,7 @@
 | D10-06 | scripts/seed_kb.py:20 | os.getenv direct contournant la config centralisée, défauts divergents de .env.example | code | Passer par Settings |
 | ✅ D10-07 *(corrigé : c2e2447 — make ci = lint fmt-check typecheck lint-imports acceptance eval-gate)* | Makefile:27 | `make ci` = pytest seul ≠ gate CI réelle (lint-imports + acceptance + mlops score) | les-deux | Invariant « make ci == pipeline CI » |
 | D10-08 | .pre-commit-config.yaml (absent) | Pas de hook pre-commit (ruff/mypy à la main ou en CI seulement) | infra | Config minimale ruff + ruff-format |
-| D10-09 | docker-compose.yml:28 | Credentials Postgres app/app en dur, dupliqués (compose + défaut db_url) | infra | Interpolation `${VAR}` depuis .env *(recoupe D6-10)* |
+| ✅ D10-09 (03eb5e0) | docker-compose.yml:28 | Credentials Postgres app/app en dur, dupliqués (compose + défaut db_url) | infra | `${POSTGRES_USER:-app}` etc. depuis .env, DB_URL app construite dessus (source unique) *(recoupe D6-10)* |
 | D2-08 | conception_chantier2:20 | Ch2 affirme encore « les trois consommateurs partagent gpt-5-mini » — révision actée ailleurs (claude-opus-4-5), code conforme à la révision | doc | Propager la révision (croiser les chantiers) |
 | D2-12* | conception_chantier3:93 | `guardrail_config_hash` annoncé « seuils G1..G7 » vs 3 seuils globaux réels | doc | Reformuler (ou acter des seuils par catégorie) |
 
@@ -208,7 +208,7 @@
 | D3-07 | api.py:37 | Import du module privé `velmo.tools._common` pour `select` | `from sqlalchemy import select` |
 | ✅ D4-06 (f40051c) | referentiel-audit.md (D4) | Le référentiel dit G5 fail-open, la conception + code disent fail-closed (code plus strict) | Référentiel aligné (G5 fail-closed) |
 | ✅ D4-07 (f40051c) | guardrails/__init__.py:178 | `agent_response` jamais alimenté vers le juge (paramètre mort) | Paramètre supprimé (juge + pipeline + wrapper observabilité) |
-| D6-10 | docker-compose.yml:29 | Credentials littéraux dans compose (recoupe D10-09) | Interpoler depuis .env |
+| ✅ D6-10 (03eb5e0) | docker-compose.yml:29 | Credentials littéraux dans compose (recoupe D10-09) | Interpolés depuis .env |
 | D7-20 | tuto_release:193 | Renvois « §2.4 » erronés (procédure au §2.3) | Corriger 3 renvois |
 | D7-21 | tuto_azure:97 | Commande Anthropic fournie avec avertissement « peut-être fausse » | Re-vérifier et trancher |
 | D8-13 | hotfix.yml:28 | `--min-score 0.0` + `\|\| true` : le second masque aussi les crashs infra | `continue-on-error: true` |
