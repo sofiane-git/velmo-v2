@@ -19,8 +19,11 @@ from sqlalchemy import (
     ForeignKey,
     Numeric,
     String,
+    Text,
     create_engine,
+    text,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -177,11 +180,45 @@ class Escalation(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+_EMBEDDING_DIM = 384
+
+
+class KbArticle(Base):
+    """FAQ Velmo (`kb/docs/*.md`) — contenu boutique statique, pas une donnée
+    utilisateur : reste dans le schéma métier, pas `velmo.memory.db` (droit à
+    l'oubli R1-R6 sans objet ici)."""
+
+    __tablename__ = "kb_article"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source: Mapped[str] = mapped_column(String)
+    body: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(_EMBEDDING_DIM).with_variant(Text(), "sqlite"), nullable=True
+    )
+    embedding_model_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
 def make_engine(url: str | None = None) -> Engine:
     """Crée un engine SQLAlchemy (Postgres en prod, fourni via `DB_URL`)."""
     if url is None:
         url = get_settings().db_url
     return create_engine(url, future=True)
+
+
+def _postgres_reachable(url: str, timeout_seconds: int = 1) -> bool:
+    """Sonde générique (même logique que `velmo.memory.db._postgres_reachable`,
+    dupliquée ici : `velmo.kb_store` ne peut pas importer `velmo.memory.db`,
+    contrat d'isolation mémoire, `pyproject.toml`)."""
+    if not url.startswith("postgresql"):
+        return False
+    try:
+        probe = create_engine(url, connect_args={"connect_timeout": timeout_seconds})
+        with probe.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        probe.dispose()
+        return True
+    except Exception:
+        return False
 
 
 def session_factory(url: str | None = None) -> sessionmaker[Session]:

@@ -23,7 +23,7 @@ COPY kb ./kb
 
 # --locked : échoue si `uv.lock` diverge de `pyproject.toml` (build déterministe,
 # supply-chain B3/D6-07) au lieu de re-résoudre silencieusement.
-RUN uv sync --locked --no-dev --extra vector --extra llm --extra guardrails --extra graph
+RUN uv sync --locked --no-dev --extra vector --extra llm --extra guardrails --extra graph --extra anthropic
 
 
 FROM python:3.11-slim AS runtime

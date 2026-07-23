@@ -393,8 +393,9 @@ jetable.
   filtrées, déjà dans le code), option de renfort Row-Level Security. Un serveur, isolation
   applicative — pas un Postgres par utilisateur.
 
-Chroma ne porte plus que la KB FAQ (hors mémoire épisodique, migrée vers `pgvector`). Le schéma
-de déploiement cible complet est dans `docs/reference/schemas/05-deploiement-azure.md`.
+La KB FAQ (hors mémoire épisodique) est aussi migrée vers `pgvector`, même Postgres — plus
+aucun service Chroma à déployer. Le schéma de déploiement cible complet est dans
+`docs/reference/schemas/05-deploiement-azure.md`.
 
 ## Boucle qualité : trunk-based + tags + Environments
 

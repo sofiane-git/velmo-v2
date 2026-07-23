@@ -90,12 +90,8 @@ class Settings(BaseSettings):
     azure_content_safety_endpoint: str | None = None
     azure_content_safety_key: str | None = None
 
-    # KB vectorielle FAQ (`velmo.kb_store`) : Chroma — hors périmètre de la
-    # mémoire épisodique, migrée vers pgvector (voir `embedding_model` ci-dessous).
-    chroma_url: str | None = None
-
-    # Mémoire épisodique : embeddings pgvector (même Postgres que le reste de la
-    # mémoire). Modèle pinné, sert aussi d'embedding_model_id (§Versioning).
+    # Embeddings (mémoire épisodique ET KB FAQ, `kb_store.PgVectorKB`) : même
+    # Postgres, même modèle pinné, sert aussi d'embedding_model_id (§Versioning).
     embedding_model: str = "intfloat/multilingual-e5-small"
 
     # API.

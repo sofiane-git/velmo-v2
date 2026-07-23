@@ -31,14 +31,14 @@ Pas de manifeste IaC dédié ici : les commandes `az` de bout en bout sont dans
 
 | Service | Rôle | Pinning |
 |---------|------|---------|
-| PostgreSQL + pgvector | source de vérité (mémoire, audit, MLOps, checkpoints, embeddings) | `pgvector/pgvector:pg16@sha256:…` |
+| PostgreSQL + pgvector | source de vérité (mémoire, audit, MLOps, checkpoints, embeddings, KB FAQ) | `pgvector/pgvector:pg18@sha256:…` |
 | Ollama (Llama Guard 3) | classifieur de modération G1/G2/G3 | `ollama/ollama@sha256:…` |
-| Chroma | KB vectorielle FAQ | `chromadb/chroma@sha256:…` |
 
 En production, un Postgres configuré mais injoignable **fait échouer le
 démarrage** (pas de repli SQLite silencieux) — voir `ALLOW_SQLITE_FALLBACK`
-et `require_durable_store` (audit D3-03). Ollama et Chroma restent en repli
-gracieux (classifieur lexical, KB locale).
+et `require_durable_store` (audit D3-03). Ollama reste en repli gracieux
+(classifieur lexical) ; la KB FAQ (`velmo.kb_store`) aussi, vers `LocalKB`
+(recherche lexicale) si Postgres est injoignable.
 
 ## Configuration
 

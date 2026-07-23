@@ -12,9 +12,8 @@ uv lock && docker compose up --build -d
 
 **Ce qui se passe en arrière-plan :**
 - Le conteneur `postgres` démarre.
-- Le conteneur `chroma` démarre.
 - Le conteneur `ollama` démarre et charge le modèle Llama Guard 3 (garde-fou d'entrée).
-- Le conteneur `db-init` s'assure que la base de données est prête, exécute les migrations (`alembic`) et peuple Postgres et Chroma avec les données de test, puis s'éteint.
+- Le conteneur `db-init` s'assure que la base de données est prête, exécute les migrations (`alembic`) et peuple Postgres (données de test + FAQ) puis s'éteint.
 - Le conteneur `app` démarre FastAPI (API) sur le port `8000`.
 - Le conteneur `web` démarre l'interface graphique (Nuxt) sur le port `3000`.
 
@@ -47,7 +46,7 @@ Pour chaque scénario, cliquez le bouton correspondant dans le jeu de scénarios
 
 ### Scénario 2 : Le système RAG (Base de connaissances vectorielle)
 - **Scénario "RAG FAQ — frais de port" :** `C-marc-dubois` — *Quels sont les frais de port pour la France ?*
-  - **L'envers du décor :** l'agent comprend que c'est une question générale. Au lieu d'inventer, il utilise l'outil `search_kb(query)`. Cet outil transforme la requête en *embedding* (vecteur mathématique), interroge ChromaDB et ramène le document pertinent (ex: `frais-de-port.md`) avant de formuler sa réponse. L'étape 3 du panneau de trace affiche `search_kb` comme handler.
+  - **L'envers du décor :** l'agent comprend que c'est une question générale. Au lieu d'inventer, il utilise l'outil `search_kb(query)`. Cet outil transforme la requête en *embedding* (vecteur mathématique), interroge Postgres/pgvector et ramène le document pertinent (ex: `frais-de-port.md`) avant de formuler sa réponse. L'étape 3 du panneau de trace affiche `search_kb` comme handler.
 
 ---
 

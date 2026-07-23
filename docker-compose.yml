@@ -5,15 +5,12 @@ services:
     env_file:
       - .env
     environment:
-      CHROMA_URL: http://chroma:8000
       OLLAMA_URL: http://ollama:11434
       # Construit à partir des mêmes variables que le service postgres (source
       # unique .env, D6-10/D10-09) — plus de credentials littéraux dupliqués.
       DB_URL: postgresql+psycopg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-velmo}
     depends_on:
       postgres:
-        condition: service_healthy
-      chroma:
         condition: service_healthy
       ollama:
         condition: service_healthy
@@ -33,40 +30,23 @@ services:
 
   postgres:
     # Tag lisible + digest immuable (D6-04).
-    image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+    image: pgvector/pgvector:pg18@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
       POSTGRES_DB: ${POSTGRES_DB:-velmo}
     ports:
       - "5432:5432"
+    # pg18+ : PGDATA = /var/lib/postgresql/<major>/docker (breaking change image
+    # officielle, docker-library/postgres#1259) — monter le parent, plus
+    # /var/lib/postgresql/data (layout pg16, cassé sous pg18).
     volumes:
-      - .docker-data/postgres:/var/lib/postgresql/data
+      - .docker-data/postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-velmo}"]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  chroma:
-    # Pinné par digest (D6-04) — image validée en test, plus de `:latest` mutable.
-    image: chromadb/chroma@sha256:1e0b73a187a28757c572acba508c46f48c9e8b0acaf5c20e6d95cdedce1acdf6
-    ports:
-      - "8001:8000"
-    volumes:
-      - .docker-data/chroma:/chroma/chroma
-    healthcheck:
-      # L'image chroma (binaire Rust) n'embarque ni python ni curl/wget — sonde
-      # HTTP en bash pur via /dev/tcp (vérifié : répond HTTP/1.0 200 OK).
-      test:
-        - CMD
-        - bash
-        - -c
-        - 'exec 3<>/dev/tcp/localhost/8000 && printf "GET /api/v2/heartbeat HTTP/1.0\r\n\r\n" >&3 && grep -q "200 OK" <&3'
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
 
   ollama:
     # Pinné par digest (D6-04).

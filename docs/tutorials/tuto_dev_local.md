@@ -27,7 +27,7 @@
 |---|---|---|---|
 | `git` | cloner/committer | livré macOS / `apt install git` | `git --version` |
 | `uv` | Python 3.11 + deps (pas pip/poetry) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `uv --version` |
-| Docker Desktop | Postgres, Chroma, Ollama, app | docker.com/products/docker-desktop | `docker compose version` |
+| Docker Desktop | Postgres, Ollama, app | docker.com/products/docker-desktop | `docker compose version` |
 | `psql` (optionnel) | inspecter la base | `brew install libpq` | `psql --version` |
 
 **Interface graphique** : Docker Desktop est la GUI de cette partie — chaque `docker compose`
@@ -100,7 +100,7 @@ uv run python -c "from velmo.config import validate_startup; validate_startup();
 
 ## Étape 3 — Démarrer la stack
 
-**But :** Postgres (+pgvector), Chroma (KB FAQ), Ollama (Llama Guard 3), l'app (uvicorn), le front.
+**But :** Postgres (+pgvector, mémoire ET KB FAQ), Ollama (Llama Guard 3), l'app (uvicorn), le front.
 
 **Terminal :**
 
@@ -114,10 +114,9 @@ Premier lancement : long (build image + pull `llama-guard3:8b`, ~5 Go). Les suiv
 
 ```bash
 docker compose ps --format "table {{.Name}}\t{{.Status}}"
-# → les 4 services backend « Up … (healthy) » :
+# → les 3 services backend « Up … (healthy) » :
 #   velmo-v2-app-1        Up (healthy)
 #   velmo-v2-postgres-1   Up (healthy)
-#   velmo-v2-chroma-1     Up (healthy)
 #   velmo-v2-ollama-1     Up (healthy)
 
 curl -s http://localhost:8000/health
@@ -132,8 +131,7 @@ configuré » y sont normaux en mode dégradé).
 |---|---|---|
 | app (uvicorn) | 8000 | API agent (`/health`, `/chat`, `/mlops/*`) |
 | web (Nuxt) | 3000 | interface graphique de l'agent |
-| postgres | 5432 | mémoire, audit, MLOps (pgvector inclus) |
-| chroma | 8001 | KB FAQ (RAG) |
+| postgres | 5432 | mémoire, audit, MLOps, KB FAQ (pgvector inclus) |
 | ollama | 11434 | classifieur modération Llama Guard 3 |
 
 ---
@@ -148,7 +146,7 @@ catalogue/clients/commandes.
 ```bash
 make migrate     # alembic upgrade head (schéma Postgres)
 make seed        # catalogue, clients, ~14 commandes (Postgres)
-make seed-kb     # ingestion des documents FAQ dans Chroma (RAG) — sans ça, zéro réponse FAQ
+make seed-kb     # ingestion des documents FAQ dans Postgres/pgvector (RAG) — sans ça, zéro réponse FAQ
 ```
 
 **Vérifie :**
@@ -161,7 +159,7 @@ docker compose exec postgres psql -U app -d velmo -c "SELECT count(*) FROM order
 # → count ≥ 14
 
 # make seed-kb affiche lui-même sa vérification :
-# → « FAQ ingérée dans Chroma : N documents. » (N ≥ 1)
+# → « FAQ ingérée dans Postgres (pgvector) : N documents. » (N ≥ 1)
 ```
 
 **Interface graphique** : n'importe quel client SQL (TablePlus, DBeaver, pgAdmin) sur
@@ -235,7 +233,7 @@ uvx pre-commit install
 | `make up` / `make down` | démarre / arrête la stack Docker |
 | `make migrate` | applique les migrations Alembic |
 | `make seed` | (re)peuple les données de démo Postgres (idempotent) |
-| `make seed-kb` | (ré)ingère la FAQ dans Chroma (idempotent — upsert) |
+| `make seed-kb` | (ré)ingère la FAQ dans Postgres/pgvector (idempotent — upsert) |
 | `make chat` | REPL agent dans le terminal |
 | `make test` | suite d'acceptance |
 | `make fmt` | ruff format + autofix |
@@ -245,10 +243,10 @@ uvx pre-commit install
 
 - [ ] `uv sync --locked` sans erreur, `import velmo OK`
 - [ ] `.env` créé, `validate_startup` → `config OK`
-- [ ] `docker compose ps` → 4 services backend **healthy**
+- [ ] `docker compose ps` → 3 services backend **healthy**
 - [ ] `curl /health` → `{"status":"ok"}`
 - [ ] `make migrate` + `make seed` OK (≥ 14 commandes en base)
-- [ ] `make seed-kb` OK (« FAQ ingérée dans Chroma : N documents »)
+- [ ] `make seed-kb` OK (« FAQ ingérée dans Postgres (pgvector) : N documents »)
 - [ ] Les 4 comportements agent vérifiés (métier / FAQ / périmètre / injection)
 - [ ] `make ci` vert
 

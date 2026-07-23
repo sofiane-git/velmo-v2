@@ -15,7 +15,7 @@ Assistant de support pour **Velmo**, boutique en ligne de maillots de foot colle
 
 - Python 3.11 (géré avec `uv`)
 - PostgreSQL + SQLAlchemy 2 + Alembic (état des commandes, clients, catalogue)
-- PostgreSQL + pgvector pour la mémoire épisodique ; Chroma + `intfloat/multilingual-e5-small` pour la FAQ (extra `vector`)
+- PostgreSQL + pgvector pour la mémoire épisodique et la FAQ (`intfloat/multilingual-e5-small`, extra `vector`)
 - Agent : Azure AI Inference (**Mistral-Large-3**) ; juge garde-fous : Azure OpenAI (**gpt-5-mini**) ; extracteur mémoire : **claude-opus-4-5** via Azure AI Foundry ; classifieur modération : Llama Guard 3 via Ollama (extras `llm`/`guardrails`)
 - GitHub Actions pour l'intégration continue (ruff, mypy strict, import-linter, acceptance, gate qualité)
 
@@ -24,7 +24,7 @@ tests, FAQ locale, LLM en écho). Les intégrations s'activent via les extras :
 
 ```bash
 uv sync                                   # coeur + base + outils de dev
-uv sync --extra vector --extra llm        # Chroma + Azure AI Inference
+uv sync --extra vector --extra llm        # pgvector (mémoire + FAQ) + Azure AI Inference
 ```
 
 ## Démarrage
@@ -37,10 +37,10 @@ uv sync --extra vector --extra llm        # Chroma + Azure AI Inference
 
 ```bash
 cp .env.example .env   # renseigner les clés Azure/Ollama (ou laisser vide : repli hors-ligne en dev)
-make up           # docker compose : app + postgres + chroma + ollama
+make up           # docker compose : app + postgres + ollama
 make migrate      # alembic upgrade head
 make seed         # peuple Postgres (catalogue, clients, ~14 commandes)
-make seed-kb      # ingère la FAQ dans Chroma (sans ça, zéro réponse FAQ)
+make seed-kb      # ingère la FAQ dans Postgres/pgvector (sans ça, zéro réponse FAQ)
 make chat         # REPL — répond aux questions métier, avec mémoire + garde-fous
 ```
 
@@ -79,7 +79,7 @@ src/velmo/
   mlops/            Évaluation, note globale, seuil bloquant, versioning, rapport
 docs/reference/reco_expert.md Note de recommandations (stack + exigences)
 kb/docs/            Base de connaissances FAQ
-scripts/            seed.py (Postgres) + seed_kb.py (Chroma)
+scripts/            seed.py (Postgres) + seed_kb.py (FAQ, Postgres/pgvector)
 alembic/            Migrations
 eval/               Jeux de cas (mémoire, garde-fous, qualité)
 tests/acceptance/   Suite d'acceptance + tests métier
@@ -90,7 +90,7 @@ tests/acceptance/   Suite d'acceptance + tests métier
 
 ```bash
 make migrate    # alembic upgrade head
-make seed-kb    # ingestion FAQ dans Chroma
+make seed-kb    # ingestion FAQ dans Postgres/pgvector
 make test       # suite d'acceptance + tests métier
 make fmt        # ruff format + autofix
 make typecheck  # mypy

@@ -53,7 +53,8 @@ charge prod constante l'exige.
   isolation applicative — pas un Postgres par utilisateur.
 
 > `pgvector` s'active en extension sur le Flexible Server (`azure.extensions=VECTOR` puis
-> `CREATE EXTENSION vector`). Chroma ne porte plus que la KB FAQ (hors mémoire épisodique).
+> `CREATE EXTENSION vector`). La KB FAQ (hors mémoire épisodique) vit aussi en `pgvector` —
+> plus aucun service Chroma à déployer.
 
 ---
 
@@ -82,7 +83,7 @@ charge prod constante l'exige.
 Seuils garde-fous & qualité (`MEMORY_CONFIDENCE_THRESHOLD`, `MEMORY_TOKEN_BUDGET`,
 `GATE_MIN_SCORE`, `GATE_LATENCY_P95_CEILING_MS`, `GATE_COST_PER_CONV_CEILING`,
 `LLAMA_GUARD_LATENCY_THRESHOLD_MS`), noms de modèles, `ENVIRONMENT`, `VELMO_WEB_ORIGINS`,
-`OLLAMA_URL`, `CHROMA_URL`, `TOKEN_PRICING`.
+`OLLAMA_URL`, `TOKEN_PRICING`.
 
 ### 2.c — Où et comment (côté Azure)
 

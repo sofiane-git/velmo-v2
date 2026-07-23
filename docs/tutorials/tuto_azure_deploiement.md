@@ -63,7 +63,7 @@ az group show --name "$RG" --query provisioningState -o tsv
 ## A2. Région : UE obligatoire
 
 **But :** tout déploiement traitant du contenu client en clair (conversations = PII) reste en
-**région UE** (`francecentral` ou `westeurope`) — cohérent avec Langfuse Cloud EU (§G3).
+**région UE** (`francecentral` ou `swedencentral`) — cohérent avec Langfuse Cloud EU (§G3).
 
 **Terminal (vérifier la dispo d'un service dans la région) :**
 
@@ -95,6 +95,20 @@ page « Products available by region » (azure.microsoft.com → Global Infrastr
 ⚠️ Les **noms de déploiement** ci-dessus sont un **contrat** avec le code
 (`.env.example`, `nightly.yml` drift-check) — ne pas improviser (`gpt-5-mini-guard`,
 `mistral-large-3` minuscule : déjà des bugs par le passé).
+
+> **Ressources pré-provisionnées (formation/org)** : si ton abonnement a déjà des
+> ressources Cognitive Services sous des noms imposés (pas `aoai-${SUFFIX}-*`), skip les
+> `az cognitiveservices account create` de B1-B3 et repère où sont tes modèles :
+> ```bash
+> az cognitiveservices account list --resource-group "$RG" -o table
+> for r in <noms-listés-ci-dessus>; do
+>   echo "=== $r ==="
+>   az cognitiveservices account deployment list --name "$r" --resource-group "$RG" \
+>     --query "[].{deployment:name, model:properties.model.name, state:properties.provisioningState}" -o table
+> done
+> ```
+> Seuls les **noms de déploiement** comptent (contrat ci-dessus) ; le nom de la ressource
+> qui les héberge n'est jamais lu par le code — utilise son endpoint/clé dans `.env`.
 
 ## B1. Agent principal — Mistral-Large-3 (Azure AI Inference)
 
@@ -773,6 +787,78 @@ curl -fsS "https://$FQDN/health"   # toujours 200 après le redémarrage de la r
 > secret) → variable d'app ordinaire ; seules les **clés** et la **chaîne de connexion**
 > (mot de passe) passent par `secretref` → Key Vault. Même séparation qu'en D2/D3.
 
+## F5. Front — Nuxt (Azure Static Web Apps)
+
+**But :** héberger `web/` (SSR, `ssr: false` non activé) — outil natif Nitro pour Azure
+(preset dédié `azure-swa`), gratuit (tier Free), CDN intégré.
+
+> ⚠️ **Région** : Static Web Apps n'est **pas** disponible en `francecentral`/`swedencentral`
+> (liste restreinte : `westeurope`, `centralus`, `eastus2`, `westus2`, `eastasia` — vérifiable
+> via `az provider show --namespace Microsoft.Web --query "resourceTypes[?resourceType=='staticSites'].locations"`).
+> `westeurope` reste **UE** (Pays-Bas) — conforme à la règle région UE (A2), juste pas l'une
+> des deux régions déjà citées.
+
+**Terminal :**
+
+```bash
+# 1. Build avec le preset Nitro dédié Azure Static Web Apps (restructure .output/ en
+#    app statique + Azure Functions pour le SSR) :
+NITRO_PRESET=azure-swa pnpm --dir web install --frozen-lockfile
+NITRO_PRESET=azure-swa pnpm --dir web build
+# Vérifie la structure réelle produite avant de déployer (peut varier selon version Nitro) :
+ls web/.output
+
+# 2. Créer la ressource (autonome — pas de lien GitHub ici ; le CI/CD auto sur push est
+#    câblé en Partie 3, pas ici) :
+az staticwebapp create \
+  --name "swa-${SUFFIX}" \
+  --resource-group "$RG" \
+  --location "westeurope" \
+  --sku Free
+
+# 3. Premier déploiement manuel (avant que la CI ne prenne le relais) :
+SWA_TOKEN=$(az staticwebapp secrets list --name "swa-${SUFFIX}" --resource-group "$RG" \
+  --query "properties.apiKey" -o tsv)
+npx @azure/static-web-apps-cli deploy web/.output/public \
+  --api-location web/.output/server \
+  --deployment-token "$SWA_TOKEN" --env production
+
+# 4. Brancher l'URL du front sur le CORS backend (F3) :
+FRONT_FQDN=$(az staticwebapp show --name "swa-${SUFFIX}" --resource-group "$RG" \
+  --query defaultHostname -o tsv)
+az containerapp update --name "ca-${SUFFIX}" --resource-group "$RG" \
+  --set-env-vars VELMO_WEB_ORIGINS="https://${FRONT_FQDN}"
+
+# 5. Injecter l'URL du back côté front (variable publique Nuxt, lue par les Azure
+#    Functions SSR — pas un secret) :
+az staticwebapp appsettings set --name "swa-${SUFFIX}" --resource-group "$RG" \
+  --setting-names NUXT_PUBLIC_API_BASE="https://$FQDN"
+```
+
+**Vérifie :**
+
+```bash
+az staticwebapp show --name "swa-${SUFFIX}" --resource-group "$RG" \
+  --query "{state:provisioningState, url:defaultHostname}" -o table
+curl -fsS "https://${FRONT_FQDN}"
+# → 200, page Nuxt servie
+```
+
+**Portail :** **Create a resource** → « Static Web App » → `Region` = **West Europe**,
+`Deployment details` = **Other** (pas de lien repo pour l'instant), `Hosting plan` = **Free**
+→ **Review + create**. Déploiement initial ensuite via CLI (étape 3 ci-dessus) ou GitHub
+Actions (Partie 3).
+
+> **CI/CD automatique** : `az staticwebapp create` peut aussi prendre `--source`/`--branch`
+> pour générer directement le workflow GitHub Actions — mais ce tuto sépare
+> provisionnement (ici) et branchement CI (Partie 3), comme pour F1-F3.
+
+> **KB FAQ — pas de service Chroma en prod** : la recherche sémantique FAQ migre vers
+> `pgvector` sur le Postgres déjà provisionné (C1/C2, même instance que la mémoire
+> épisodique) plutôt qu'un service Chroma séparé — un backend `PgVectorKB` remplace
+> `ChromaKB` dans `kb_store.py` (chantier code, pas infra ; voir la conception associée).
+> Aucune ressource Azure supplémentaire à créer pour la KB FAQ.
+
 ---
 
 # Phase G — Compléments
@@ -885,6 +971,7 @@ ressource mal câblée — corriger **avant** la Partie 3.
 | `acrvelmoprod` | F1 | Azure Container Registry — héberge l'image `velmo` |
 | `cae-${SUFFIX}` | F3 | Container Apps environment (Log Analytics implicite) |
 | `ca-${SUFFIX}` | F3 | **l'app servie** (ACA, ingress HTTPS, identité managée) |
+| `swa-${SUFFIX}` | F5 | front Nuxt (Static Web Apps, `westeurope`, preset `azure-swa`) |
 | Logic App `escalade-guardrails` | G1 | webhook d'escalade → e-mail |
 
 ## Mapping secrets — variable app ↔ secret Key Vault ↔ origine ↔ forme
@@ -916,6 +1003,8 @@ ressource mal câblée — corriger **avant** la Partie 3.
 - [ ] D — vault RBAC créé, **tous les secrets posés** (liste D2 complète), 2 vaults si staging+prod
 - [ ] E — Ollama `Running`, modèle pullé (logs), réseau privé
 - [ ] F — image poussée sur ACR, app ACA déployée (`/health` = 200), identité managée → Key Vault, secrets en `secretref`, `alembic upgrade head` sur le Postgres prod
+- [ ] F5 — front Nuxt déployé sur Static Web Apps (`westeurope`), `VELMO_WEB_ORIGINS` (back) et `NUXT_PUBLIC_API_BASE` (front) branchés dans les 2 sens
+- [ ] KB FAQ — backend `PgVectorKB` en place (`kb_store.py`), pas de service Chroma en prod
 - [ ] Smoke final : `config OK` + vraie réponse agent
 
 → **Partie 3 : `tuto_github_actions_release.md`** (brancher la CI sur ces ressources).

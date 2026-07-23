@@ -1,17 +1,17 @@
-"""Base de connaissances FAQ : backend Chroma (prod) et backend local (hors-ligne).
+"""Base de connaissances FAQ : backend pgvector (prod) et backend local (hors-ligne).
 
 Les deux exposent `search(query, k) -> list[dict]` renvoyant des extraits sourcés.
 """
 
 from __future__ import annotations
 
-import logging
 import math
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Protocol, cast
-from urllib.parse import urlparse
+from typing import Any, Protocol
+
+from sqlalchemy import select
 
 from velmo.config import get_settings
 
@@ -67,55 +67,37 @@ class LocalKB:
         return [item for _, item in scored[:k]]
 
 
-class ChromaKB:
-    """Recherche sémantique via Chroma + embeddings multilingues e5."""
+class PgVectorKB:
+    """Recherche sémantique FAQ via `pgvector`, même Postgres que le schéma
+    métier (`velmo.db.KbArticle`) — pas de service séparé, embeddings
+    `intfloat/multilingual-e5-small` (`memory/embeddings.py`)."""
 
-    def __init__(self, collection: Any) -> None:
-        self._collection = collection
+    def __init__(self, db_url: str) -> None:
+        self._db_url = db_url
 
     def search(self, query: str, k: int = 5) -> list[dict[str, Any]]:
-        result = self._collection.query(query_texts=[query], n_results=k)
-        docs = result.get("documents", [[]])[0]
-        metas = result.get("metadatas", [[]])[0]
-        return [
-            {"source": (meta or {}).get("source", "kb"), "snippet": doc}
-            for doc, meta in zip(docs, metas)
-        ]
+        from velmo.db import KbArticle, session_factory
+        from velmo.memory.embeddings import embed_text
+
+        query_vector = embed_text(query)
+        with session_factory(self._db_url)() as session:
+            rows = session.scalars(
+                select(KbArticle)
+                .where(KbArticle.embedding.is_not(None))
+                .order_by(KbArticle.embedding.cosine_distance(query_vector))
+                .limit(k)
+            ).all()
+            return [{"source": row.source, "snippet": row.body[:300]} for row in rows]
 
 
-def get_kb() -> KnowledgeBase:
-    """Renvoie le backend Chroma si configuré et disponible, sinon le backend local."""
-    settings = get_settings()
-    chroma_url = settings.chroma_url
-    if not chroma_url:
-        return LocalKB()
-    try:
-        import chromadb
-        from chromadb.utils import embedding_functions
-    except ImportError:
-        # Dégradation journalisée, jamais silencieuse (même règle que les
-        # étages garde-fous, D4-05) : CHROMA_URL est configuré mais le client
-        # n'est pas installé — sans ce warning, l'absence de l'extra `vector`
-        # est restée invisible pendant des semaines (LocalKB répondait).
-        logging.warning(
-            "[kb] CHROMA_URL défini mais paquet `chromadb` absent (extra `vector`) — "
-            "fallback sur LocalKB."
-        )
-        return LocalKB()
+def get_kb(db_url: str | None = None) -> KnowledgeBase:
+    """pgvector si `db_url` (ou `Settings.db_url`) pointe vers un Postgres
+    joignable ; sinon `LocalKB`. Repli gracieux (pas `require_durable_store`) :
+    la FAQ est un confort, pas un système critique — contrairement à la mémoire
+    épisodique (`memory/episodic.py`, D3-03)."""
+    from velmo.db import _postgres_reachable
 
-    try:
-        parsed = urlparse(chroma_url)
-        host = parsed.hostname or "localhost"
-        port = parsed.port or 8000
-        client = chromadb.HttpClient(host=host, port=port)
-        embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=settings.embedding_model
-        )
-        collection = client.get_or_create_collection(
-            "velmo_faq",
-            embedding_function=cast(Any, embedder),
-        )
-        return ChromaKB(collection)
-    except Exception as exc:
-        logging.warning("[kb] Chroma indisponible (%s) — fallback sur LocalKB.", exc)
-        return LocalKB()
+    resolved = db_url or get_settings().db_url
+    if _postgres_reachable(resolved):
+        return PgVectorKB(resolved)
+    return LocalKB()

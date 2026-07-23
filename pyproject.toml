@@ -15,16 +15,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Mémoire long terme épisodique : embeddings stockés dans PostgreSQL via
-# pgvector (même transaction que le texte — voir conception_chantier1_memoire.md
-# §Store épisodique). LocalEpisodic (mots-clés) reste le repli hors-ligne.
+# Mémoire long terme épisodique ET KB FAQ (`velmo.kb_store.PgVectorKB`) :
+# embeddings stockés dans PostgreSQL via pgvector, même Postgres, même modèle
+# (voir conception_chantier1_memoire.md §Store épisodique). LocalEpisodic/LocalKB
+# (mots-clés) restent les replis hors-ligne.
 vector = [
     "pgvector>=0.5,<0.6",
     "sentence-transformers>=3,<4",
-    # Client Chroma de la KB FAQ (`velmo.kb_store`, `scripts/seed_kb.py`) —
-    # dépendance longtemps fantôme : importée partout, déclarée nulle part, le
-    # repli silencieux LocalKB masquait son absence (audit, revue tuto dev).
-    "chromadb>=1,<2",
 ]
 # LLM via Azure AI Inference (Kimi-K2.6).
 llm = [
@@ -126,7 +123,7 @@ python_version = "3.11"
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["langchain_azure_ai.*", "yaml", "azure.ai.textanalytics.*", "chromadb", "chromadb.*"]
+module = ["langchain_azure_ai.*", "yaml", "azure.ai.textanalytics.*"]
 ignore_missing_imports = true
 
 # Torch CPU-only : évite libtorch_cuda.so (~2GB, inutile en inférence sentence-transformers).
