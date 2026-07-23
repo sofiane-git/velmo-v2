@@ -282,8 +282,8 @@ Réparation par lots → **writing-plans #2**, ordonnée par sévérité :
 1. ✅ **Lot RGPD/mémoire** (B1, B2, D9-03, D9-04, D9-10) — FAIT (commits e101bc3..b1daccd, 5 tests d'acceptance/unitaires ajoutés). Note D9-03 : cas atteignable déjà mitigé par af89c2d, invariant durci en défense.
 2. ✅ **Lot supply-chain/CI** (B3, B6, D5-02/03/04, D8-06, D10-05/07) — FAIT (commits 9b170eb..8076a45). Bonus : baseline ruff format (31 fichiers), lint web autofixé.
 3. ✅ **Lot gate MLOps** (B4, B5, D8-03/04/05) — FAIT (commits fec6d48..b484a4c). Décisions actées : gate hybride (PR dégradé / release+nightly réel), baseline via DB_URL→Postgres. Bonus : test_regression_blocks_delivery (échec historique) résolu — cause = hermétisme des tests, pas le scoring.
-4. **Lot guardrails** (D2-02, D4-01/02/03/05) — durcissement pipeline.
-5. **Lot Docker** (D6-*) — mécanique.
-6. **Lot docs/tutos** (D1-*, D2 doc-side, D7-*, D8-07/08/09, D9-07/08) — réécritures alignées sur le code corrigé (à faire en dernier pour documenter l'état final).
+4. ✅ **Lot guardrails** (D4-01/02/03/04/05/06/07, D3-05) — FAIT (fix f40051c, merge c773e61). Repli par étage défaillant, juge JSON malformé = panne, spans PII masqués (LLM06), `Decision.stored_text` (découplage agent), param mort `agent_response` supprimé. 6 tests d'acceptance + unitaires ajoutés. NB : D2-02 (repli RuleBasedJudge doc) rebasculé au lot docs.
+5. ✅ **Lot Docker & repro** (D6-02..10, D3-03) — FAIT (fix 03eb5e0, merge 8f69579). Multi-stage non-root, images pinnées par digest, .dockerignore, healthchecks + service_healthy, CMD uvicorn (parité) + manifeste deploy/, credentials via .env. D3-03 : `require_durable_store` fail-fast prod sur 5 stores. Vérif : `docker build` OK + `docker compose config` valide.
+6. **Lot docs/tutos** (D1-*, D2 doc-side dont D2-02, D7-*, D8-07/08/09, D9-07/08) — réécritures alignées sur le code corrigé (à faire en dernier pour documenter l'état final). ⬅ **EN COURS**
 
 Fix bidirectionnel code↔doc : la best practice l'emporte (cf. charte §1).
