@@ -21,6 +21,10 @@ dependencies = [
 vector = [
     "pgvector>=0.5,<0.6",
     "sentence-transformers>=3,<4",
+    # Client Chroma de la KB FAQ (`velmo.kb_store`, `scripts/seed_kb.py`) —
+    # dépendance longtemps fantôme : importée partout, déclarée nulle part, le
+    # repli silencieux LocalKB masquait son absence (audit, revue tuto dev).
+    "chromadb>=1,<2",
 ]
 # LLM via Azure AI Inference (Kimi-K2.6).
 llm = [

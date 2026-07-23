@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     azure_openai_guard_api_key: str | None = None
     azure_openai_guard_deployment: str = "gpt-5-mini"
 
+    # Certains déploiements (constaté sur gpt-5-mini) refusent `logprobs` en
+    # 400. True (défaut) : le juge tente au 1er appel puis retombe sans
+    # (1 aller-retour perdu + 1 warning, une fois par process). False : on ne
+    # tente même pas — à poser quand le déploiement est connu pour le refuser
+    # (gradation de confiance tres_fort→fort désactivée dans les deux cas).
+    azure_openai_guard_logprobs: bool = True
+
     # Extracteur mémoire (Chantier 1) + juge DeepEval Qualité (Chantier 3) :
     # usages ASYNCHRONES/best-effort — peuvent partager un même déploiement
     # sans risque mutuel (voir conception_chantier1_memoire.md §Qui décide de
