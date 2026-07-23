@@ -74,7 +74,7 @@
 - **Fix :** infra · **Plugin :** oui — vérifier la correspondance outils-configurés ↔ outils-gatés en CI ; poser ces steps dès j0.
 - **Reco :** ajouter `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src` à quality.yml.
 
-### B7 · Tuto Azure : étape sur une ressource jamais créée — `D7-01`
+### ✅ B7 (lot 6) · Tuto Azure : étape sur une ressource jamais créée — `D7-01`
 - **Fichier :** `docs/job/tuto_azure_deploiement.md:468`
 - **Constat :** `az webapp identity assign --name "<nom-app>"` alors que le tuto ne crée jamais d'App Service/Container App (hébergement explicitement non tranché, cf. release.yml:38-43). Commande inexécutable dans le flux nominal.
 - **Fix :** doc · **Plugin :** oui — vérifier le graphe de dépendances des étapes d'un tuto (chaque commande opère sur une ressource créée en amont).
@@ -86,11 +86,11 @@
 
 ### Docs & cohérence (D1, D2)
 
-- **`D1-01`** (+`D2-03`) · `docs/job/schemas/04-outils.md:83` — Store vectoriel contradictoire : schémas actent **ChromaDB** (pgvector écarté), conceptions ch1 actent **pgvector** (ChromaDB écarté), avec conséquences opposées sur l'atomicité R5. **Fix :** doc. **Reco :** trancher (pgvector, plus récent et mieux argumenté : atomicité R5, store unique) et aligner schemas/04 (l.13, 83, 115, 118) + schemas/01 (l.21, 62, 64) ; si Chroma « imposé par le brief », documenter l'écart assumé.
-- **`D2-02`** · `src/velmo/guardrails/judge.py:364-377` — Repli runtime « RuleBasedJudge si Azure indisponible » non branché : `ShadowingJudge.evaluate` propage l'exception sans basculer ; panne partielle du juge → G5/G6 non évalués. **Fix :** code. **Reco :** retourner le verdict du shadow quand le primary lève (loggé `method='fallback'`), ou appliquer la ligne fail-closed dès l'échec du juge seul.
+- ✅ **`D1-01`** (lot 6) (+`D2-03`) · `docs/job/schemas/04-outils.md:83` — Store vectoriel contradictoire : schémas actent **ChromaDB** (pgvector écarté), conceptions ch1 actent **pgvector** (ChromaDB écarté), avec conséquences opposées sur l'atomicité R5. **Fix :** doc. **Reco :** trancher (pgvector, plus récent et mieux argumenté : atomicité R5, store unique) et aligner schemas/04 (l.13, 83, 115, 118) + schemas/01 (l.21, 62, 64) ; si Chroma « imposé par le brief », documenter l'écart assumé.
+- ✅ **`D2-02`** (lot 6) · `src/velmo/guardrails/judge.py:364-377` — Repli runtime « RuleBasedJudge si Azure indisponible » non branché : `ShadowingJudge.evaluate` propage l'exception sans basculer ; panne partielle du juge → G5/G6 non évalués. **Fix :** code. **Reco :** retourner le verdict du shadow quand le primary lève (loggé `method='fallback'`), ou appliquer la ligne fail-closed dès l'échec du juge seul.
 - **`D2-04`** · `src/velmo/memory/db.py:202` — Doc : « jamais create_all » ; code : `Base.metadata.create_all` inconditionnel dans 5 modules, y compris sur Postgres (concurrent d'Alembic). **Fix :** code. **Reco :** garde explicite (create_all réservé SQLite offline/tests), Alembic seul sur Postgres.
-- **`D2-05`** · `conception_chantier3_evaluation_mlops.md:124-125` — Append-only « forcé côté base » (INSERT/SELECT only) sans aucune trace d'implémentation (`grep GRANT alembic` vide). **Fix :** infra. **Reco :** migration posant les GRANT/REVOKE, ou marquer non-implémenté.
-- **`D2-06`** (+`D3-02`) · `conception_chantier1_memoire.md:17` — Doc : orchestration du tour = StateGraph LangGraph (dont nœud résumé R4) ; code : LangGraph = persistance seule (StateGraph à un unique nœud `append_turn`), compression et orchestration en Python simple. **Fix :** doc. **Reco :** reformuler le périmètre réel du framework.
+- ✅ **`D2-05`** (lot 6) · `conception_chantier3_evaluation_mlops.md:124-125` — Append-only « forcé côté base » (INSERT/SELECT only) sans aucune trace d'implémentation (`grep GRANT alembic` vide). **Fix :** infra. **Reco :** migration posant les GRANT/REVOKE, ou marquer non-implémenté.
+- ✅ **`D2-06`** (lot 6) (+`D3-02`) · `conception_chantier1_memoire.md:17` — Doc : orchestration du tour = StateGraph LangGraph (dont nœud résumé R4) ; code : LangGraph = persistance seule (StateGraph à un unique nœud `append_turn`), compression et orchestration en Python simple. **Fix :** doc. **Reco :** reformuler le périmètre réel du framework.
 
 ### Architecture (D3)
 
@@ -117,16 +117,16 @@
 
 ### Tutos (D7)
 
-- **`D7-02`** · `tuto_azure_deploiement.md:159` — Déploiement juge créé `gpt-5-mini-guard` vs `gpt-5-mini` attendu par nightly.yml:53 et .env.example — le drift-check échouerait sur l'infra du tuto. **Fix :** les-deux.
-- **`D7-03`** · `tuto_azure_deploiement.md:243` — `mistral-large-3` (minuscules) + `--model-name Mistral-Large-2411` (= Mistral Large **2**) vs `Mistral-Large-3` attendu (casse comprise) par nightly/.env.example. **Fix :** les-deux.
-- **`D7-04`** · `tuto_azure_deploiement.md:30` — Deux infrastructures jamais réconciliées : tuto = `rg-velmo-prod`/`aoai-velmo-prod-*`, CI réelle = `sconanRG`/`sconanext-*-resource`. **Fix :** les-deux. **Reco :** étape finale « mettre à jour les variables GitHub », ou statut « infra cible future » explicite.
-- **`D7-05`** · `tuto_azure_deploiement.md:273` — Variable `AZURE_AI_INFERENCE_KEY` inexistante (réel : `AZURE_AI_INFERENCE_API_KEY`) → `validate_startup()` échoue si suivi à la lettre. **Fix :** doc.
-- **`D7-06`** · `tuto_azure_deploiement.md:660` — §8 attribue `azure/login` à quality.yml « en variables » — faux deux fois (c'est nightly.yml, via secrets). **Fix :** doc.
-- **`D7-07`** · `tuto_azure_deploiement.md:621` — Chemin CLI OIDC sans `az ad sp create` : le role assignment échoue ; `<app-id>` jamais extrait. **Fix :** doc. **Reco :** aligner sur la séquence correcte du tuto release §2.3.
-- **`D7-08`** · `tuto_azure_deploiement.md:469` — Vault créé en RBAC mais accès accordé via `set-policy` (access policies) : incompatible, la commande échoue (le paragraphe portail du même § dit l'inverse, correctement). **Fix :** doc. **Reco :** `az role assignment create --role "Key Vault Secrets User"`.
-- **`D7-09`** · `tuto_azure_deploiement.md:161` — Placeholder non résolu dans une commande copiable du chemin bloquant (`--model-version "<version pinnée — voir console>"`). **Fix :** doc.
-- **`D7-10`** · `tuto_azure_deploiement.md:516` — `az container exec --exec-command "ollama pull …"` : ACI ne supporte pas les arguments dans exec (limitation documentée Microsoft). **Fix :** doc.
-- **`D7-11`** · `tuto_github_actions_release.md:265` — Approbation par CLI fausse : `-f environment_ids[]=<env_id>` envoie une string (API exige un int → `-F`), chemin elliptique non copiable, `<env_id>` jamais expliqué. **Fix :** doc.
+- ✅ **`D7-02`** (lot 6) · `tuto_azure_deploiement.md:159` — Déploiement juge créé `gpt-5-mini-guard` vs `gpt-5-mini` attendu par nightly.yml:53 et .env.example — le drift-check échouerait sur l'infra du tuto. **Fix :** les-deux.
+- ✅ **`D7-03`** (lot 6) · `tuto_azure_deploiement.md:243` — `mistral-large-3` (minuscules) + `--model-name Mistral-Large-2411` (= Mistral Large **2**) vs `Mistral-Large-3` attendu (casse comprise) par nightly/.env.example. **Fix :** les-deux.
+- ✅ **`D7-04`** (lot 6) · `tuto_azure_deploiement.md:30` — Deux infrastructures jamais réconciliées : tuto = `rg-velmo-prod`/`aoai-velmo-prod-*`, CI réelle = `sconanRG`/`sconanext-*-resource`. **Fix :** les-deux. **Reco :** étape finale « mettre à jour les variables GitHub », ou statut « infra cible future » explicite.
+- ✅ **`D7-05`** (lot 6) · `tuto_azure_deploiement.md:273` — Variable `AZURE_AI_INFERENCE_KEY` inexistante (réel : `AZURE_AI_INFERENCE_API_KEY`) → `validate_startup()` échoue si suivi à la lettre. **Fix :** doc.
+- ✅ **`D7-06`** (lot 6) · `tuto_azure_deploiement.md:660` — §8 attribue `azure/login` à quality.yml « en variables » — faux deux fois (c'est nightly.yml, via secrets). **Fix :** doc.
+- ✅ **`D7-07`** (lot 6) · `tuto_azure_deploiement.md:621` — Chemin CLI OIDC sans `az ad sp create` : le role assignment échoue ; `<app-id>` jamais extrait. **Fix :** doc. **Reco :** aligner sur la séquence correcte du tuto release §2.3.
+- ✅ **`D7-08`** (lot 6) · `tuto_azure_deploiement.md:469` — Vault créé en RBAC mais accès accordé via `set-policy` (access policies) : incompatible, la commande échoue (le paragraphe portail du même § dit l'inverse, correctement). **Fix :** doc. **Reco :** `az role assignment create --role "Key Vault Secrets User"`.
+- ✅ **`D7-09`** (lot 6) · `tuto_azure_deploiement.md:161` — Placeholder non résolu dans une commande copiable du chemin bloquant (`--model-version "<version pinnée — voir console>"`). **Fix :** doc.
+- ✅ **`D7-10`** (lot 6) · `tuto_azure_deploiement.md:516` — `az container exec --exec-command "ollama pull …"` : ACI ne supporte pas les arguments dans exec (limitation documentée Microsoft). **Fix :** doc.
+- ✅ **`D7-11`** (lot 6) · `tuto_github_actions_release.md:265` — Approbation par CLI fausse : `-f environment_ids[]=<env_id>` envoie une string (API exige un int → `-F`), chemin elliptique non copiable, `<env_id>` jamais expliqué. **Fix :** doc.
 
 ### MLOps/hygiène (D8)
 
@@ -134,8 +134,8 @@
 - ✅ **`D8-04`** *(corrigé : bc0177e — velmo.mlops.alerting, règle deux-nuits, échec du job = canal d'alerte)* · `.github/workflows/nightly.yml:133` — Run bihebdo à `--min-score 0.0` : ne peut jamais être rouge, et l'alerte documentée n'existe dans aucun workflow. **Fix :** les-deux.
 - ✅ **`D8-05`** *(corrigé : fec6d48 — Settings.gate_*, gate_config_hash dans l'identité de version, migration 0011)* · `src/velmo/mlops/__init__.py:284` — Seuils de gate en dur et dupliqués (0.80 ×2, plafonds NF, défaut CLI), hors config et hors `compute_version_hashes` — la conception exige « chiffres versionnés dans un fichier de config (donc hashés) ». **Fix :** code.
 - ✅ **`D8-06`** *(corrigé : 38a4e8f — git rm + règles .gitignore)* · `eval/Archive.zip` — Artefact zip + copies périmées de fixtures commités (l'intention `.gitignore archives/` existe mais casse différente). **Fix :** infra. **Reco :** `git rm`, l'historique git est l'archive.
-- **`D8-07`** · `README.md:10-12` — README décrit les 3 chantiers « (à construire) » alors qu'ils sont livrés et que le gate bloque déjà la CI. **Fix :** doc.
-- **`D8-08`** · `README.md:19` — README annonce « Kimi-K2.6 » ; config/CI réelles : Mistral-Large-3, claude-opus-4-5, gpt-5-mini. **Fix :** doc.
+- ✅ **`D8-07`** (lot 6) · `README.md:10-12` — README décrit les 3 chantiers « (à construire) » alors qu'ils sont livrés et que le gate bloque déjà la CI. **Fix :** doc.
+- ✅ **`D8-08`** (lot 6) · `README.md:19` — README annonce « Kimi-K2.6 » ; config/CI réelles : Mistral-Large-3, claude-opus-4-5, gpt-5-mini. **Fix :** doc.
 
 ### RGPD (D9)
 
@@ -146,7 +146,7 @@
 
 ### Bootstrap (D10)
 
-- **`D10-03`** · `README.md:10` — README périmé (features « à construire », Kimi-K2.6, aucune étape `.env` dans le quickstart). **Fix :** doc. *(Recoupe D8-07/D8-08 — une seule réécriture du README règle les trois.)*
+- ✅ **`D10-03`** (lot 6) · `README.md:10` — README périmé (features « à construire », Kimi-K2.6, aucune étape `.env` dans le quickstart). **Fix :** doc. *(Recoupe D8-07/D8-08 — une seule réécriture du README règle les trois.)*
 - ✅ **`D10-05`** (+`D8-12`) *(corrigé : 8076a45 — web-ci.yml racine avec paths filter + actions pinnées, répertoire mort supprimé)* · `web/.github/workflows/ci.yml` — Workflow CI commité dans `web/.github/` : jamais exécuté par GitHub (seule la racine compte) → le front n'a aucune gate effective, fichier trompeur. **Fix :** infra. **Reco :** job racine avec `paths: [web/**]`, supprimer le répertoire mort.
 
 ---
@@ -155,10 +155,10 @@
 
 | ID | Fichier | Constat (résumé) | Fix | Reco (résumé) |
 |----|---------|------------------|-----|---------------|
-| D1-02 | schemas/00-architecture-globale.md:17 | Flux global place l'écriture mémoire dans le chemin critique de réponse ; conception acte best-effort hors chemin | doc | Sortir MEMW du chemin séquentiel (dérivation annotée) |
-| D1-03 | conceptions/agnostic/…chantier3:96 | Docs « agnostic » gardent des résidus Velmo (marque, `velmo.config`) contredisant leur statut de template | doc | Placeholders génériques + velmo en exemple d'instanciation |
-| D2-07 | conception_chantier1:287 | Tombstone décrit « memory_audit + clé bloquée » vs table dédiée `memory_tombstone` réelle | doc | Mettre à jour le modèle de données |
-| D2-09 | mlops/versioning.py:23-31 | `memory_config_hash` n'inclut pas le budget tokens annoncé (token_budget hors Settings) | code | Promouvoir token_budget dans Settings + le hasher |
+| ✅ D1-02 (lot 6) | schemas/00-architecture-globale.md:17 | Flux global place l'écriture mémoire dans le chemin critique de réponse ; conception acte best-effort hors chemin | doc | Sortir MEMW du chemin séquentiel (dérivation annotée) |
+| ✅ D1-03 (lot 6) | conceptions/agnostic/…chantier3:96 | Docs « agnostic » gardent des résidus Velmo (marque, `velmo.config`) contredisant leur statut de template | doc | Placeholders génériques + velmo en exemple d'instanciation |
+| ✅ D2-07 (lot 6) | conception_chantier1:287 | Tombstone décrit « memory_audit + clé bloquée » vs table dédiée `memory_tombstone` réelle | doc | Mettre à jour le modèle de données |
+| ✅ D2-09 (lot 6) | mlops/versioning.py:23-31 | `memory_config_hash` n'inclut pas le budget tokens annoncé (token_budget hors Settings) | code | Promouvoir token_budget dans Settings + le hasher |
 | D2-10 | memory/graph.py:92-116 | Mode dégradé hors-ligne omniprésent (SqliteSaver, EchoLLM, LexicalClassifier, LocalEpisodic) décrit nulle part | doc | Section « mode hors-ligne / replis » par composant |
 | D2-13 | agent.py:5 | Docstring : « Seul le MLOps reste à construire » — faux, module complet + gate actif | code | Supprimer la phrase d'état |
 | D2-14 | conception_chantier1:18 | Rôles LangChain annoncés (structured output extracteur, embeddings) ≠ code (SDK anthropic direct, sentence-transformers) | doc | Réduire au rôle réel (client LLM agent) |
@@ -175,27 +175,27 @@
 | ✅ D6-07 (03eb5e0) | Dockerfile:18 | `uv sync` sans `--frozen` : re-résolution silencieuse si pyproject↔lock divergent | code | `uv sync --locked` conservé (≥ --frozen : échoue si lock diverge, build déterministe) |
 | ✅ D6-08 (03eb5e0) | docker-compose.yml:2 | Aucun healthcheck app ; chroma/ollama en `service_started` (seul postgres en a un) | code | Healthcheck app (`/health`) + chroma + ollama ; `depends_on: service_healthy` |
 | ✅ D6-09 (03eb5e0) | deploy/langfuse/README.md | Parité compose↔deploy invérifiable : deploy/ = un README ; CMD image (CLI) ≠ workload servi (uvicorn via compose) ; web en `pnpm dev` | les-deux | CMD image = uvicorn (parité, vérifié) + `deploy/README.md` (manifeste workload). Web dev-server laissé tel quel (hors scope prod) |
-| D7-12 | tuto_azure:627 | `<org>/<repo>` non résolu (valeur connue) + procédure OIDC dupliquée avec noms divergents entre les 2 tutos | doc | Résoudre + renvoi unique vers release §2.3 |
-| D7-13 | tuto_azure:276 | « à implémenter dans validate_startup() » — déjà implémenté (llm.py:149-152) | doc | Pointer le comportement existant |
-| D7-14 | tuto_azure:365 | `--restore-time "2026-07-17…"` en dur : échoue sur un serveur créé après cette date | doc | Placeholder + règle de calcul |
-| D7-15 | tuto_azure:585 | Pseudo-commande `--definition '{...}'` non copiable (JSON jamais fourni) | doc | definition.json versionné ou « portail uniquement » |
-| D7-16 | tuto_azure:753 | Pas de vérification finale bout-en-bout (smoke test app→LLM→DB→guardrails) | doc | Section finale : .env depuis Key Vault + validate_startup + échange agent |
-| D7-17 | tuto_azure:426 | Rôle `velmo_migrator` mentionné mais jamais créé ; « migrations en CI » : aucun workflow ne lance alembic | les-deux | CREATE ROLE au §3.2 + requalifier la phrase CI |
-| D7-18 | tuto_azure:293 | Placeholders secrets sans génération, et ordre inversé (mdp « stocké dans Key Vault » avant la création du vault §4) | doc | `openssl rand` + réordonner ou annoter |
-| D7-19 | tuto_github_actions_release.md:1 | Pas de bloc prérequis (gh admin, az CLI, admin tenant découverts en cours de route) | doc | Section Prérequis en tête |
-| D8-09 | CLAUDE.md:9 | Gate décrit comme « pytest tests/acceptance/ » seul — omet lint-imports et le Quality gate mlops min-score 0.8 | doc | Compléter la puce CI |
+| ✅ D7-12 (lot 6) | tuto_azure:627 | `<org>/<repo>` non résolu (valeur connue) + procédure OIDC dupliquée avec noms divergents entre les 2 tutos | doc | Résoudre + renvoi unique vers release §2.3 |
+| ✅ D7-13 (lot 6) | tuto_azure:276 | « à implémenter dans validate_startup() » — déjà implémenté (llm.py:149-152) | doc | Pointer le comportement existant |
+| ✅ D7-14 (lot 6) | tuto_azure:365 | `--restore-time "2026-07-17…"` en dur : échoue sur un serveur créé après cette date | doc | Placeholder + règle de calcul |
+| ✅ D7-15 (lot 6) | tuto_azure:585 | Pseudo-commande `--definition '{...}'` non copiable (JSON jamais fourni) | doc | definition.json versionné ou « portail uniquement » |
+| ✅ D7-16 (lot 6) | tuto_azure:753 | Pas de vérification finale bout-en-bout (smoke test app→LLM→DB→guardrails) | doc | Section finale : .env depuis Key Vault + validate_startup + échange agent |
+| ✅ D7-17 (lot 6) | tuto_azure:426 | Rôle `velmo_migrator` mentionné mais jamais créé ; « migrations en CI » : aucun workflow ne lance alembic | les-deux | CREATE ROLE au §3.2 + requalifier la phrase CI |
+| ✅ D7-18 (lot 6) | tuto_azure:293 | Placeholders secrets sans génération, et ordre inversé (mdp « stocké dans Key Vault » avant la création du vault §4) | doc | `openssl rand` + réordonner ou annoter |
+| ✅ D7-19 (lot 6) | tuto_github_actions_release.md:1 | Pas de bloc prérequis (gh admin, az CLI, admin tenant découverts en cours de route) | doc | Section Prérequis en tête |
+| ✅ D8-09 (lot 6) | CLAUDE.md:9 | Gate décrit comme « pytest tests/acceptance/ » seul — omet lint-imports et le Quality gate mlops min-score 0.8 | doc | Compléter la puce CI |
 | D8-10 | nightly.yml:126 | Cadence « 1 lundi sur 2 » par parité de semaine ISO : trou de 3 semaines les années à 53 semaines | infra | Delta de jours depuis une époque |
 | D8-11 | nightly.yml:92-96 | Commit bot sans [skip ci] → chaque bump d'état déclenche un run d'éval LLM payant complet | infra | `[skip ci]` ou `paths-ignore: ['.github/state/**']` |
 | ✅ D9-04 *(corrigé : c525403, f52c34e)* | memory/__init__.py:367-373 | Écritures d'épisodes sans consultation des tombstones (résurrection possible via épisode tardif) | code | Garde avant add_episode ou target_kind 'episode_value' |
-| D9-07 | conception_chantier1:1 | Aucune base légale (art. 6) ni consentement documenté pour la mémoire persistante | doc | Section « Base légale » + information utilisateur |
-| D9-08 | conception_chantier1:491 | Registre de traitement (art. 30) référencé 2× mais n'existe nulle part | doc | docs/rgpd/registre_traitements.md consolidé |
+| ✅ D9-07 (lot 6) | conception_chantier1:1 | Aucune base légale (art. 6) ni consentement documenté pour la mémoire persistante | doc | Section « Base légale » + information utilisateur |
+| ✅ D9-08 (lot 6) | conception_chantier1:491 | Registre de traitement (art. 30) référencé 2× mais n'existe nulle part | doc | docs/rgpd/registre_traitements.md consolidé |
 | D9-09 | api.py:290 | Aucun export/portabilité (art. 20) : `inspect()` existe mais n'est exposé ni API ni CLI | les-deux | GET /memory/{user_id}/export réutilisant inspect() |
 | ✅ D9-10 *(corrigé : 7d6ddd4)* | memory/retention.py:48-61 | purge_inactive_threads commit les Thread AVANT delete_thread : crash entre les deux = checkpoints orphelins définitifs (idempotence revendiquée fausse) | code | Inverser l'ordre (store secondaire d'abord) |
 | D10-06 | scripts/seed_kb.py:20 | os.getenv direct contournant la config centralisée, défauts divergents de .env.example | code | Passer par Settings |
 | ✅ D10-07 *(corrigé : c2e2447 — make ci = lint fmt-check typecheck lint-imports acceptance eval-gate)* | Makefile:27 | `make ci` = pytest seul ≠ gate CI réelle (lint-imports + acceptance + mlops score) | les-deux | Invariant « make ci == pipeline CI » |
 | D10-08 | .pre-commit-config.yaml (absent) | Pas de hook pre-commit (ruff/mypy à la main ou en CI seulement) | infra | Config minimale ruff + ruff-format |
 | ✅ D10-09 (03eb5e0) | docker-compose.yml:28 | Credentials Postgres app/app en dur, dupliqués (compose + défaut db_url) | infra | `${POSTGRES_USER:-app}` etc. depuis .env, DB_URL app construite dessus (source unique) *(recoupe D6-10)* |
-| D2-08 | conception_chantier2:20 | Ch2 affirme encore « les trois consommateurs partagent gpt-5-mini » — révision actée ailleurs (claude-opus-4-5), code conforme à la révision | doc | Propager la révision (croiser les chantiers) |
+| ✅ D2-08 (lot 6) | conception_chantier2:20 | Ch2 affirme encore « les trois consommateurs partagent gpt-5-mini » — révision actée ailleurs (claude-opus-4-5), code conforme à la révision | doc | Propager la révision (croiser les chantiers) |
 | D2-12* | conception_chantier3:93 | `guardrail_config_hash` annoncé « seuils G1..G7 » vs 3 seuils globaux réels | doc | Reformuler (ou acter des seuils par catégorie) |
 
 *\*D2-12 classé nit par l'agent, remonté mineur ici pour cohérence avec D2-09 (même item référentiel « hash couvre exactement les paramètres listés »).*
@@ -209,8 +209,8 @@
 | ✅ D4-06 (f40051c) | referentiel-audit.md (D4) | Le référentiel dit G5 fail-open, la conception + code disent fail-closed (code plus strict) | Référentiel aligné (G5 fail-closed) |
 | ✅ D4-07 (f40051c) | guardrails/__init__.py:178 | `agent_response` jamais alimenté vers le juge (paramètre mort) | Paramètre supprimé (juge + pipeline + wrapper observabilité) |
 | ✅ D6-10 (03eb5e0) | docker-compose.yml:29 | Credentials littéraux dans compose (recoupe D10-09) | Interpolés depuis .env |
-| D7-20 | tuto_release:193 | Renvois « §2.4 » erronés (procédure au §2.3) | Corriger 3 renvois |
-| D7-21 | tuto_azure:97 | Commande Anthropic fournie avec avertissement « peut-être fausse » | Re-vérifier et trancher |
+| ✅ D7-20 (lot 6) | tuto_release:193 | Renvois « §2.4 » erronés (procédure au §2.3) | Corriger 3 renvois |
+| ✅ D7-21 (lot 6) | tuto_azure:97 | Commande Anthropic fournie avec avertissement « peut-être fausse » | Re-vérifier et trancher |
 | D8-13 | hotfix.yml:28 | `--min-score 0.0` + `\|\| true` : le second masque aussi les crashs infra | `continue-on-error: true` |
 | D10-10 | pyrightconfig.json | Deux type-checkers sources de vérité (pyright + mypy strict) | Documenter pyright = IDE only, ou supprimer |
 
@@ -284,6 +284,8 @@ Réparation par lots → **writing-plans #2**, ordonnée par sévérité :
 3. ✅ **Lot gate MLOps** (B4, B5, D8-03/04/05) — FAIT (commits fec6d48..b484a4c). Décisions actées : gate hybride (PR dégradé / release+nightly réel), baseline via DB_URL→Postgres. Bonus : test_regression_blocks_delivery (échec historique) résolu — cause = hermétisme des tests, pas le scoring.
 4. ✅ **Lot guardrails** (D4-01/02/03/04/05/06/07, D3-05) — FAIT (fix f40051c, merge c773e61). Repli par étage défaillant, juge JSON malformé = panne, spans PII masqués (LLM06), `Decision.stored_text` (découplage agent), param mort `agent_response` supprimé. 6 tests d'acceptance + unitaires ajoutés. NB : D2-02 (repli RuleBasedJudge doc) rebasculé au lot docs.
 5. ✅ **Lot Docker & repro** (D6-02..10, D3-03) — FAIT (fix 03eb5e0, merge 8f69579). Multi-stage non-root, images pinnées par digest, .dockerignore, healthchecks + service_healthy, CMD uvicorn (parité) + manifeste deploy/, credentials via .env. D3-03 : `require_durable_store` fail-fast prod sur 5 stores. Vérif : `docker build` OK + `docker compose config` valide.
-6. **Lot docs/tutos** (D1-*, D2 doc-side dont D2-02, D7-*, D8-07/08/09, D9-07/08) — réécritures alignées sur le code corrigé (à faire en dernier pour documenter l'état final). ⬅ **EN COURS**
+6. ✅ **Lot docs/tutos** (D1-01/02/03, D2-02/05/06/07/08/09/13, D7-01..21, D8-07/08/09, D9-07/08, D10-03) — FAIT. Commits : README/CLAUDE + token_budget (4b0133c), cohérence conceptions/schemas (c97e0b2), RGPD registre + base légale (300c9fc), tutos (021bf1f + 9de5a93). RGPD : `docs/rgpd/registre_traitements.md` créé. Tutos : dérive noms/variables vs code corrigée, commandes exécutables (vault RBAC, ACI, OIDC dédupliqué vers release §2.3), smoke test bout-en-bout. NB : templates `agnostic/` (D1-03) édités en local mais **gitignorés** (hors dépôt).
+
+**Reporté (non fait, couplé) :** **D2-04** (guard `create_all` réservé SQLite) — lié à **D7-17** : aucun workflow ne lance `alembic upgrade`, donc guarder `create_all` casserait la baseline Postgres nightly. À traiter ensemble avec câblage `alembic upgrade` en CI + vérification sur un vrai run Postgres, pas en aveugle.
 
 Fix bidirectionnel code↔doc : la best practice l'emporte (cf. charte §1).
