@@ -181,6 +181,17 @@ _ENDPOINT_KEY_FIELDS: tuple[tuple[str, str], ...] = (
     ("azure_content_safety_endpoint", "azure_content_safety_key"),
 )
 
+# Suffixe d'URL requis par le client réellement utilisé (règle projet : forme
+# OpenAI-compatible `/openai/v1` partout où le service l'expose ; Foundry
+# Anthropic = `/anthropic`). Le portail Azure donne l'endpoint « nu » : copié
+# tel quel, chaque appel 404 (constaté sur le juge) — même classe de piège que
+# les placeholders, donc même traitement : erreur explicite au démarrage.
+_ENDPOINT_REQUIRED_SUFFIX: tuple[tuple[str, str], ...] = (
+    ("azure_ai_inference_endpoint", "/openai/v1"),
+    ("azure_openai_guard_endpoint", "/openai/v1"),
+    ("anthropic_foundry_endpoint", "/anthropic"),
+)
+
 
 def validate_startup(settings: Settings | None = None) -> None:
     """Échoue tôt (au démarrage du process) plutôt qu'au premier appel qui
@@ -213,6 +224,13 @@ def validate_startup(settings: Settings | None = None) -> None:
             missing_field = key_field if endpoint else endpoint_field
             errors.append(
                 f"`{missing_field.upper()}` manquant (l'autre variable du couple est définie)"
+            )
+    for field, suffix in _ENDPOINT_REQUIRED_SUFFIX:
+        value = getattr(settings, field)
+        if value and "<" not in value and not value.rstrip("/").endswith(suffix):
+            errors.append(
+                f"`{field.upper()}` doit se terminer par `{suffix}` — forme requise par le "
+                f"client (l'endpoint « nu » du portail échoue à chaque appel)"
             )
     if errors:
         raise ConfigurationError(

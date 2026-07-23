@@ -24,12 +24,14 @@ def test_validate_startup_passes_when_all_pairs_fully_unset():
 
 
 def test_validate_startup_passes_when_all_pairs_fully_set():
+    # Formes d'endpoint conformes à la règle projet : `/openai/v1` pour les
+    # services OpenAI-compatibles, `/anthropic` pour Foundry.
     settings = Settings(
-        azure_ai_inference_endpoint="https://example.com",
+        azure_ai_inference_endpoint="https://example.services.ai.azure.com/openai/v1",
         azure_ai_inference_api_key="key",
-        azure_openai_guard_endpoint="https://example.com",
+        azure_openai_guard_endpoint="https://example.openai.azure.com/openai/v1",
         azure_openai_guard_api_key="key",
-        anthropic_foundry_endpoint="https://example.com",
+        anthropic_foundry_endpoint="https://example.services.ai.azure.com/anthropic",
         anthropic_api_key="key",
         azure_language_endpoint="https://example.com",
         azure_language_key="key",
@@ -73,3 +75,31 @@ def test_validate_startup_rejects_placeholder_values():
     )
     with pytest.raises(ConfigurationError, match="placeholder"):
         validate_startup(settings)
+
+
+def test_validate_startup_rejects_bare_openai_compatible_endpoint():
+    # Le portail donne l'endpoint « nu » ; le client OpenAI standard exige la
+    # forme /openai/v1 — copié tel quel, chaque appel 404 (constaté sur le juge).
+    settings = Settings(
+        azure_openai_guard_endpoint="https://example.openai.azure.com",
+        azure_openai_guard_api_key="key",
+    )
+    with pytest.raises(ConfigurationError, match="openai/v1"):
+        validate_startup(settings)
+
+
+def test_validate_startup_rejects_foundry_endpoint_without_anthropic_suffix():
+    settings = Settings(
+        anthropic_foundry_endpoint="https://example.services.ai.azure.com",
+        anthropic_api_key="key",
+    )
+    with pytest.raises(ConfigurationError, match="anthropic"):
+        validate_startup(settings)
+
+
+def test_validate_startup_tolerates_trailing_slash_on_suffix():
+    settings = Settings(
+        azure_ai_inference_endpoint="https://example.services.ai.azure.com/openai/v1/",
+        azure_ai_inference_api_key="key",
+    )
+    validate_startup(settings)  # ne lève pas
