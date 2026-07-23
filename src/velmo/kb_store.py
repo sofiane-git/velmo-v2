@@ -10,7 +10,7 @@ import math
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import urlparse
 
 from velmo.config import get_settings
@@ -93,6 +93,14 @@ def get_kb() -> KnowledgeBase:
         import chromadb
         from chromadb.utils import embedding_functions
     except ImportError:
+        # Dégradation journalisée, jamais silencieuse (même règle que les
+        # étages garde-fous, D4-05) : CHROMA_URL est configuré mais le client
+        # n'est pas installé — sans ce warning, l'absence de l'extra `vector`
+        # est restée invisible pendant des semaines (LocalKB répondait).
+        logging.warning(
+            "[kb] CHROMA_URL défini mais paquet `chromadb` absent (extra `vector`) — "
+            "fallback sur LocalKB."
+        )
         return LocalKB()
 
     try:
@@ -103,7 +111,10 @@ def get_kb() -> KnowledgeBase:
         embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name=settings.embedding_model
         )
-        collection = client.get_or_create_collection("velmo_faq", embedding_function=embedder)
+        collection = client.get_or_create_collection(
+            "velmo_faq",
+            embedding_function=cast(Any, embedder),
+        )
         return ChromaKB(collection)
     except Exception as exc:
         logging.warning("[kb] Chroma indisponible (%s) — fallback sur LocalKB.", exc)
