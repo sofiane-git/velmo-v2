@@ -14,6 +14,22 @@
 
 ---
 
+## Prérequis
+
+Avant de suivre ce tutoriel, avoir sous la main :
+
+- **`gh` CLI** authentifié en **admin du repo** (`gh auth login`, scope `repo` + `admin:org`
+  si org) — pour la branch protection et les Environments (§2.1, §2.2).
+- **`az` CLI** authentifié (`az login`) avec un **accès admin au tenant Azure AD** — l'OIDC
+  (§2.3) crée une app registration + service principal + federated credential, impossible via
+  `gh`, et le role assignment exige un rôle Owner/User Access Administrator sur le groupe de
+  ressources.
+- Les 3 déploiements Azure déjà créés (voir `tuto_azure_deploiement.md`) : `Mistral-Large-3`,
+  `gpt-5-mini`, `claude-opus-4-5`.
+- Droits d'écriture sur les **Secrets/Variables Actions** du repo.
+
+---
+
 ## 0. Concepts de base (si CI/CD est nouveau pour toi)
 
 - **CI (Continuous Integration)** : à chaque changement de code, une machine (pas toi)
@@ -39,12 +55,6 @@
 | `release.yml` | push d'un tag `v*.*.*` | Job `gate` : rejoue les 3 suites contre le tag. Job `approve-and-promote` : attend une approbation manuelle sur l'Environment `production`, puis crée une **GitHub Release** | **Oui** pour le gate ; approbation humaine ensuite |
 | `hotfix.yml` | push sur `hotfix/**` | Suite réduite (mémoire + garde-fous seulement), non bloquante pour le score global | Non (garde-fous restent bloquants, le score MLOps est informatif) |
 | `nightly.yml` | cron 3h UTC + déclenchable à la main | 2 déclencheurs indépendants : `check-model-drift` (relève la version des 3 déploiements Azure, rejoue seulement la/les suite(s) touchée(s) si ça a bougé) + `scheduled-eval` (3 suites, un lundi sur deux) | Non — informatif |
-
-⚠️ **Écart repéré avec `CLAUDE.md`** : ce fichier dit que le gate MLOps
-(`velmo.mlops.score --min-score 0.8`) est "scaffolded but commented out in CI". Ce n'est plus
-vrai — dans `quality.yml` actuel (ligne 29-30) il est **actif, non commenté**. À corriger dans
-`CLAUDE.md` si tu confirmes que c'est intentionnel (je ne l'ai pas modifié moi-même — à
-valider avec toi avant).
 
 ## 2. Configurer GitHub une fois (ce qui manque aujourd'hui)
 
@@ -78,6 +88,13 @@ nom exact affiché — il doit matcher pour que la règle s'applique.
 protection rule** → `Branch name pattern` = `main` → cocher **Require status checks to pass
 before merging** → chercher `quality` dans la liste (elle n'apparaît que si le workflow a déjà
 tourné au moins une fois) → **Create**.
+
+Vérifie :
+
+```bash
+gh api repos/sofiane-git/velmo-v2/branches/main/protection --jq '.required_status_checks.contexts, .enforce_admins.enabled'
+# → doit afficher: ["quality"]  puis  true
+```
 
 > Solo aujourd'hui donc pas de "Require pull request reviews" obligatoire (tu ne peux pas
 > t'auto-approuver une PR) — à activer dès qu'une 2e personne rejoint, cf. décision SPOF déjà
@@ -125,12 +142,80 @@ gh api repos/sofiane-git/velmo-v2/environments --jq '.environments[].name'
 # → doit afficher: production
 ```
 
-### 2.3 Secrets
+### 2.3 OIDC Azure AD (pour `check-model-drift` de `nightly.yml`)
 
-Aucun secret à ajouter aujourd'hui : les 4 workflows n'utilisent que `${{ github.token }}`
-(automatique, scope repo). Si un jour le job de déploiement réel (§4.4) appelle Azure, les
-credentials iront dans `Settings → Secrets and variables → Actions` — pas avant, pas par
-anticipation.
+Objectif : le job `check-model-drift` lit la version des 3 déploiements Azure
+(`Mistral-Large-3`, `gpt-5-mini`, `claude-opus-4-5`) sans stocker de secret client long-vécu —
+`azure/login@v2` échange un token GitHub OIDC contre un token Azure via une **federated
+credential**. Nécessite l'accès admin sur le tenant Azure AD (pas faisable via `gh`, seulement
+via `az`).
+
+```bash
+# 1. App registration dédiée (identité utilisée par le workflow, pas un utilisateur)
+az ad app create --display-name "velmo-v2-github-actions" --query appId -o tsv
+# → note l'APP_ID retourné
+
+# 2. Service principal pour cette app
+az ad sp create --id <APP_ID>
+
+# 3. Droit lecture seule sur le groupe de ressources des 3 comptes Cognitive Services
+az role assignment create --assignee <APP_ID> --role Reader \
+  --scope /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/sconanRG
+
+# 4. Federated credential : fait confiance aux tokens OIDC émis par GitHub Actions
+#    pour ce repo, sur la branche main (déclencheur schedule/workflow_dispatch de
+#    nightly.yml tourne dans le contexte de la branche par défaut)
+az ad app federated-credential create --id <APP_ID> --parameters '{
+  "name": "velmo-v2-nightly-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:sofiane-git/velmo-v2:ref:refs/heads/main",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+```
+
+Vérifie les 4 étapes :
+
+```bash
+az ad sp show --id <APP_ID> --query appId -o tsv
+# → doit renvoyer <APP_ID> (le service principal existe)
+
+az role assignment list --assignee <APP_ID> -o table
+# → doit lister Reader sur .../resourceGroups/sconanRG
+
+az ad app federated-credential list --id <APP_ID> --query '[].name' -o tsv
+# → doit afficher: velmo-v2-nightly-main
+```
+
+Puis pose les 3 secrets (le seul chemin, pas d'équivalent portail plus rapide que
+`Settings → Secrets and variables → Actions → New repository secret`) :
+
+```bash
+gh secret set AZURE_CLIENT_ID --body "<APP_ID>"
+gh secret set AZURE_TENANT_ID --body "$(az account show --query tenantId -o tsv)"
+gh secret set AZURE_SUBSCRIPTION_ID --body "$(az account show --query id -o tsv)"
+```
+
+Vérifie :
+
+```bash
+gh secret list
+# → doit afficher AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+```
+
+### 2.4 Secrets et variables — récapitulatif
+
+| Nom | Type | Valeur | Posé ? |
+|---|---|---|---|
+| `AZURE_CLIENT_ID` | Secret | App ID (§2.3) | À faire — nécessite accès tenant |
+| `AZURE_TENANT_ID` | Secret | Tenant ID (§2.3) | À faire |
+| `AZURE_SUBSCRIPTION_ID` | Secret | Subscription ID (§2.3) | À faire |
+| `AZURE_RESOURCE_GROUP` | Variable | `sconanRG` | ✅ posé |
+| `AZURE_AI_INFERENCE_ACCOUNT` | Variable | `sconanext-8976-resource` | ✅ posé |
+| `AZURE_OPENAI_GUARD_ACCOUNT` | Variable | `sconanext-8458-resource` | ✅ posé |
+| `AZURE_FOUNDRY_ACCOUNT` | Variable | `sconanext-7665-resource` | ✅ posé |
+
+`${{ github.token }}` reste le seul credential utilisé par `quality.yml`/`release.yml`/
+`hotfix.yml` — ces 3 workflows n'appellent pas Azure directement.
 
 ## 3. Le cycle quotidien (CI)
 
@@ -168,6 +253,13 @@ git tag -a v2.1.0 -m "Release 2.1.0"
 git push origin v2.1.0
 ```
 
+Vérifie :
+
+```bash
+git ls-remote --tags origin v2.1.0
+# → doit afficher le hash du commit taggé (le tag est bien sur le remote)
+```
+
 Ça déclenche `release.yml` (`on: push: tags: v*.*.*`) immédiatement.
 
 ### 4.3 Suivre le gate puis approuver
@@ -186,10 +278,17 @@ Si `gate` passe → `approve-and-promote` apparaît **"Waiting"** :
 - **Portail** : `github.com/sofiane-git/velmo-v2/actions/runs/<id>` → bandeau jaune "Review
   pending deployments" → **Review deployments** → cocher `production` → **Approve and
   deploy**.
-- **CLI** : `gh api repos/sofiane-git/velmo-v2/actions/runs/<run_id>/pending_deployments`
-  pour lister, puis
-  `gh api -X POST .../actions/runs/<run_id>/pending_deployments -f environment_ids[]=<env_id> -f state=approved -f comment="ok"`
-  (le portail est plus simple pour ce geste ponctuel).
+- **CLI** (le portail reste plus simple pour ce geste ponctuel) :
+
+  ```bash
+  RUN_ID=$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+  # Récupère l'id numérique de l'environment en attente :
+  ENV_ID=$(gh api repos/sofiane-git/velmo-v2/actions/runs/$RUN_ID/pending_deployments \
+    --jq '.[0].environments[0].id')
+  # -F (pas -f) : environment_ids attend un tableau d'entiers, -f enverrait une string → 422.
+  gh api -X POST repos/sofiane-git/velmo-v2/actions/runs/$RUN_ID/pending_deployments \
+    -F "environment_ids[]=$ENV_ID" -f state=approved -f comment=ok
+  ```
 
 ### 4.4 Ce qui se passe après l'approbation — et ce qui ne se passe pas encore
 
@@ -210,11 +309,18 @@ git checkout -b hotfix/nom-du-bug main
 git push origin hotfix/nom-du-bug
 ```
 
+Vérifie :
+
+```bash
+gh run list --workflow=hotfix.yml --limit 1
+# → doit afficher un run "in_progress" ou "completed" sur ta branche hotfix/...
+```
+
 `hotfix.yml` se déclenche sur `hotfix/**`, ne fait tourner que mémoire + garde-fous
 (bloquant), le score MLOps tourne en informatif (`|| true`, jamais rouge le run). Une fois
 mergé dans `main`, retague normalement (§4) pour repasser par le cycle complet.
 
-## 6. Nightly — rien à faire (config Azure une fois exceptée)
+## 6. Nightly — rien à faire (config Azure §2.3 une fois exceptée)
 
 Tourne seul chaque nuit à 3h UTC, 2 jobs indépendants :
 
@@ -229,11 +335,7 @@ Tourne seul chaque nuit à 3h UTC, 2 jobs indépendants :
   — plus de branche "1re nuit après un tag" : un tag est déjà passé par le gate complet de
   `quality.yml` à la fusion, le rejouer la nuit même sur un code identique n'apporte rien.
 
-Config Azure requise une fois (pas encore faite au 2026-07-22) : credential fédérée OIDC côté
-Azure AD (trust sur ce repo), secrets `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/
-`AZURE_SUBSCRIPTION_ID`, et l'identité doit avoir un accès lecture sur les 3 comptes Cognitive
-Services (`sconanext-8976-resource`, `sconanext-8458-resource`, `sconanext-7665-resource`, tous
-dans `sconanRG` — déjà posés comme variables du repo).
+Config Azure requise une fois (pas encore faite au 2026-07-22) : voir §2.3.
 
 Déclenchable à la main si besoin :
 

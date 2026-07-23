@@ -40,6 +40,13 @@ az group create --name "$RG" --location "$LOCATION"
 **+ Create** → `Subscription` (la tienne), `Resource group` = `rg-velmo-prod`, `Region` =
 `France Central` (ou `West Europe`) → **Review + create** → **Create**.
 
+Vérifie :
+
+```bash
+az group show --name "$RG" --query provisioningState -o tsv
+# → doit afficher: Succeeded
+```
+
 ---
 
 ## 1. Région : pourquoi `francecentral` (ou toute région UE)
@@ -100,6 +107,17 @@ az cognitiveservices account deployment create \
   --sku-name "GlobalStandard"
 ```
 
+Vérifie :
+
+```bash
+az cognitiveservices account show --name "aif-${SUFFIX}-async" --resource-group "$RG" --query provisioningState -o tsv
+# → doit afficher: Succeeded
+
+az cognitiveservices account deployment show --name "aif-${SUFFIX}-async" --resource-group "$RG" \
+  --deployment-name "claude-opus-4-5" --query provisioningState -o tsv
+# → doit afficher: Succeeded
+```
+
 **Via le portail (création de la ressource)** :
 1. `portal.azure.com` → **Create a resource** → rechercher « Azure AI services » (pas
    « Azure OpenAI ») → **Create**.
@@ -135,15 +153,34 @@ az cognitiveservices account create \
   --sku S0 \
   --custom-domain "aoai-${SUFFIX}-guard"
 
+# 1. Liste les versions de gpt-5-mini disponibles dans ta région :
+az cognitiveservices account list-models \
+  --name "aoai-${SUFFIX}-guard" --resource-group "$RG" -o table | grep -i gpt-5-mini
+
+# 2. Renseigne la version choisie (copiée depuis la sortie ci-dessus) — pas de
+#    placeholder deviné dans la commande de création :
+GUARD_VER="2024-07-18"   # ← remplace par la version réellement affichée
+
 az cognitiveservices account deployment create \
   --name "aoai-${SUFFIX}-guard" \
   --resource-group "$RG" \
-  --deployment-name "gpt-5-mini-guard" \
+  --deployment-name "gpt-5-mini" \
   --model-name "gpt-5-mini" \
-  --model-version "<version pinnée — voir la console Azure OpenAI pour la version dispo>" \
+  --model-version "$GUARD_VER" \
   --model-format OpenAI \
   --sku-capacity 10 \
   --sku-name "Standard"
+```
+
+Vérifie :
+
+```bash
+az cognitiveservices account show --name "aoai-${SUFFIX}-guard" --resource-group "$RG" --query provisioningState -o tsv
+# → doit afficher: Succeeded
+
+az cognitiveservices account deployment show --name "aoai-${SUFFIX}-guard" --resource-group "$RG" \
+  --deployment-name "gpt-5-mini" --query provisioningState -o tsv
+# → doit afficher: Succeeded
 ```
 
 **Via le portail** : mêmes étapes qu'une ressource Azure OpenAI classique (`kind` = **Azure
@@ -151,7 +188,7 @@ OpenAI**, pas **Azure AI services** — contrairement à la ressource Foundry du
 **Create a resource** → « Azure OpenAI » → `Name` = `aoai-velmo-prod-guard`, `Pricing tier`
 = **Standard S0** → **Review + create**. Puis déploiement du modèle via Microsoft Foundry
 (`ai.azure.com`, projet lié à la ressource) → **Models + endpoints** → **+ Deploy model** →
-**Deploy base model** → chercher `gpt-5-mini` → `Deployment name` = `gpt-5-mini-guard`,
+**Deploy base model** → chercher `gpt-5-mini` → `Deployment name` = `gpt-5-mini`,
 `Deployment type` = **Standard** (pay-as-you-go — PTU réservé au §2.3), vérifier que la
 ressource connectée est bien `aoai-velmo-prod-guard` → **Deploy**. Les identifiants
 récupérés (`Keys and Endpoint`) alimentent `AZURE_OPENAI_GUARD_ENDPOINT`/
@@ -176,7 +213,7 @@ via Azure Monitor :
 az monitor metrics list \
   --resource "$(az cognitiveservices account show -n aoai-${SUFFIX}-guard -g $RG --query id -o tsv)" \
   --metric "AzureOpenAIRequests" \
-  --filter "ModelDeploymentName eq 'gpt-5-mini-guard'"
+  --filter "ModelDeploymentName eq 'gpt-5-mini'"
 ```
 
 Si le taux de 429 dépasse un seuil gênant (ex. >1% des requêtes sur une fenêtre d'une heure),
@@ -187,11 +224,11 @@ template).
 **Via le portail (les deux étapes — mesure ET bascule)** :
 - **Mesure** : `portal.azure.com` → ressource `aoai-velmo-prod-guard` → menu de gauche
   **Monitoring** → **Metrics** → `Metric` = « Azure OpenAI Requests », filtrer par
-  `ModelDeploymentName` = `gpt-5-mini-guard`, `Aggregation` = Count, ajouter un filtre sur
+  `ModelDeploymentName` = `gpt-5-mini`, `Aggregation` = Count, ajouter un filtre sur
   le code de statut HTTP (429) pour isoler les rejets de quota. Alternative plus visuelle :
   onglet **Diagnose and solve problems** → catégorie « Quota/Throttling » de la ressource.
 - **Bascule en PTU** : sur Microsoft Foundry (`ai.azure.com`), page **Models + endpoints** du
-  déploiement `gpt-5-mini-guard` → **Edit deployment** (ou recréer un nouveau déploiement si
+  déploiement `gpt-5-mini` → **Edit deployment** (ou recréer un nouveau déploiement si
   l'édition en place n'est pas proposée pour ce type de changement) → `Deployment type` =
   **Provisioned-Managed** au lieu de Standard → choisir le nombre de PTU (palier minimal
   affiché par l'interface selon le modèle) → confirmer. C'est un changement de capacité
@@ -211,11 +248,28 @@ az cognitiveservices account create \
 az cognitiveservices account deployment create \
   --name "aoai-${SUFFIX}-chat" \
   --resource-group "$RG" \
-  --deployment-name "mistral-large-3" \
-  --model-name "Mistral-Large-2411" \
+  --deployment-name "Mistral-Large-3" \
+  --model-name "Mistral-Large-3" \
   --model-format "MaaS" \
   --sku-capacity 1 \
   --sku-name "GlobalStandard"
+```
+
+> **Nom de modèle vs déploiement.** `--deployment-name "Mistral-Large-3"` doit correspondre à
+> `AZURE_AI_INFERENCE_MODEL` (`.env.example`) — c'est ce que lit l'app. `--model-name` est
+> l'identifiant **catalogue** Azure : viser **Mistral Large 3** (pas `Mistral-Large-2411`, qui
+> est Mistral Large **2**). Si le catalogue expose un id versionné, reprendre l'identifiant
+> exact affiché dans le **Model catalog** du portail.
+
+Vérifie :
+
+```bash
+az cognitiveservices account show --name "aoai-${SUFFIX}-chat" --resource-group "$RG" --query provisioningState -o tsv
+# → doit afficher: Succeeded
+
+az cognitiveservices account deployment show --name "aoai-${SUFFIX}-chat" --resource-group "$RG" \
+  --deployment-name "Mistral-Large-3" --query provisioningState -o tsv
+# → doit afficher: Succeeded
 ```
 
 **Via le portail** : la ressource se crée comme au §2.1 (Azure OpenAI → `Kind` = **AI
@@ -224,17 +278,20 @@ ressource lors de la création — chercher « Azure AI services » dans **Creat
 Pour le déploiement du modèle : Microsoft Foundry (`ai.azure.com`) → projet lié à cette
 ressource → **Models + endpoints** → **+ Deploy model** → **Deploy base model** → chercher
 `Mistral-Large` dans le catalogue (modèles tiers, catégorie « Models sold directly by Azure »
-ou « Partner models » selon le libellé affiché) → `Deployment name` = `mistral-large-3`,
+ou « Partner models » selon le libellé affiché) → `Deployment name` = `Mistral-Large-3`,
 `Deployment type` = **Global Standard** → **Deploy**. Les modèles tiers du catalogue (Mistral,
 Meta, etc.) utilisent le format de facturation « pay-as-you-go » (MaaS) plutôt que les tiers
 Standard/Provisioned propres aux modèles OpenAI — le formulaire de déploiement l'indique.
 
 L'endpoint et la clé de cette ressource alimentent `AZURE_AI_INFERENCE_ENDPOINT` /
-`AZURE_AI_INFERENCE_KEY` — les variables lues par `get_llm()` (`src/velmo/llm.py`,
+`AZURE_AI_INFERENCE_API_KEY` — les variables lues par `get_llm()` (`src/velmo/llm.py`,
 `src/velmo/config.py`). Récupération via le portail : page de la ressource → menu de gauche
 **Resource Management** → **Keys and Endpoint**. Rappel du contrat de démarrage (décision
 Q15, Chantier 1) : en production, l'absence de ces variables doit faire échouer le démarrage,
-pas basculer sur `EchoLLM` silencieusement — à implémenter dans `validate_startup()`.
+pas basculer sur `EchoLLM` silencieusement — **déjà en place** : `get_llm()`
+(`src/velmo/llm.py`) lève en `ENVIRONMENT=production` si l'endpoint est absent, et
+`validate_startup()` (`src/velmo/config.py`) rejette tout couple endpoint/clé à moitié
+renseigné.
 
 ---
 
@@ -254,6 +311,13 @@ az postgres flexible-server create \
   --high-availability Disabled \
   --backup-retention 35 \
   --geo-redundant-backup Disabled
+```
+
+Vérifie :
+
+```bash
+az postgres flexible-server show --name "psql-${SUFFIX}" --resource-group "$RG" --query state -o tsv
+# → doit afficher: Ready
 ```
 
 - `--backup-retention 35` : rétention maximale disponible sur Flexible Server (35 jours) pour
@@ -286,6 +350,20 @@ az postgres flexible-server parameter set \
 # CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
+Vérifie (le paramètre serveur, puis l'extension une fois `CREATE EXTENSION` exécuté) :
+
+```bash
+az postgres flexible-server parameter show --resource-group "$RG" --server-name "psql-${SUFFIX}" \
+  --name azure.extensions --query value -o tsv
+# → doit contenir: VECTOR
+```
+
+```sql
+-- connecté à la base cible via psql :
+SELECT extname FROM pg_extension WHERE extname = 'vector';
+-- → doit renvoyer une ligne
+```
+
 **Via le portail** : sur la page de la ressource `psql-velmo-prod` → menu de gauche
 **Settings** → **Server parameters** → chercher le paramètre `azure.extensions` → dans le
 champ valeur (liste à choix multiples), cocher/ajouter **VECTOR** → **Save**. Attention : le
@@ -297,13 +375,20 @@ disponible pour Flexible Server sur ton abonnement).
 ### 3.1 Test de restauration (obligatoire avant mise en prod, puis annuel)
 
 ```bash
+# Point de restauration : un instant DANS la fenêtre de rétention (après la création du
+# serveur, avant maintenant) — jamais une date en dur qui expire. Exemple = il y a 1 heure :
+RESTORE_TIME=$(date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)   # macOS : date -u -v-1H +%Y-%m-%dT%H:%M:%SZ
+
 az postgres flexible-server restore \
   --resource-group "$RG" \
   --name "psql-${SUFFIX}-restore-test" \
   --source-server "psql-${SUFFIX}" \
-  --restore-time "2026-07-17T10:00:00Z"
+  --restore-time "$RESTORE_TIME"
 
-# Vérifier : connexion possible, données attendues présentes, puis supprimer la copie de test
+# Vérifie : serveur restauré prêt
+az postgres flexible-server show --resource-group "$RG" --name "psql-${SUFFIX}-restore-test" --query state -o tsv
+# → doit afficher: Ready
+# Puis : connexion possible (psql), données attendues présentes — avant de supprimer la copie de test
 az postgres flexible-server delete --resource-group "$RG" --name "psql-${SUFFIX}-restore-test" --yes
 ```
 
@@ -330,6 +415,17 @@ GRANT SELECT ON guardrail_audit, eval_run, eval_case_result, agent_version TO ve
 -- Explicitement PAS de GRANT sur fact / procedure / episode / memory_audit
 ```
 
+Vérifie :
+
+```sql
+\du velmo_app velmo_support_readonly
+-- → doit lister les deux rôles avec LOGIN
+
+SELECT grantee, table_name, privilege_type FROM information_schema.role_table_grants
+WHERE grantee = 'velmo_support_readonly';
+-- → doit lister uniquement guardrail_audit, eval_run, eval_case_result, agent_version
+```
+
 Ces commandes sont du SQL exécuté **dans** la base, pas une opération Azure — aucun
 équivalent portail : elles passent par un client SQL (psql, Azure Data Studio, ou l'onglet
 **Query editor** de la ressource si proposé pour ton tier Flexible Server).
@@ -340,10 +436,20 @@ Ces commandes sont du SQL exécuté **dans** la base, pas une opération Azure �
 uv run alembic upgrade head
 ```
 
+Vérifie :
+
+```bash
+uv run alembic current
+# → doit afficher le hash de la dernière révision (head), sans "(head)" manquant en warning
+```
+
 Le rôle applicatif (`velmo_app`) ne doit recevoir que `INSERT`/`SELECT`/`UPDATE`/`DELETE` sur
 les tables métier — **jamais** `CREATE`/`ALTER`/`DROP` en production. Les migrations tournent
-avec un rôle distinct (`velmo_migrator`), utilisé uniquement en CI de déploiement, jamais par
-l'application en runtime.
+avec un rôle distinct (`velmo_migrator`, à créer explicitement — `CREATE ROLE velmo_migrator
+LOGIN PASSWORD '...'; GRANT CREATE ON DATABASE velmo TO velmo_migrator;`), exécuté **au moment
+du déploiement** via `alembic upgrade head` (voir ci-dessus). ⚠️ À ce jour ce sont des
+**migrations manuelles** : aucun workflow GitHub Actions ne lance encore Alembic (à ajouter
+dans un futur job de déploiement). Jamais l'application en runtime.
 
 ---
 
@@ -359,6 +465,16 @@ az keyvault create \
 # Exemple de secret
 az keyvault secret set --vault-name "kv-${SUFFIX}" --name "azure-openai-guard-key" --value "<clé>"
 az keyvault secret set --vault-name "kv-${SUFFIX}" --name "postgres-app-password" --value "<mdp>"
+```
+
+Vérifie :
+
+```bash
+az keyvault show --name "kv-${SUFFIX}" --query properties.provisioningState -o tsv
+# → doit afficher: Succeeded
+
+az keyvault secret list --vault-name "kv-${SUFFIX}" --query '[].name' -o tsv
+# → doit afficher: azure-openai-guard-key, postgres-app-password
 ```
 
 **Via le portail (création + secrets)** : **Create a resource** → rechercher « Key Vault » →
@@ -377,6 +493,16 @@ az webapp identity assign --name "<nom-app>" --resource-group "$RG"
 az keyvault set-policy --name "kv-${SUFFIX}" \
   --object-id "$(az webapp identity show -n <nom-app> -g $RG --query principalId -o tsv)" \
   --secret-permissions get list
+```
+
+Vérifie :
+
+```bash
+az webapp identity show --name "<nom-app>" --resource-group "$RG" --query principalId -o tsv
+# → doit renvoyer un GUID (identité managée activée)
+
+az keyvault show --name "kv-${SUFFIX}" --query "properties.accessPolicies[?objectId=='$(az webapp identity show -n <nom-app> -g $RG --query principalId -o tsv)']" -o table
+# → doit lister get/list sur secretPermissions
 ```
 
 **Via le portail** : sur la ressource hébergeant l'application (App Service, Container Apps,
@@ -413,6 +539,16 @@ az container create \
 # Une fois le conteneur up, tirer le modèle :
 az container exec --resource-group "$RG" --name "ollama-${SUFFIX}" \
   --exec-command "ollama pull llama-guard3:8b"
+```
+
+Vérifie :
+
+```bash
+az container show --resource-group "$RG" --name "ollama-${SUFFIX}" --query instanceView.state -o tsv
+# → doit afficher: Running
+
+az container exec --resource-group "$RG" --name "ollama-${SUFFIX}" --exec-command "ollama list"
+# → doit lister llama-guard3:8b
 ```
 
 **Via le portail** : **Create a resource** → rechercher « Container Instances » → **Create**.
@@ -473,6 +609,13 @@ az logic workflow create \
   --definition '{...}'   # définition du workflow : trigger HTTP -> action "Send an email" (Outlook/Gmail connector gratuit)
 ```
 
+Vérifie :
+
+```bash
+az logic workflow show --resource-group "$RG" --name "escalade-guardrails" --query state -o tsv
+# → doit afficher: Enabled
+```
+
 **Via le portail (recommandé pour ce composant — le designer visuel est plus simple que
 d'écrire la définition JSON à la main)** : **Create a resource** → rechercher « Logic App » →
 choisir **Consumption** (tier gratuit dans la limite du quota mensuel, pas **Standard** qui
@@ -498,6 +641,18 @@ simple si Logic Apps semble excessif : SMTP direct depuis l'app vers une boîte 
 Éviter de stocker une clé Azure en clair dans les secrets GitHub — utiliser la fédération
 d'identité OIDC :
 
+> **Procédure de référence : `tuto_github_actions_release.md` §2.3.** L'app registration, le
+> service principal, la federated credential et la pose des 3 secrets y sont détaillés une
+> seule fois (nom d'app `velmo-v2-github-actions`, rôle **Reader** sur le groupe de ressources).
+> Ci-dessous, la variante côté Azure — **utilise les mêmes noms** pour éviter la divergence.
+>
+> **Réconciliation des noms (important).** Ce tutoriel crée des ressources sous des noms
+> d'exemple (`$RG`, `aif-${SUFFIX}-async`, …). Les noms que **tu** choisis doivent être
+> reportés dans les **variables GitHub Actions** consommées par `nightly.yml`
+> (`AZURE_RESOURCE_GROUP`, `AZURE_AI_INFERENCE_ACCOUNT`, `AZURE_OPENAI_GUARD_ACCOUNT`,
+> `AZURE_FOUNDRY_ACCOUNT` — cf. `tuto_github_actions_release.md` §2.4). Les valeurs `sconan*`
+> qui y figurent sont l'infra réelle de ce repo, pas un nom imposé : remplace-les par les tiens.
+
 ```bash
 az ad app create --display-name "velmo-github-actions"
 az ad app federated-credential create \
@@ -505,9 +660,16 @@ az ad app federated-credential create \
   --parameters '{
     "name": "velmo-main-branch",
     "issuer": "https://token.actions.githubusercontent.com",
-    "subject": "repo:<org>/<repo>:ref:refs/heads/main",
+    "subject": "repo:sofiane-git/velmo-v2:ref:refs/heads/main",
     "audiences": ["api://AzureADTokenExchange"]
   }'
+```
+
+Vérifie :
+
+```bash
+az ad app federated-credential list --id "<app-id>" --query '[].name' -o tsv
+# → doit afficher: velmo-main-branch
 ```
 
 **Via le portail** : `portal.azure.com` → rechercher « Microsoft Entra ID » (ex-Azure Active
@@ -524,10 +686,17 @@ les droits nécessaires à cette identité sur le groupe de ressources : `rg-vel
 `Assign access to` = **User, group, or service principal** → sélectionner
 `velmo-github-actions` → **Review + assign**.
 
-Puis dans `quality.yml` (déjà référencé au Chantier 3) : `azure/login@v2` avec
-`client-id`/`tenant-id`/`subscription-id` en variables (pas de secret), `federated-token`
-géré automatiquement par GitHub Actions — aucune clé Azure à faire tourner/rotater
-manuellement.
+Vérifie :
+
+```bash
+az role assignment list --assignee "<app-id>" --resource-group "$RG" -o table
+# → doit lister Contributor sur rg-velmo-prod
+```
+
+Puis dans `nightly.yml` (job `check-model-drift` — le **seul** workflow qui appelle Azure, pas
+`quality.yml`) : `azure/login@v2` avec `client-id`/`tenant-id`/`subscription-id` **en secrets**
+(`AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_SUBSCRIPTION_ID`), `federated-token` géré
+automatiquement par GitHub Actions — aucune clé Azure à faire tourner/rotater manuellement.
 
 ---
 
@@ -592,6 +761,14 @@ az cognitiveservices account create \
 # Récupération clé + endpoint (identique pour les deux ressources)
 az cognitiveservices account keys list --name "lang-${SUFFIX}" --resource-group "$RG"
 az cognitiveservices account show --name "lang-${SUFFIX}" --resource-group "$RG" --query properties.endpoint -o tsv
+```
+
+Vérifie :
+
+```bash
+az cognitiveservices account show --name "lang-${SUFFIX}" --resource-group "$RG" --query provisioningState -o tsv
+az cognitiveservices account show --name "cs-${SUFFIX}" --resource-group "$RG" --query provisioningState -o tsv
+# → doit afficher: Succeeded (les deux)
 ```
 
 **Via le portail** : **Create a resource** → rechercher « Language service » (pour PII) ou
