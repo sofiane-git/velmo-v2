@@ -191,9 +191,9 @@
 | ✅ D9-08 (lot 6) | conception_chantier1:491 | Registre de traitement (art. 30) référencé 2× mais n'existe nulle part | doc | docs/rgpd/registre_traitements.md consolidé |
 | D9-09 | api.py:290 | Aucun export/portabilité (art. 20) : `inspect()` existe mais n'est exposé ni API ni CLI | les-deux | GET /memory/{user_id}/export réutilisant inspect() |
 | ✅ D9-10 *(corrigé : 7d6ddd4)* | memory/retention.py:48-61 | purge_inactive_threads commit les Thread AVANT delete_thread : crash entre les deux = checkpoints orphelins définitifs (idempotence revendiquée fausse) | code | Inverser l'ordre (store secondaire d'abord) |
-| D10-06 | scripts/seed_kb.py:20 | os.getenv direct contournant la config centralisée, défauts divergents de .env.example | code | Passer par Settings |
+| ✅ D10-06 *(corrigé)* | scripts/seed_kb.py:20 | os.getenv direct contournant la config centralisée, défauts divergents de .env.example | code | Passe par `get_settings()` (`chroma_url`, `embedding_model`) |
 | ✅ D10-07 *(corrigé : c2e2447 — make ci = lint fmt-check typecheck lint-imports acceptance eval-gate)* | Makefile:27 | `make ci` = pytest seul ≠ gate CI réelle (lint-imports + acceptance + mlops score) | les-deux | Invariant « make ci == pipeline CI » |
-| D10-08 | .pre-commit-config.yaml (absent) | Pas de hook pre-commit (ruff/mypy à la main ou en CI seulement) | infra | Config minimale ruff + ruff-format |
+| ✅ D10-08 *(corrigé)* | .pre-commit-config.yaml (absent) | Pas de hook pre-commit (ruff/mypy à la main ou en CI seulement) | infra | `.pre-commit-config.yaml` ajouté (hooks locaux `uv run ruff check` + `ruff format --check`) |
 | ✅ D10-09 (03eb5e0) | docker-compose.yml:28 | Credentials Postgres app/app en dur, dupliqués (compose + défaut db_url) | infra | `${POSTGRES_USER:-app}` etc. depuis .env, DB_URL app construite dessus (source unique) *(recoupe D6-10)* |
 | ✅ D2-08 (lot 6) | conception_chantier2:20 | Ch2 affirme encore « les trois consommateurs partagent gpt-5-mini » — révision actée ailleurs (claude-opus-4-5), code conforme à la révision | doc | Propager la révision (croiser les chantiers) |
 | D2-12* | conception_chantier3:93 | `guardrail_config_hash` annoncé « seuils G1..G7 » vs 3 seuils globaux réels | doc | Reformuler (ou acter des seuils par catégorie) |
@@ -212,7 +212,7 @@
 | ✅ D7-20 (lot 6) | tuto_release:193 | Renvois « §2.4 » erronés (procédure au §2.3) | Corriger 3 renvois |
 | ✅ D7-21 (lot 6) | tuto_azure:97 | Commande Anthropic fournie avec avertissement « peut-être fausse » | Re-vérifier et trancher |
 | D8-13 | hotfix.yml:28 | `--min-score 0.0` + `\|\| true` : le second masque aussi les crashs infra | `continue-on-error: true` |
-| D10-10 | pyrightconfig.json | Deux type-checkers sources de vérité (pyright + mypy strict) | Documenter pyright = IDE only, ou supprimer |
+| ✅ D10-10 *(corrigé)* | pyrightconfig.json | Deux type-checkers sources de vérité (pyright + mypy strict) | Supprimé — mypy strict reste l'unique source de vérité |
 
 ---
 
