@@ -219,6 +219,13 @@ make ci   → se termine par « Gate passé — note globale ≥ 80% »
 > `make ci` vert en local ⇒ le workflow `quality.yml` sera vert au push. C'est le même
 > enchaînement, dans le même ordre.
 
+**Hook pre-commit (optionnel, recommandé)** : `.pre-commit-config.yaml` rejoue `ruff check`
++ `ruff format --check` à chaque commit — installation unique :
+
+```bash
+uvx pre-commit install
+```
+
 ---
 
 ## Récapitulatif — commandes du quotidien

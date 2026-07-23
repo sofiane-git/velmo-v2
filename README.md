@@ -97,6 +97,12 @@ make typecheck  # mypy
 make down       # arrête les services
 ```
 
+Hooks pre-commit (ruff check + format, `.pre-commit-config.yaml`) :
+
+```bash
+uvx pre-commit install   # une fois, active le hook git local
+```
+
 ## License
 
 Propriétaire — Velmo.
