@@ -33,7 +33,10 @@ def _seeded_session() -> Session:
     from velmo.sampledata import seed
 
     engine = make_engine()
-    Base.metadata.create_all(engine, checkfirst=True)
+    # SQLite seulement (repli hors-ligne/tests) — sur Postgres, le schéma vient
+    # d'Alembic (D2-04), jamais d'un create_all concurrent.
+    if engine.url.drivername.startswith("sqlite"):
+        Base.metadata.create_all(engine, checkfirst=True)
     session = sessionmaker(bind=engine, expire_on_commit=False, future=True)()
     if session.execute(select(Order)).first() is None:
         seed(session)
