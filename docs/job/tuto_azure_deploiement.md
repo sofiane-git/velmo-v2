@@ -193,7 +193,9 @@ OpenAI**, pas **Azure AI services** — contrairement à la ressource Foundry du
 ressource connectée est bien `aoai-velmo-prod-guard` → **Deploy**. Les identifiants
 récupérés (`Keys and Endpoint`) alimentent `AZURE_OPENAI_GUARD_ENDPOINT`/
 `AZURE_OPENAI_GUARD_API_KEY` — jamais les variables `ANTHROPIC_*` de la ressource Foundry
-du §2.1.
+du §2.1. ⚠️ **Suffixer l'endpoint de `/openai/v1`** (règle projet : forme OpenAI-compatible
+partout où elle existe) — le portail donne l'endpoint « nu », mais `judge.py` utilise le
+client OpenAI standard sur ce `base_url` ; sans le suffixe, 404 sur chaque appel.
 
 > **Pourquoi deux ressources séparées ?** Vendor différent (Azure OpenAI vs Azure AI
 > Foundry/Anthropic depuis la décision révisée, Ch.1) : deux ressources distinctes de toute
