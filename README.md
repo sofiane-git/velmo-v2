@@ -7,17 +7,17 @@ Assistant de support pour **Velmo**, boutique en ligne de maillots de foot colle
 - Outils métier connectés à la base : commandes, suivi, stock, retours, remboursements, escalade
 - Garde-fous métier intégrés : isolation par client, blocage des modifications après expédition, plafond de remboursement (50 €) avec escalade
 - FAQ par recherche sémantique (RAG) sur la base de connaissances Velmo
-- Mémoire durable et isolée par client (à construire)
-- Garde-fous de contenu en entrée/sortie (à construire)
-- Chaîne qualité MLOps : évaluation, note globale, seuil bloquant en CI (à construire)
+- Mémoire durable et isolée par client (court + long terme, droit à l'oubli)
+- Garde-fous de contenu en entrée/sortie (modération, injection, PII, périmètre)
+- Chaîne qualité MLOps : évaluation, note globale, seuil bloquant en CI
 
 ## Stack
 
 - Python 3.11 (géré avec `uv`)
 - PostgreSQL + SQLAlchemy 2 + Alembic (état des commandes, clients, catalogue)
-- Chroma + `intfloat/multilingual-e5-small` pour la FAQ (extra `vector`)
-- Azure AI Inference (Kimi-K2.6) pour le LLM (extra `llm`)
-- GitHub Actions pour l'intégration continue
+- PostgreSQL + pgvector pour la mémoire épisodique ; Chroma + `intfloat/multilingual-e5-small` pour la FAQ (extra `vector`)
+- Agent : Azure AI Inference (**Mistral-Large-3**) ; juge garde-fous : Azure OpenAI (**gpt-5-mini**) ; extracteur mémoire : **claude-opus-4-5** via Azure AI Foundry ; classifieur modération : Llama Guard 3 via Ollama (extras `llm`/`guardrails`)
+- GitHub Actions pour l'intégration continue (ruff, mypy strict, import-linter, acceptance, gate qualité)
 
 Le coeur tourne sans service externe (repli hors-ligne : SQLite en mémoire pour les
 tests, FAQ locale, LLM en écho). Les intégrations s'activent via les extras :
@@ -30,10 +30,17 @@ uv sync --extra vector --extra llm        # Chroma + Azure AI Inference
 ## Démarrage
 
 ```bash
-make up           # docker compose : app + postgres + chroma
+cp .env.example .env   # renseigner les clés Azure/Ollama (ou laisser vide : repli hors-ligne en dev)
+make up           # docker compose : app + postgres + chroma + ollama
+make migrate      # alembic upgrade head
 make seed         # peuple Postgres (catalogue, clients, ~14 commandes)
-make chat         # REPL — répond déjà aux questions métier de base
+make chat         # REPL — répond aux questions métier, avec mémoire + garde-fous
 ```
+
+Sans `.env` renseigné, `ENVIRONMENT=development` : l'agent tourne en repli
+hors-ligne (LLM en écho, juge déterministe, classifieur lexical). En
+production (`ENVIRONMENT=production`), une config LLM ou un Postgres manquant
+fait échouer le démarrage plutôt que de dégrader silencieusement.
 
 Exemple de session (`make chat`, client `C-marc-dubois` par défaut) :
 
@@ -46,8 +53,9 @@ Vous : Quels sont les frais de port en France ?
 Velmo : D'après notre FAQ (frais-de-port.md) : France métropolitaine : 6,90 € …
 ```
 
-À ce stade l'agent sait parler à la base et à la FAQ, **mais sans mémoire durable,
-sans garde-fous de contenu et sans chaîne qualité** — c'est ce qui reste à construire.
+L'agent combine base métier, FAQ (RAG), **mémoire durable isolée par client**,
+**garde-fous de contenu entrée/sortie** et une **chaîne qualité MLOps** dont le
+gate bloque la CI sous le seuil de qualité.
 
 ## Layout
 
@@ -59,9 +67,9 @@ src/velmo/
   db.py             Schéma SQLAlchemy + sessions
   sampledata.py     Jeu de données de référence
   tools/            10 outils métier (accès Postgres + FAQ)
-  memory/           Mémoire court + long terme (à construire)
-  guardrails/       Garde-fous de contenu entrée/sortie (à construire)
-  mlops/            Évaluation, note globale, seuil, rapport (à construire)
+  memory/           Mémoire court + long terme, isolation, droit à l'oubli
+  guardrails/       Garde-fous de contenu entrée/sortie (pipeline I/O)
+  mlops/            Évaluation, note globale, seuil bloquant, versioning, rapport
 docs/reco_expert.md Note de recommandations (stack + exigences)
 kb/docs/            Base de connaissances FAQ
 scripts/            seed.py (Postgres) + seed_kb.py (Chroma)

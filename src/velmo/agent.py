@@ -1,8 +1,8 @@
 """Agent Velmo 2.0 : garde-fou d'entrée → mémoire → routage outils → garde-fou
 de sortie → écriture mémoire.
 
-Le routage, les outils, la mémoire et les garde-fous de contenu sont
-opérationnels. Seul le MLOps (chantier 3) reste à construire.
+Le routage, les outils, la mémoire, les garde-fous de contenu et la chaîne
+qualité MLOps (évaluation + gate + observabilité) sont opérationnels.
 """
 
 from __future__ import annotations
