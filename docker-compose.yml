@@ -56,9 +56,13 @@ services:
     volumes:
       - .docker-data/chroma:/chroma/chroma
     healthcheck:
+      # L'image chroma (binaire Rust) n'embarque ni python ni curl/wget — sonde
+      # HTTP en bash pur via /dev/tcp (vérifié : répond HTTP/1.0 200 OK).
       test:
-        - CMD-SHELL
-        - python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v2/heartbeat')"
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/localhost/8000 && printf "GET /api/v2/heartbeat HTTP/1.0\r\n\r\n" >&3 && grep -q "200 OK" <&3'
       interval: 10s
       timeout: 5s
       retries: 5

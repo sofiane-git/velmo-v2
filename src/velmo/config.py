@@ -198,6 +198,17 @@ def validate_startup(settings: Settings | None = None) -> None:
     for endpoint_field, key_field in _ENDPOINT_KEY_FIELDS:
         endpoint = getattr(settings, endpoint_field)
         key = getattr(settings, key_field)
+        # Placeholder `<...>` copié de .env.example : la variable est « posée »
+        # mais bidon — chaque appel au service échouerait (constaté : étage
+        # garde-fous en panne permanente → fail-closed global). Erreur explicite
+        # au démarrage plutôt qu'un service fantôme ; pour désactiver la
+        # feature, retirer/commenter la variable (repli gracieux prévu).
+        for field, value in ((endpoint_field, endpoint), (key_field, key)):
+            if value and ("<" in value or ">" in value):
+                errors.append(
+                    f"`{field.upper()}` contient un placeholder non résolu (`<...>`) — "
+                    f"renseigner la vraie valeur, ou retirer la variable pour désactiver la feature"
+                )
         if bool(endpoint) != bool(key):
             missing_field = key_field if endpoint else endpoint_field
             errors.append(

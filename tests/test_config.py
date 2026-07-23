@@ -61,3 +61,15 @@ def test_validate_startup_reports_every_partial_pair():
     message = str(exc_info.value)
     assert "AZURE_OPENAI_GUARD_API_KEY" in message
     assert "AZURE_LANGUAGE_ENDPOINT" in message
+
+
+def test_validate_startup_rejects_placeholder_values():
+    # Un `<resource>` copié de .env.example = service « posé » mais bidon :
+    # chaque appel échouerait (étage garde-fous en panne permanente → fail-closed
+    # global, constaté en réel). Erreur explicite au démarrage.
+    settings = Settings(
+        azure_content_safety_endpoint="https://<resource>.cognitiveservices.azure.com",
+        azure_content_safety_key="une-vraie-cle",
+    )
+    with pytest.raises(ConfigurationError, match="placeholder"):
+        validate_startup(settings)

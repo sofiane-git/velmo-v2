@@ -270,7 +270,13 @@ class AzureJudge:
     """Client Azure OpenAI dédié (gpt-5-mini), distinct de l'agent principal."""
 
     def __init__(self, settings: Settings | None = None) -> None:
-        from openai import OpenAI  # import différé : dépendance optionnelle
+        from openai import BadRequestError, OpenAI  # import différé : dépendance optionnelle
+
+        self._bad_request_error: type[Exception] = BadRequestError
+        # None = inconnu (premier appel) ; certains déploiements (constaté en
+        # réel sur gpt-5-mini) rejettent `logprobs` en 400 — mémorisé après le
+        # premier échec pour ne pas payer un aller-retour raté à chaque message.
+        self._logprobs_supported: bool | None = None
 
         settings = settings or get_settings()
         endpoint = require(settings.azure_openai_guard_endpoint, "AZURE_OPENAI_GUARD_ENDPOINT")
@@ -297,17 +303,40 @@ class AzureJudge:
         )
         self._deployment = settings.azure_openai_guard_deployment
 
-    def evaluate(self, text: str) -> dict[str, float | str]:
-        completion = self._client.chat.completions.create(
+    def _create_completion(self, text: str, *, with_logprobs: bool) -> Any:
+        kwargs: dict[str, Any] = {"logprobs": True, "top_logprobs": 5} if with_logprobs else {}
+        return self._client.chat.completions.create(
             model=self._deployment,
             messages=[
                 {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Texte à évaluer:\n{text}"},
             ],
             response_format={"type": "json_object"},
-            logprobs=True,
-            top_logprobs=5,
+            **kwargs,
         )
+
+    def evaluate(self, text: str) -> dict[str, float | str]:
+        try:
+            completion = self._create_completion(
+                text, with_logprobs=self._logprobs_supported is not False
+            )
+        except self._bad_request_error as exc:
+            if self._logprobs_supported is False or "logprobs" not in str(exc):
+                raise
+            # Constaté en réel : le déploiement rejette `logprobs` en 400 —
+            # sans ce repli, le juge cloud échouait à CHAQUE appel et le
+            # pipeline restait en fail-closed permanent (G5/G6 bloqués pour
+            # tout le monde). On retente sans logprobs (gradation de confiance
+            # perdue, verdicts non requalifiés) et on mémorise.
+            logger.warning(
+                "Juge garde-fous : `logprobs` non supporté par ce déploiement — "
+                "gradation de confiance désactivée."
+            )
+            self._logprobs_supported = False
+            completion = self._create_completion(text, with_logprobs=False)
+        else:
+            if self._logprobs_supported is None:
+                self._logprobs_supported = True
         choice = completion.choices[0]
         content = choice.message.content or "{}"
         try:

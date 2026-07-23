@@ -414,3 +414,40 @@ def test_shadowing_judge_logs_divergence(monkeypatch) -> None:
         time.sleep(0.02)
     assert len(calls) == 1
     assert calls[0][0] == "texte de test"
+
+
+def test_azure_judge_retries_without_logprobs_when_unsupported(monkeypatch):
+    # Constaté en réel : certains déploiements (gpt-5-mini) rejettent `logprobs`
+    # en 400 — le juge doit retomber sans logprobs (verdict rendu, gradation de
+    # confiance perdue) et mémoriser pour ne plus payer l'aller-retour raté.
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
+    calls: list[dict] = []
+    content = '{"manipulation":"aucun","secret_interne":"aucun","hors_role":"aucun","reasoning":""}'
+
+    class _RejectLogprobs(Exception):
+        pass
+
+    class _PickyCompletions(_FakeCompletions):
+        def create(self, **kwargs: object) -> _FakeCompletion:
+            self._calls.append(kwargs)
+            if "logprobs" in kwargs:
+                raise _RejectLogprobs("Unsupported parameter: 'logprobs' is not supported")
+            return _FakeCompletion(self._content)
+
+    def fake_openai(**kwargs: object) -> _FakeAzureOpenAI:
+        client = _FakeAzureOpenAI(content, calls)
+        client.chat.completions = _PickyCompletions(content, calls)
+        return client
+
+    monkeypatch.setattr(openai, "OpenAI", fake_openai)
+    judge = AzureJudge()
+    judge._bad_request_error = _RejectLogprobs
+
+    result = judge.evaluate("texte")
+    assert result["manipulation"] == 0.05  # verdict rendu malgré le 400
+    assert "logprobs" in calls[0] and "logprobs" not in calls[1]
+
+    calls.clear()
+    judge.evaluate("texte")  # mémorisé : plus aucun essai logprobs
+    assert len(calls) == 1 and "logprobs" not in calls[0]
