@@ -22,7 +22,7 @@ from pathlib import Path
 from sqlalchemy import DateTime, Engine, Float, String, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-from velmo.config import get_settings
+from velmo.config import get_settings, require_durable_store
 
 
 class Base(DeclarativeBase):
@@ -87,6 +87,7 @@ def make_guardrails_engine(url: str | None = None) -> Engine:
         url = get_settings().db_url
 
     if url.startswith("postgresql") and not _postgres_reachable(url):
+        require_durable_store("guardrail_audit", url)
         warnings.warn(
             f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
             RuntimeWarning,

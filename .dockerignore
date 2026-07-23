@@ -1,0 +1,46 @@
+# Contexte de build maîtrisé (D6-05) : ne jamais embarquer secrets, venv, VCS
+# ni artefacts dans l'image. La liste est en exclusion (pas d'allowlist) car le
+# Dockerfile COPY explicitement ce dont il a besoin (pyproject.toml, uv.lock,
+# src, eval, alembic, alembic.ini, scripts, kb).
+
+# Secrets — critique : jamais dans l'image
+.env
+.env.*
+!.env.example
+
+# VCS
+.git
+.gitignore
+
+# Environnements / caches Python
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+*.egg-info
+build
+dist
+
+# Données locales / volumes montés
+.docker-data
+var
+
+# Front (image dédiée web/, contexte séparé)
+web
+
+# Outillage & docs (hors runtime)
+docs
+tests
+.superpowers
+.github
+
+# IDE / OS
+.idea
+.vscode
+*.swp
+.DS_Store
