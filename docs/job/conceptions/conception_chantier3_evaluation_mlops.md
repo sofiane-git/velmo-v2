@@ -19,10 +19,10 @@ fonctionnent quand même. C'est la ligne de partage qui structure tout le docume
 | Brique                             | Rôle dans l'évaluation                                                                                                                                                                                                                                                              | Dans le chemin de gate ? |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
 | **Fixtures JSONL** (`eval/*.jsonl`) | `memory_cases.jsonl`, `guardrail_cases.jsonl`, `quality_cases.jsonl` — cas **rejouables et déterministes**, un cas = une entrée + un résultat attendu. Versionnés dans le repo comme du code.                                                                                       | **Oui** (source du quoi-tester) |
-| **DeepEval**                       | Bibliothèque de métriques LLM, **cadrée** : suite Qualité uniquement (G-Eval, answer relevancy, faithfulness). Juge **forcé sur le modèle Azure** de la stack. Rubriques versionnées. **N'entre pas dans le gate de R1** (voir §Suites).                                             | **Oui** (suite Qualité)  |
+| **DeepEval**                       | Bibliothèque de métriques LLM, **cadrée** : suite Qualité uniquement (G-Eval, answer relevancy, faithfulness). Juge **forcé sur un modèle explicitement qualifié et pinné** (`claude-opus-4-5`, Azure AI Foundry — décision révisée depuis `gpt-5-mini`, cf. [chantier 1](conception_chantier1_memoire.md)). Rubriques versionnées. **N'entre pas dans le gate de R1** (voir §Suites).                                             | **Oui** (suite Qualité)  |
 | **PostgreSQL**                     | `agent_version` (identité d'une version) + `eval_run` (résultat agrégé du gate) + `eval_case_result` (détail par cas). **Source de vérité unique du pass/fail et des agrégats latence/coût qui gatent.** Append-only forcé côté base.                                                | **Oui** (décision)       |
 | **Instrumentation locale**         | Décorateur sur chaque appel LLM (agent, extracteur mémoire Ch.1, classifieur + LLM-juge Ch.2) mesurant `tokens` + `durée` → agrégés (p50/p95, coût/conversation) dans `eval_run`. C'est **cette mesure-là** qui gate.                                                                | **Oui** (SLO)            |
-| **Langfuse (self-host)**           | **Observabilité fine, hors chemin de gate** : trace chaque appel LLM en prod pour le drill-down (quel composant dérape), dashboards, alerting. Branché derrière l'interface `ObservabilitySink`. Self-host (données client = PII, RGPD). `eval_run` ne stocke qu'un **pointeur** (URL de trace), pas la donnée. | Non (observabilité seule) |
+| **Langfuse (Cloud, EU)**           | **Observabilité fine, hors chemin de gate** : trace chaque appel LLM en prod pour le drill-down (quel composant dérape), dashboards, alerting. Branché derrière l'interface `ObservabilitySink`. Cloud EU (projet pédagogique, pas de vraies conversations client en prod — self-host resterait la bonne pratique sinon, voir §Gouvernance). `eval_run` ne stocke qu'un **pointeur** (URL de trace), pas la donnée. | Non (observabilité seule) |
 | **GitHub Actions** (`quality.yml`) | Exécute les suites, calcule les notes, applique les seuils par dimension, écrit `mlops/report.md`.                                                                                                                                                                                  | **Oui** (exécuteur)      |
 | **Git (trunk-based) + GitHub Environments** | `main` = tronc toujours livrable ; `feature/*` courtes ; **tags semver** = releases ; **Environments** `staging`/`production` = cibles de déploiement (pas des branches). Voir §Boucle qualité.                                                                          | Partiel (orchestration)  |
 
@@ -33,7 +33,8 @@ fonctionnent quand même. C'est la ligne de partage qui structure tout le docume
 
 > **Pourquoi DeepEval, mais cadré ?** DeepEval fournit des métriques **calibrées** (G-Eval,
 > faithfulness) — inutile de réinventer un juge maison pour la suite Qualité. Mais on le
-> **borne** : (a) juge = modèle Azure (pas d'OpenAI clandestin), (b) rubriques versionnées
+> **borne** : (a) juge = modèle **déployé via Azure** (Azure AI Foundry ou Azure OpenAI —
+> jamais un accès direct hors gouvernance), actuellement `claude-opus-4-5`, (b) rubriques versionnées
 > comme donnée, (c) **la métrique conversationnelle DeepEval ne gate pas R1** — une exigence
 > mémoire non négociable ne peut pas dépendre d'un score LLM flou (voir §Suites).
 
@@ -273,7 +274,7 @@ si l'agent ou le juge est stochastique et non pinné :
 
 - Agent évalué : `temperature = 0` en évaluation (mode déterministe), sauf cas où R1 exige
   du naturel — alors seed fixe + agrégation N-runs.
-- Juge DeepEval : `temperature = 0`, modèle Azure **pinné** (id + version d'API).
+- Juge DeepEval : `temperature = 0`, modèle **pinné** (`claude-opus-4-5`, Azure AI Foundry).
 - Version de DeepEval **pinnée** dans `pyproject.toml` : un upgrade de DeepEval = re-baseline
   explicite (ses métriques évoluent entre releases).
 
@@ -318,9 +319,17 @@ réponse. Donc :
 Ces deux SLO sont **recalculés localement** (instrumentation) et stockés dans `eval_run` —
 ils gatent, donc ne dépendent pas de Langfuse.
 
+> **Le tarif Azure n'est pas codé en dur.** Les prix Azure changent dans le temps ; une
+> constante figée dans le calcul ferait dériver silencieusement le gate (faux blocages si le
+> tarif réel a baissé, coûts réels non détectés s'il a augmenté). Le tarif vit dans une **table
+> de la config versionnée** (donc hashée dans la version d'agent, comme tout le reste), avec une
+> date de dernière vérification. Vérification **périodique** (trimestrielle, ou déclenchée si la
+> facture Azure réelle diverge du coût calculé) — pas d'automatisation de scraping des prix,
+> juste éviter un chiffre oublié depuis des années.
+
 ---
 
-## Observabilité : interface pluggable, Langfuse self-host
+## Observabilité : interface pluggable, Langfuse Cloud (EU)
 
 Le code appelle une interface, pas Langfuse directement :
 
@@ -330,9 +339,10 @@ ObservabilitySink (interface)
 └── run_url(run_id) -> str                              # pointeur stocké dans eval_run
 ```
 
-- **Implémentation par défaut : Langfuse self-host** (OSS, hébergé en interne / région EU).
-  Les conversations client sont des **données personnelles** : le self-host garantit qu'elles
-  ne sortent pas (RGPD — voir §Gouvernance). Langfuse trace **chaque appel LLM en prod** pour
+- **Implémentation par défaut : Langfuse Cloud, région EU** (SaaS — projet pédagogique, pas de
+  vraies conversations client en prod, donc pas de vraie PII à sortir du périmètre interne ;
+  self-host garantirait cette contrainte si le projet traitait un jour de vraies données
+  client — voir §Gouvernance RGPD). Langfuse trace **chaque appel LLM en prod** pour
   le drill-down, les dashboards, l'alerting.
 - **Découplage strict.** Langfuse **n'entre pas dans le calcul du gate** : `eval_run` ne
   stocke qu'une **URL de trace** (`langfuse_trace_url`), jamais les métriques dont dépend la
@@ -436,6 +446,12 @@ flowchart TB
    `EVAL_CASE_RESULT`. Seuil raté → **CI rouge**, correctif via `feature/*` → `main` → re-tag.
 7. **Approbation manuelle** via **GitHub Environment `production`** (required reviewers) — le
    seul geste humain du cycle normal.
+
+   > **SPOF assumé en équipe solo.** Avec un seul reviewer configuré, son absence bloque toute
+   > release — y compris un hotfix urgent. Risque accepté et **documenté explicitement**
+   > (pas un oubli) tant que l'équipe reste une seule personne : dès qu'une 2ᵉ personne rejoint
+   > le projet, elle est ajoutée aux required reviewers. Pas de système de rotation
+   > d'astreinte à construire pour une équipe d'une personne.
 8. **Promotion staging → production** — **pas de rebuild** : même artefact taggé déjà validé.
 9. **Prod tracée en continu** (Langfuse) + suites rejouées chaque nuit (`triggered_by=nightly`).
 10. **Rollback** si régression : re-promotion du **tag précédent** (immuable), pas de
@@ -445,6 +461,13 @@ flowchart TB
 `develop`/`hotfix` séparé ni de double-merge. Un correctif urgent = une **branche courte off
 `main`** → suites réduites (garde-fous + mémoire, la qualité étant bruitée et non bloquante en
 urgence) → tag patch → promotion. Zéro cérémonie de synchronisation de branches.
+
+> **La suite Qualité sautée n'est pas oubliée pour autant.** Sauter la qualité au moment du
+> hotfix évite de bloquer un correctif urgent sur une dimension bruitée — mais un prompt modifié
+> à la hâte peut dégrader le ton/la pertinence sans que rien ne le détecte avant le prochain tag
+> normal. La suite Qualité complète est donc rejouée **juste après la promotion**, en
+> **asynchrone, non bloquant** (comme le nightly) : ne retarde pas le déploiement, mais ferme le
+> trou de détection. Coût quasi nul (même run que le nightly suivant, avancé).
 
 ### Pourquoi trunk-based plutôt que GitFlow
 
@@ -481,8 +504,27 @@ Les 3 suites (DeepEval) coûtent des appels LLM — pas question de les lancer �
 | Merge dans `main`          | Fréquent      | Build + déploiement staging auto (pas de suites LLM)      | Build seul              |
 | Tag semver (release)       | Rare          | 3 suites LLM contre staging + approbation manuelle        | Cher, mais peu fréquent |
 | Promotion production       | Rare          | Aucun rebuild — promotion de l'artefact validé            | Quasi gratuit           |
-| Nightly                    | Quotidien     | 3 suites contre le tag production                         | Cher, cadencé           |
-| `hotfix/*`                 | Exceptionnel  | Garde-fous + mémoire seulement (skip qualité)             | Réduit, prioritaire     |
+| Nightly (complet)          | **Bihebdomadaire** (1 lundi sur 2, parité semaine ISO) | 3 suites contre le tag production | Cher, mais pas gaspillé sur une version inchangée |
+| Nightly (drift modèle)     | **Conditionnel** (déploiement Azure changé de version) | Seulement la/les suite(s) touchée(s) | Quasi gratuit — rare et ciblé |
+| `hotfix/*`                 | Exceptionnel  | Garde-fous + mémoire (bloquant) + Qualité en async après promotion | Réduit, prioritaire     |
+
+> **Pourquoi le nightly n'est pas quotidien inconditionnellement ?** Rejouer les 3 suites
+> (dont DeepEval en N=5 runs, cf. M4) chaque nuit sur une version qui n'a pas bougé dépense un
+> budget Azure pour zéro information nouvelle. Un tag est déjà passé par le gate complet de
+> `quality.yml` à la fusion — le rejouer la nuit même sur un code strictement identique n'apporte
+> aucune information nouvelle, donc pas de branche "1ʳᵉ nuit après un tag" : sur une version
+> stable, un cadencement **bihebdomadaire** (au lieu d'hebdomadaire) suffit à surveiller une
+> dérive lente (dérive du code de l'agent/des suites elles-mêmes).
+>
+> **Et la dérive du modèle Azure lui-même (le provider change le déploiement sous le même nom) ?**
+> Ce n'est pas ce que détecte le cadencement bihebdomadaire — un job séparé
+> (`check-model-drift`, cf. `.github/workflows/nightly.yml`) relève chaque nuit la version
+> réelle des 3 déploiements (`Mistral-Large-3`, `gpt-5-mini`, `claude-opus-4-5` via Azure AI
+> Foundry) et ne déclenche que la/les suite(s) qui dépendent du modèle ayant changé
+> (`quality`+`memory` pour Mistral/Claude, `guardrails` pour gpt-5-mini) — jamais les 3
+> systématiquement. Ce run ciblé ne passe pas par le gate de livraison (`EvalRun`, schéma à 3
+> notes NOT NULL) : c'est un diagnostic, pas une décision de mise en production (voir
+> `src/velmo/mlops/drift_check.py`).
 
 ---
 
@@ -525,9 +567,12 @@ critère est explicite, pas « à l'appréciation ».
   changement de cas silencieux.
 - **PII dans les fixtures (RGPD).** `guardrail_cases.jsonl` contient des insultes/contenus
   sensibles et `memory_cases.jsonl` des données de type personnel (adresses, noms). Ce sont
-  des données **synthétiques** — à documenter comme telles. Les traces d'observabilité, elles,
-  contiennent de **vraies** conversations client → Langfuse **self-host**, rétention limitée,
-  accès restreint, anonymisation où possible. À inscrire au registre de traitement RGPD.
+  des données **synthétiques** — à documenter comme telles. Projet pédagogique : aucune
+  **vraie** conversation client ne transite par l'agent, donc aucune vraie PII dans les traces
+  Langfuse Cloud non plus — d'où l'usage du Cloud (EU) plutôt que self-host (§Observabilité).
+  Si ce projet traitait un jour de vraies conversations client, revenir au self-host,
+  rétention limitée, accès restreint, anonymisation où possible, et inscrire au registre de
+  traitement RGPD.
 
 ---
 
@@ -551,8 +596,8 @@ critère est explicite, pas « à l'appréciation ».
 | Latence/coût : où sont-ils calculés ?                       | **Instrumentation locale → Postgres** (ce qui gate) ; Langfuse pour le drill-down seulement                        | Le gate ne doit dépendre d'aucun service tiers ; la donnée de décision reste dans une seule source de vérité. |
 | Absorber la variance du LLM-juge sans bloquer pour du bruit | Qualité en **delta ± 2σ** (N=5 runs) ; mémoire/garde-fous en seuil absolu + retry tracé                            | Seule la qualité est un jugement bruité ; R1–R6/G1–G7 restent vérifiables exactement. |
 | `EVAL_RUN` par version ou par exécution ?                   | **Par exécution** (1 version → N runs)                                                                              | Retry sur flake + nightly sans polluer l'identité de version. |
-| Moteur de métriques qualité : fait main ou biblio ?         | **DeepEval, cadré** : qualité seule, juge Azure pinné, rubriques versionnées, R1 hors gate                         | Métriques calibrées sans réinventer un juge ; mais on ne laisse pas une exigence non négociable dépendre d'un score flou. |
-| Observabilité : quel outil, quel rôle ?                     | **Langfuse self-host**, derrière `ObservabilitySink`, **hors chemin de gate**                                      | Trace fine + RGPD maîtrisé (self-host) ; découplage strict pour que Langfuse down ne casse ni CI ni gate. |
+| Moteur de métriques qualité : fait main ou biblio ?         | **DeepEval, cadré** : qualité seule, juge `claude-opus-4-5` pinné (Azure AI Foundry), rubriques versionnées, R1 hors gate | Métriques calibrées sans réinventer un juge ; mais on ne laisse pas une exigence non négociable dépendre d'un score flou. |
+| Observabilité : quel outil, quel rôle ?                     | **Langfuse Cloud (EU)**, derrière `ObservabilitySink`, **hors chemin de gate**                                     | Projet pédagogique (pas de vraie PII client) → Cloud EU pour un setup rapide ; interface `ObservabilitySink` laisse la porte ouverte à un `LangfuseSink` self-host si le projet traite un jour de vraies données ; découplage strict pour que Langfuse down ne casse ni CI ni gate. |
 | Identité de version : outil tiers ou git ?                  | **Hash git** des fichiers (prompt + configs) ; tag semver au release                                               | Git est déjà la source de vérité du prompt ; l'identité ne doit pas dépendre d'un service up. |
 | Stratégie de branches ?                                     | **Trunk-based** : `main` toujours livrable + `feature/*` courtes + **tags semver** + **GitHub Environments**       | Aligné continuous delivery ; supprime `develop` et le double-merge hotfix ; environnements = cibles de déploiement, pas branches. |
 | Environnement de test avant la prod ?                       | **Oui** : `main`→staging en continu, suites rejouées à la release, approbation via Environment `production`        | `main` reste toujours livrable ; on ne promeut en prod qu'un artefact validé en conditions réelles. |
@@ -560,6 +605,10 @@ critère est explicite, pas « à l'appréciation ».
 | Rollback ?                                                  | **Re-promotion du tag précédent** (artefacts immuables)                                                            | Tags immuables ⇒ rollback = changement de cible quasi instantané, pas un nouveau build. |
 | Robustesse du harness ?                                     | **Échec infra non compté** (`error_kind`), runs partiels non notés, retries tracés                                 | Un timeout Azure ne doit jamais être compté comme une régression agent (cf. incidents Ch.1). |
 | Gates non-fonctionnels ?                                    | **Latence p95 et coût/conv peuvent bloquer** (SLO)                                                                 | Un changement qui double la latence ou le coût ne doit pas passer en silence. |
+| Tarif Azure pour le calcul du coût : codé en dur ou config ? | **Table de tarifs dans la config versionnée**, vérification périodique                                             | Un tarif figé dérive silencieusement (Azure change ses prix) ; hashé dans la version comme le reste. |
+| Nightly : quotidien systématique ou conditionnel ?          | **Bihebdomadaire** (3 suites) + **drift modèle** (suite(s) touchée(s) seulement, si un déploiement Azure a changé de version) | Rejouer 3 suites LLM chaque nuit sur une version inchangée dépense un budget Azure pour zéro information nouvelle ; un tag est déjà passé par le gate complet à la fusion. |
+| Hotfix : la suite Qualité est-elle simplement sautée ?      | **Sautée du gate, mais rejouée en async non bloquant juste après promotion**                                       | Un correctif urgent peut dégrader le ton/la pertinence sans que le gate (garde-fous + mémoire seulement) ne le détecte. |
+| Approbation production : combien de reviewers ?             | **Un seul (SPOF assumé)** en équipe solo, documenté explicitement                                                  | Pas de système d'astreinte à construire pour une personne ; 2ᵉ reviewer ajouté dès qu'une 2ᵉ personne rejoint le projet. |
 
 ---
 
@@ -568,7 +617,7 @@ critère est explicite, pas « à l'appréciation ».
 | Outil envisagé                          | Écarté / cadré au profit de                                              | Raison |
 | --------------------------------------- | ------------------------------------------------------------------------ | ------ |
 | Langfuse comme **backbone** (Prompt Mgmt = version, Dataset Runs) | Langfuse **observabilité seule**, versioning git, gate en Postgres | Ne pas coupler l'identité de version ni le blocage CI à un service tiers up. |
-| **LangSmith** (LangChain-natif)         | **Langfuse self-host**                                                    | RGPD : conversations client = PII ; LangSmith est SaaS-first (données hors EU sans plan dédié). Self-host garde la donnée en interne. |
+| **LangSmith** (LangChain-natif)         | **Langfuse Cloud (EU)**                                                   | Langfuse propose une région EU explicite et une trajectoire self-host si le projet passe un jour en vraie prod (RGPD, conversations client = PII) ; LangSmith est SaaS-first sans cette option, moins pertinent même pour un usage pédagogique. |
 | **DeepEval** pour tout (dont R1)        | DeepEval **qualité seule**, R1 déterministe                              | Une exigence mémoire non négociable ne peut pas dépendre d'une métrique LLM flaky. |
 | Juge **fait main** pour la qualité      | **DeepEval** (cadré)                                                      | Métriques déjà calibrées (G-Eval, faithfulness) — inutile de réinventer. |
 | **GitFlow simplifié** (`develop`+`hotfix/*`) | **Trunk-based** + tags + Environments                               | Pas de trains de release parallèles ici ; supprime `develop` et le double-merge hotfix. |

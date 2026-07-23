@@ -1,12 +1,16 @@
-"""Clients LLM : Azure AI Inference (Mistral-Large-3) et repli local hors-ligne.
+"""Clients LLM : Azure AI Inference (Mistral-Large-3, agent principal), Claude
+via Azure AI Foundry (`AnthropicFoundry`, extracteur mémoire) et repli local
+hors-ligne.
 
-L'import du SDK Azure est différé pour que le harness démarre et que les tests
+L'import des SDK est différé pour que le harness démarre et que les tests
 tournent sans dépendre du SDK ni d'un endpoint joignable.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Any, Protocol, cast, runtime_checkable
 
 from velmo.config import get_settings, require
@@ -41,6 +45,52 @@ class EchoLLM:
         return f"[velmo] J'ai bien reçu : {message}"
 
 
+class _MinIntervalRateLimiter:
+    """Espace chaque appel d'un délai minimal fixe, dès le tout premier appel.
+
+    Le déploiement Azure `Mistral-Large-3` (`sconanRG`/`sconanext-8976-resource`,
+    francecentral) est plafonné à 20 requêtes/min — et la subscription (tenant
+    de formation partagé) est déjà au plafond régional pour ce modèle
+    (`az cognitiveservices usage list` : `AIServices.GlobalStandard.Mistral-Large-3`
+    = 20/20), donc pas de marge côté Azure pour absorber les rafales (suite
+    Qualité + résumés mémoire pendant un run du gate, ou un run concurrent d'un
+    chat manuel).
+
+    Une première version autorisait une rafale de N appels sans délai avant de
+    commencer à freiner (fenêtre glissante classique) — insuffisant en
+    pratique : un seul tour d'agent peut déclencher plusieurs appels Mistral
+    (routage + génération), et un cas en échec en déclenche un second
+    (`with_retry`) ; la rafale initiale suffisait déjà à dépasser le vrai
+    plafond de 20/min avant même que le freinage ne s'engage (429 observés dès
+    les premières secondes du process). Un espacement fixe dès le 1er appel
+    élimine toute rafale, plus sûr sous un plafond aussi bas. Verrou tenu
+    pendant le `sleep()` : sérialise volontairement les appelants concurrents
+    (threads du threadpool FastAPI) plutôt que de les laisser se réveiller
+    ensemble et redépasser la limite."""
+
+    def __init__(self, min_interval_s: float) -> None:
+        self._min_interval_s = min_interval_s
+        self._last_call: float | None = None
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            if self._last_call is not None:
+                elapsed = now - self._last_call
+                if elapsed < self._min_interval_s:
+                    time.sleep(self._min_interval_s - elapsed)
+            self._last_call = time.monotonic()
+
+
+# 4.5s entre appels (~13/min, sous les 20/min réels) : cf. docstring
+# `_MinIntervalRateLimiter`. La marge (13 vs 20) absorbe les appels multiples
+# par tour d'agent et les retries. Partagé par toutes les instances
+# d'`AzureLLM` du process (module-level) — c'est le quota Azure du
+# déploiement qui est global, pas un budget par instance.
+_MISTRAL_RATE_LIMITER = _MinIntervalRateLimiter(min_interval_s=4.5)
+
+
 class AzureLLM:
     """Adapte le modèle de chat Azure AI Inference à l'interface `LLM`."""
 
@@ -52,30 +102,35 @@ class AzureLLM:
         if context:
             messages.append({"role": "system", "content": f"Mémoire:\n{context}"})
         messages.append({"role": "user", "content": message})
+        _MISTRAL_RATE_LIMITER.wait()
         return cast(str, self._model.invoke(messages).content)
 
 
-class AzureOpenAILLM:
-    """Client Azure OpenAI (chat completions), utilisé par l'extracteur
-    mémoire — déploiement asynchrone (`azure_openai_async_*`), distinct du
-    déploiement dédié au juge garde-fous (voir Settings, Q1 session de grilling).
+class AnthropicLLM:
+    """Client Claude via Azure AI Foundry (`AnthropicFoundry`), utilisé par
+    l'extracteur mémoire — déploiement asynchrone (`anthropic_*`), distinct du
+    déploiement Azure OpenAI dédié au juge garde-fous (voir Settings, Q1
+    session de grilling). `base_url` pointe la ressource Foundry, pas l'API
+    Anthropic directe (`api.anthropic.com`) — exemple fourni par Azure :
+    `AnthropicFoundry(api_key=..., base_url="https://<resource>.services.ai.azure.com/anthropic")`.
     """
 
-    def __init__(self, endpoint: str, api_key: str, deployment: str) -> None:
-        from openai import OpenAI  # import différé : dépendance optionnelle
+    def __init__(self, endpoint: str, api_key: str, model: str) -> None:
+        from anthropic import AnthropicFoundry  # import différé : dépendance optionnelle
 
-        self._client = OpenAI(base_url=endpoint, api_key=api_key, timeout=45.0)
-        self._deployment = deployment
+        self._client = AnthropicFoundry(api_key=api_key, base_url=endpoint)
+        self._model = model
 
     def invoke(self, system: str, context: str, message: str) -> str:
-        messages = [{"role": "system", "content": system}]
-        if context:
-            messages.append({"role": "system", "content": f"Mémoire:\n{context}"})
-        messages.append({"role": "user", "content": message})
-        completion = self._client.chat.completions.create(
-            model=self._deployment, messages=messages  # type: ignore[arg-type]
+        full_system = f"{system}\n\nMémoire:\n{context}" if context else system
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=1024,
+            system=full_system,
+            messages=[{"role": "user", "content": message}],
         )
-        return completion.choices[0].message.content or ""
+        block = response.content[0]
+        return block.text if block.type == "text" else ""
 
 
 def get_llm() -> LLM:

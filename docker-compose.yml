@@ -20,10 +20,10 @@ services:
     # Conteneur maintenu actif ; ouvrir le chat avec :
     #   docker compose exec app uv run python -m velmo.cli
     # command: [ "tail", "-f", "/dev/null" ]
-    command: ["uv", "run", "uvicorn", "velmo.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uv", "run", "--no-sync", "uvicorn", "velmo.api:app", "--host", "0.0.0.0", "--port", "8000"]
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app

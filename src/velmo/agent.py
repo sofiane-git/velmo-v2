@@ -282,7 +282,14 @@ class Agent:
         # ne doit jamais retarder une réponse déjà validée par les garde-fous
         # (cf. MemoryManager.write). La persistance du tour (history) reste
         # synchrone à l'intérieur de `write`.
-        write_report = self.memory.write(user_id, message, answer, background=True)
+        # La sortie filtrée du garde-fou d'entrée est l'entrée effective de la
+        # persistance : une PII collée dans un message légitime (action='filter')
+        # ne doit jamais entrer en clair en mémoire ni repartir vers l'extracteur
+        # LLM (D9-03, symétrie avec le chemin bloqué plus haut).
+        stored_message = message
+        if gate_in.action == "filter" and gate_in.filtered_text is not None:
+            stored_message = gate_in.filtered_text
+        write_report = self.memory.write(user_id, stored_message, answer, background=True)
         yield "memory_write", _write_report_payload(write_report)
         yield "final", {"answer": answer, "status": status, "latency_ms": _elapsed_ms(start)}
 
@@ -503,8 +510,21 @@ class Agent:
         return f"D'après notre FAQ ({top['source']}) : {top['snippet']}"
 
 
-def build_default_agent(session: Session | None = None, kb: KnowledgeBase | None = None) -> Agent:
-    """Assemble un agent avec composants par défaut, base et FAQ."""
+def build_default_agent(
+    session: Session | None = None,
+    kb: KnowledgeBase | None = None,
+    llm: LLM | None = None,
+    memory: MemoryManager | None = None,
+    guardrails: GuardrailEngine | None = None,
+) -> Agent:
+    """Assemble un agent avec composants par défaut, base et FAQ.
+
+    `llm`/`memory`/`guardrails` : overrides optionnels (même convention
+    d'injection que `MemoryManager`/`GuardrailEngine` elles-mêmes) — sans
+    argument, comportement strictement identique à avant. Utilisé par
+    `mlops.cli` (Chantier 3, Task 8) pour instrumenter chaque composant sans
+    coupler ce module à `velmo.mlops` (la dépendance reste `mlops → agent`,
+    jamais l'inverse)."""
     from .db import session_factory
     from .kb_store import get_kb
     from .memory.extractor import LLMExtractor
@@ -513,11 +533,10 @@ def build_default_agent(session: Session | None = None, kb: KnowledgeBase | None
         session = session_factory()()
     if kb is None:
         kb = get_kb()
-    llm = get_llm()
-    return Agent(
-        llm=llm,
-        memory=MemoryManager(extractor=LLMExtractor(llm)),
-        guardrails=GuardrailEngine(),
-        session=session,
-        kb=kb,
-    )
+    if llm is None:
+        llm = get_llm()
+    if memory is None:
+        memory = MemoryManager(extractor=LLMExtractor(llm))
+    if guardrails is None:
+        guardrails = GuardrailEngine()
+    return Agent(llm=llm, memory=memory, guardrails=guardrails, session=session, kb=kb)

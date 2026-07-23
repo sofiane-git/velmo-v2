@@ -59,6 +59,9 @@ archives/
 docs/superpowers/
 .worktrees/
 
-
 # Playwright
 .playwright-mcp/
+
+docs/job/conceptions/agnostic/
+
+.claude/skills/

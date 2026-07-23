@@ -24,6 +24,16 @@ def test_shoe_size_extracted():
     assert fact.confidence >= 0.7
 
 
+def test_shoe_size_numeric_pointure_extracted_from_assistant_trigger():
+    """La pointure numerique est capturee meme quand le mot declencheur
+    ("pointure") n'apparait que dans la reformulation de l'assistant."""
+    result = RuleBasedExtractor().extract(
+        "Pour info je fais du 42 en maillot.", "Note : pointure 42."
+    )
+    fact = next(f for f in result.facts if f.key == "shoe_size")
+    assert fact.value == "42"
+
+
 def test_clubs_extracted():
     result = RuleBasedExtractor().extract("Mes clubs preferes sont l'OM et le Bresil.", "Note.")
     assert "clubs" in _keys(result)
@@ -109,19 +119,19 @@ def test_llm_extractor_returns_empty_on_garbage():
     assert result.procedures == []
 
 
-def test_get_extractor_falls_back_to_rule_based_without_azure_async_config(monkeypatch) -> None:
+def test_get_extractor_falls_back_to_rule_based_without_anthropic_foundry_config(monkeypatch) -> None:
     from velmo.memory.extractor import RuleBasedExtractor, get_extractor
 
-    monkeypatch.delenv("AZURE_OPENAI_ASYNC_ENDPOINT", raising=False)
-    monkeypatch.delenv("AZURE_OPENAI_ASYNC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_FOUNDRY_ENDPOINT", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert isinstance(get_extractor(), RuleBasedExtractor)
 
 
-def test_get_extractor_uses_llm_extractor_when_azure_async_configured(monkeypatch) -> None:
+def test_get_extractor_uses_llm_extractor_when_anthropic_foundry_configured(monkeypatch) -> None:
     from velmo.memory.extractor import LLMExtractor, get_extractor
 
-    monkeypatch.setenv("AZURE_OPENAI_ASYNC_ENDPOINT", "https://fake.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_ASYNC_API_KEY", "fake-key")
+    monkeypatch.setenv("ANTHROPIC_FOUNDRY_ENDPOINT", "https://fake.services.ai.azure.com/anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
     assert isinstance(get_extractor(), LLMExtractor)
 
 

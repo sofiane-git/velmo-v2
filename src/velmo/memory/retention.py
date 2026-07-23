@@ -33,13 +33,31 @@ def purge_expired_episodes(session: Session, ttl_days: int = 730) -> int:
 
 
 def purge_inactive_threads(manager: "MemoryManager", ttl_days: int = 90) -> int:
-    """Purge les threads inactifs depuis `ttl_days` — thread (en-tête) et ses
-    checkpoints LangGraph associés (même chemin idempotent que R5)."""
+    """Purge les threads inactifs depuis `ttl_days` — checkpoints LangGraph
+    supprimés d'abord, puis en-têtes `Thread` (même chemin idempotent que R5).
+    Un crash entre les deux étapes laisse les en-têtes en place : un re-run
+    retrouve les threads restants et rejoue la purge (idempotence réelle) au
+    lieu d'orpheliner des checkpoints dont l'en-tête aurait déjà disparu."""
     cutoff = utcnow() - timedelta(days=ttl_days)
     session = manager._Session()
     try:
         stale = session.scalars(select(Thread).where(Thread.last_message_at < cutoff)).all()
         thread_ids = [t.thread_id for t in stale]
+
+        # Store secondaire (checkpoints) supprimé AVANT le commit de la ligne
+        # pivot (Thread) : un crash ici laisse les en-têtes en place, donc un
+        # re-run retrouve les threads et rejoue la purge (idempotence réelle).
+        for thread_id in thread_ids:
+            # `manager._checkpointer` est la référence gardée explicitement par
+            # `MemoryManager.__init__` (Task 4) — plus sûr que de supposer un
+            # attribut `.checkpointer` sur l'objet graphe compilé. Vérifié
+            # empiriquement (Task 7) : `delete_thread(thread_id: str) -> None`
+            # existe bien sur `BaseCheckpointSaver`/`SqliteSaver`/`PostgresSaver`
+            # dans les versions installées (langgraph-checkpoint-{sqlite,postgres}
+            # 3.1.x) et supprime les lignes `checkpoints`/`writes` (ou
+            # `checkpoint_blobs`/`checkpoint_writes` côté Postgres) pour ce thread.
+            manager._checkpointer.delete_thread(thread_id)
+
         for thread in stale:
             write_audit(
                 session, thread.user_id, "delete", f"thread:{thread.thread_id}", actor="system"
@@ -48,16 +66,5 @@ def purge_inactive_threads(manager: "MemoryManager", ttl_days: int = 90) -> int:
         session.commit()
     finally:
         session.close()
-
-    for thread_id in thread_ids:
-        # `manager._checkpointer` est la référence gardée explicitement par
-        # `MemoryManager.__init__` (Task 4) — plus sûr que de supposer un
-        # attribut `.checkpointer` sur l'objet graphe compilé. Vérifié
-        # empiriquement (Task 7) : `delete_thread(thread_id: str) -> None`
-        # existe bien sur `BaseCheckpointSaver`/`SqliteSaver`/`PostgresSaver`
-        # dans les versions installées (langgraph-checkpoint-{sqlite,postgres}
-        # 3.1.x) et supprime les lignes `checkpoints`/`writes` (ou
-        # `checkpoint_blobs`/`checkpoint_writes` côté Postgres) pour ce thread.
-        manager._checkpointer.delete_thread(thread_id)
 
     return len(thread_ids)

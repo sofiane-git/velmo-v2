@@ -17,6 +17,13 @@ def _session():
     return sessionmaker(bind=engine, expire_on_commit=False, future=True)()
 
 
+def test_no_arg_resolves_configured_sqlite_db_url_not_hardcoded_default(monkeypatch, tmp_path):
+    configured_path = tmp_path / "configured_guardrails.db"
+    monkeypatch.setenv("DB_URL", f"sqlite:///{configured_path}")
+    engine = make_guardrails_engine()
+    assert engine.url.database == str(configured_path)
+
+
 def test_write_and_list_audit():
     session = _session()
     write_audit(session, "u1", "prompt_injection", "input", "regex", None, "block", None)

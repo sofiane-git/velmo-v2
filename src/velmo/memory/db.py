@@ -127,7 +127,7 @@ class MemoryTombstone(Base):
     __tablename__ = "memory_tombstone"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("memory_user.user_id", ondelete="CASCADE"))
-    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "procedure_trigger"
+    target_kind: Mapped[str] = mapped_column(String)  # "fact_key" | "fact_value" | "procedure_trigger"
     target: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -158,49 +158,39 @@ def make_memory_engine(url: str | None = None) -> Engine:
     persistant (`var/velmo_memory.db`) — jamais `:memory:` par défaut, pour que
     deux `MemoryManager()` séparés partagent le même état (R2).
 
-    Une `url` explicite non-Postgres (ex. `sqlite:///:memory:`) est toujours
-    utilisée telle quelle, sans sonde ni repli : c'est le point d'entrée des
-    tests qui veulent une base isolée. Une `url` explicite Postgres est en
-    revanche sondée comme le chemin par défaut : si elle est injoignable, on
-    retombe aussi sur le fichier SQLite partagé (avec un avertissement, pas
-    silencieusement).
+    `url=None` résout `DB_URL` via `get_settings().db_url` puis applique la
+    même logique que `url` explicite (au lieu de ne considérer que le cas
+    Postgres) : une `DB_URL` déjà SQLite (ex. fichier temporaire de test) est
+    utilisée telle quelle, pas silencieusement écrasée par le repli par
+    défaut. Une `url` explicite Postgres est sondée : si elle est
+    injoignable, on retombe sur le fichier SQLite partagé (avec un
+    avertissement, pas silencieusement).
     """
-    if url is not None:
-        if url.startswith("postgresql") and not _postgres_reachable(url):
-            warnings.warn(
-                f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            path = _default_sqlite_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            engine = create_engine(f"sqlite:///{path}", future=True)
-        elif ":memory:" in url:
-            # `write(background=True)` fait tourner l'extraction sur un thread
-            # du pool (cf. memory/__init__.py) : sans StaticPool, chaque thread
-            # obtiendrait sa propre base `:memory:` isolée (comportement par
-            # défaut de SQLAlchemy pour ce DSN) — les écritures de fond
-            # deviendraient invisibles au thread appelant. Sans objet pour
-            # Postgres/SQLite fichier (une vraie base partagée, pas un artefact
-            # par connexion).
-            engine = create_engine(
-                url, future=True, poolclass=StaticPool, connect_args={"check_same_thread": False}
-            )
-        else:
-            engine = create_engine(url, future=True)
+    if url is None:
+        url = get_settings().db_url
+
+    if url.startswith("postgresql") and not _postgres_reachable(url):
+        warnings.warn(
+            f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        path = _default_sqlite_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        engine = create_engine(f"sqlite:///{path}", future=True)
+    elif ":memory:" in url:
+        # `write(background=True)` fait tourner l'extraction sur un thread
+        # du pool (cf. memory/__init__.py) : sans StaticPool, chaque thread
+        # obtiendrait sa propre base `:memory:` isolée (comportement par
+        # défaut de SQLAlchemy pour ce DSN) — les écritures de fond
+        # deviendraient invisibles au thread appelant. Sans objet pour
+        # Postgres/SQLite fichier (une vraie base partagée, pas un artefact
+        # par connexion).
+        engine = create_engine(
+            url, future=True, poolclass=StaticPool, connect_args={"check_same_thread": False}
+        )
     else:
-        pg_url = get_settings().db_url
-        if _postgres_reachable(pg_url):
-            engine = create_engine(pg_url, future=True)
-        else:
-            warnings.warn(
-                f"Postgres injoignable ({pg_url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            path = _default_sqlite_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            engine = create_engine(f"sqlite:///{path}", future=True)
+        engine = create_engine(url, future=True)
 
     if engine.url.drivername.startswith("sqlite"):
 
@@ -469,6 +459,13 @@ def list_episodes(session: Session, user_id: str) -> list[Episode]:
     return list(session.scalars(select(Episode).where(Episode.user_id == user_id)).all())
 
 
+def list_threads(session: Session, user_id: str) -> list[Thread]:
+    """Tous les threads d'un utilisateur (pour collecter les thread_id avant
+    une suppression en cascade — le droit à l'oubli doit ensuite purger les
+    checkpoints LangGraph correspondants, hors des tables métier)."""
+    return list(session.scalars(select(Thread).where(Thread.user_id == user_id)).all())
+
+
 def list_recent_audit(session: Session, user_id: str, limit: int = 50) -> list[MemoryAudit]:
     return list(
         session.scalars(
@@ -513,6 +510,18 @@ def is_tombstoned(session: Session, user_id: str, target_kind: str, target: str)
         )
     ).first()
     return existing is not None
+
+
+def list_active_tombstones(session: Session, user_id: str) -> list[MemoryTombstone]:
+    """Tombstones non résolus d'un utilisateur (garde anti-résurrection)."""
+    return list(
+        session.scalars(
+            select(MemoryTombstone).where(
+                MemoryTombstone.user_id == user_id,
+                MemoryTombstone.resolved_at.is_(None),
+            )
+        ).all()
+    )
 
 
 def resolve_tombstone(session: Session, user_id: str, target_kind: str, target: str) -> None:

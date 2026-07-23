@@ -46,6 +46,13 @@ def test_explicit_url_used_verbatim():
     assert engine.url.drivername == "sqlite"
 
 
+def test_no_arg_resolves_configured_sqlite_db_url_not_hardcoded_default(monkeypatch, tmp_path):
+    configured_path = tmp_path / "configured_memory.db"
+    monkeypatch.setenv("DB_URL", f"sqlite:///{configured_path}")
+    engine = make_memory_engine()
+    assert engine.url.database == str(configured_path)
+
+
 def test_tables_created_and_fact_unique_per_user_key():
     engine = make_memory_engine("sqlite:///:memory:")
     Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)

@@ -11,6 +11,7 @@ Postgres réel si joignable, sinon repli SQLite fichier persistant (jamais
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
 from typing import Annotated, Any, Iterator, TypedDict
 
@@ -24,6 +25,19 @@ logger = logging.getLogger(__name__)
 
 
 _REPLACE_KEY = "__replace__"
+
+_SQLALCHEMY_DRIVER_SUFFIX_RE = re.compile(r"^postgresql\+[^:]+://")
+
+
+def _to_psycopg_conninfo(url: str) -> str:
+    """`db_url` circule partout au format SQLAlchemy (`postgresql+psycopg://...`,
+    cf. `Settings.db_url`) — SQLAlchemy comprend ce `+driver`, mais
+    `psycopg.Connection.connect()` (appelé directement par
+    `PostgresSaver.from_conn_string`, sans passer par SQLAlchemy) attend une
+    chaîne libpq/URI native et rejette le suffixe avec `ProgrammingError:
+    missing "=" after ...`. On le retire avant l'appel psycopg uniquement —
+    `create_engine`/`_postgres_reachable` (SQLAlchemy) restent inchangés."""
+    return _SQLALCHEMY_DRIVER_SUFFIX_RE.sub("postgresql://", url)
 
 
 def replace_messages(messages: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
@@ -82,7 +96,7 @@ def get_checkpointer(db_url: str) -> Iterator[BaseCheckpointSaver[str]]:
     from velmo.memory.db import _default_sqlite_path, _postgres_reachable
 
     if db_url.startswith("postgresql") and _postgres_reachable(db_url):
-        with PostgresSaver.from_conn_string(db_url) as checkpointer:
+        with PostgresSaver.from_conn_string(_to_psycopg_conninfo(db_url)) as checkpointer:
             checkpointer.setup()
             yield checkpointer
         return

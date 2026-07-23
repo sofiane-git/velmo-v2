@@ -44,6 +44,26 @@ graph = [
     "langgraph-checkpoint-postgres>=3.1,<3.2",
     "langgraph-checkpoint-sqlite>=3.1,<3.2",
 ]
+# Observabilité (Chantier 3) : Langfuse self-host, hors chemin de gate —
+# optionnel, repli NullSink sans config (voir Task 5, get_sink()).
+observability = [
+    "langfuse>=4,<5",
+]
+# Suite Qualité (Chantier 3) : DeepEval, cadré (métriques qualité seule, juge
+# Claude via Azure AI Foundry pinné) — optionnel, repli déterministe
+# (SubstringScorer) sans Foundry configuré.
+# >=4 requis : deepeval 2.x/3.x importent `langchain.schema` (API supprimée
+# dans langchain 1.x, déjà pinné par l'extra `llm`) ; deepeval 4.x a retiré
+# la dépendance langchain.
+eval = [
+    "deepeval>=4,<5",
+]
+# Extracteur mémoire (Chantier 1) + juge DeepEval Qualité (Chantier 3) :
+# claude-opus-4-5 via Azure AI Foundry (`AnthropicFoundry`), déploiement
+# partagé — voir Settings.anthropic_foundry_endpoint.
+anthropic = [
+    "anthropic>=0.60,<1",
+]
 
 [dependency-groups]
 dev = [
@@ -64,6 +84,12 @@ packages = ["src/velmo"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+# deepeval (extra `eval`, Task 4) s'auto-enregistre comme plugin pytest et
+# appelle `autoload_dotenv()` à l'import, ce qui charge le `.env` réel du
+# poste (Azure, etc.) dans os.environ pour TOUTE la session de test — on
+# n'utilise jamais l'intégration pytest propre à DeepEval (juste ses classes
+# AzureOpenAIModel/GEval/LLMTestCase en direct dans DeepEvalScorer).
+addopts = "-p no:deepeval"
 
 [tool.importlinter]
 root_package = "velmo"

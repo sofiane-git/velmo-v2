@@ -26,8 +26,5 @@ jobs:
       - name: Acceptance suite
         run: uv run pytest tests/acceptance/ -v
 
-      # Note globale bloquante : le script d'évaluation calcule la note et
-      # sort en erreur sous le seuil, ce qui rejette la livraison.
-      # Décommenter une fois `python -m velmo.mlops.score` disponible :
-      # - name: Quality gate
-      #   run: uv run python -m velmo.mlops.score --min-score 0.8
+      - name: Quality gate
+        run: uv run python -m velmo.mlops.score --min-score 0.8

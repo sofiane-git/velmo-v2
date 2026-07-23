@@ -110,7 +110,7 @@ patch → promotion. Zéro double-merge à synchroniser.
   latence **et coût** — décomposés par composant, et **pouvant bloquer** (SLO), pas seulement
   reportés.
 - **Deux outils, deux responsabilités** : PostgreSQL garde les verdicts et les agrégats qui
-  décident (rapide, toujours là) ; Langfuse (self-host) garde le détail de chaque appel pour
+  décident (rapide, toujours là) ; Langfuse (Cloud, EU) garde le détail de chaque appel pour
   le drill-down — **hors du chemin de blocage**, aucune donnée de décision dupliquée.
 - **`main` comme tronc unique** : plus de branche `develop` ni de verrou de concurrence — les
   PR se sérialisent au merge, staging reflète toujours `main`.

@@ -7,7 +7,6 @@ Velmo 2.0: support agent for a vintage/collector football-jersey shop, rebuilt a
 - Python 3.11 only, managed with `uv` (not pip/poetry) — `uv sync`, `uv run pytest`
 - `pyproject.toml` enforces `mypy strict = true` and Ruff (line-length 100); keep new code passing both
 - CI (`.github/workflows/quality.yml`) gates merges on `pytest tests/acceptance/` — the four suites in `tests/acceptance/` (`test_memory.py`, `test_guardrails.py`, `test_mlops.py`, `test_business.py`) must stay green
-- The MLOps quality-score gate (`velmo.mlops.score --min-score 0.8`) is scaffolded but commented out in CI — don't assume it's enforced yet
 - Core logic lives under `src/velmo/`: `memory/` (short+long term, isolation, forgetting), `guardrails/` (input/output filtering), `mlops/` (eval suites, versioning) — keep new code in the matching module rather than `agent.py`
 - Long-term memory requirements are R1-R6 per `docs/reco_expert.md` — any change to `memory/` should be checked against those, not just against existing tests
 
