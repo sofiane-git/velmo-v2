@@ -14,8 +14,8 @@ flowchart TB
         MEMR --> LLM["🤖 L'agent réfléchit et répond<br/>consulter : librement<br/>agir : seulement après confirmation"]
         LLM --> GOUT{"🛡️ Contrôle de la réponse<br/>AVANT le client"}
         GOUT -->|"réponse à risque"| REF
-        GOUT -->|"réponse saine"| MEMW["🧠 L'agent RETIENT<br/>ce qui mérite d'être gardé"]
-        MEMW --> RESP["💬 Réponse au client"]
+        GOUT -->|"réponse saine"| RESP["💬 Réponse au client"]
+        RESP -.->|"en tâche de fond (best-effort,<br/>hors chemin de réponse)"| MEMW["🧠 L'agent RETIENT<br/>ce qui mérite d'être gardé"]
 
         LLM -.->|"cas trop sensibles :<br/>gros remboursement, colis déjà parti,<br/>soupçon de contrefaçon"| ESC["🙋 Un humain prend le relais"]
     end

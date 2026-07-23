@@ -14,7 +14,7 @@
 
 | Brique         | Rôle dans la mémoire                                                                                                                                                                                                |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **LangGraph** _(dep à ajouter : `langgraph`, `langgraph-checkpoint-postgres`)_ | Orchestration du tour comme un `StateGraph` ; **persistance de l'état de thread** (messages + résumé + budget) via le checkpointer **`PostgresSaver`**. Remplace les classes `*Memory` supprimées. C'est **la** source de vérité du court terme — pas de table `MESSAGE` doublon. |
+| **LangGraph** _(dep : `langgraph`, `langgraph-checkpoint-postgres`)_ | **Persistance de l'état de thread** (messages + résumé + budget) via le checkpointer **`PostgresSaver`**. Le `StateGraph` se réduit à un **unique nœud `append_turn`** : LangGraph sert la persistance/reprise, pas l'orchestration multi-nœuds — la compression/résumé R4 et le routage restent du **Python simple**. Remplace les classes `*Memory` supprimées. C'est **la** source de vérité du court terme — pas de table `MESSAGE` doublon. |
 | **LangChain 1.x** (`langchain-core`, `langchain-azure-ai`) | Réduit à ce qui existe et sert : **client LLM Azure**, **sortie structurée** (`with_structured_output` + Pydantic pour l'extracteur), calcul d'embeddings. Pas d'abstraction mémoire. |
 | **PostgreSQL** (extension **`pgvector`**) | Stockage relationnel cloisonné : **faits** sémantiques, **règles** procédurales, **métadonnées + embeddings d'épisodes**, **en-tête de thread**, **journal d'audit RGPD**. Les checkpoints LangGraph vivent aussi en Postgres (tables gérées par la lib). L'index vectoriel de la mémoire épisodique (embeddings + recherche par similarité HNSW) vit **dans la même base**, via `pgvector` — voir §Store épisodique. |
 | **`EpisodicVectorStore`** (interface interne, implémentation `pgvector` par défaut) | Port d'accès à la recherche par similarité, **filtré par `user_id`** de façon non-contournable (client enveloppé, voir §R3). Découple le code appelant du store concret — une implémentation dédiée (ex. Chroma, Qdrant) reste substituable sans réécrire l'appelant, si un volume mesuré le justifie un jour (voir §Store épisodique). |
@@ -284,7 +284,7 @@ Trois leviers combinés :
   écrit en **asynchrone après le tour** : un write extracteur arrivant **après** un `DELETE` R5
   **ressusciterait** la donnée, que le store soit unique ou cross-store — ce risque tient à
   l'asynchronie de l'extracteur, pas à l'architecture de stockage. Parade : l'oubli pose un
-  **tombstone** (`memory_audit` + clé bloquée) que l'extracteur **consulte avant tout write** —
+  **tombstone** (table dédiée `memory_tombstone`, distincte de `memory_audit`) que l'extracteur **consulte avant tout write** —
   une clé/trigger sous tombstone reste bloquée **tant que l'écriture qui l'a posé n'est pas
   confirmée résolue des deux côtés du flux** (pas de TTL calendaire fixe : le tombstone se ferme
   quand l'état est confirmé, point).

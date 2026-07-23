@@ -121,9 +121,12 @@ flowchart LR
   régressé ?** » — la question centrale de M2 — reste sans réponse. `error_kind` distingue un
   échec **agent** (compté) d'un échec **infra** (non compté, voir §Robustesse).
 
-> **Append-only, forcé côté base.** « Append-only » n'est pas une convention : le rôle
-> applicatif reçoit `INSERT`/`SELECT` uniquement (pas de `UPDATE`/`DELETE`) sur ces tables.
-> Le schéma évolue par **migrations Alembic** (jamais `create_all`).
+> **Append-only — posture cible.** L'intention : le rôle applicatif ne reçoit que
+> `INSERT`/`SELECT` (pas d'`UPDATE`/`DELETE`) sur ces tables. ⚠️ **Non encore enforced en base**
+> à ce jour (aucun `GRANT` dédié posé) — à ajouter via une migration Alembic dédiée ; tant que
+> ce n'est pas fait, l'append-only reste une convention applicative, pas une garantie base. Le
+> schéma est défini par **migrations Alembic** (le `create_all` résiduel reste réservé au repli
+> SQLite hors-ligne/tests, cf. audit D2-04).
 
 > **Pourquoi un hash git plutôt qu'un numéro à la main ?** Un numéro peut être oublié après
 > un changement de seuil ; le hash **change automatiquement** dès qu'un fichier change. La
