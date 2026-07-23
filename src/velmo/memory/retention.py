@@ -5,7 +5,7 @@ distinctes (voir conception_chantier1_memoire.md §Rétention & purge) :
   cours + une fenêtre de preuve/litige — pas calendaire, sur inactivité.
 
 Ces fonctions sont conçues pour être appelées par un job planifié externe
-(cron, tâche Azure planifiée — voir docs/job/tuto_azure_deploiement.md), pas
+(cron, tâche Azure planifiée — voir docs/tutorials/tuto_azure_deploiement.md), pas
 sur le chemin de requête.
 """
 

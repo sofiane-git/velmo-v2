@@ -206,7 +206,7 @@ class LlamaGuardClassifier:
         if self.last_latency_ms > self._latency_threshold_ms:
             logger.warning(
                 "LlamaGuardClassifier : latence %.0fms > seuil %.0fms (modèle %s) — "
-                "envisager la bascule vers llama-guard3:1b (voir docs/job/"
+                "envisager la bascule vers llama-guard3:1b (voir docs/reference/"
                 "conceptions/conception_chantier2_guardrails.md §Seuil de bascule).",
                 self.last_latency_ms,
                 self._latency_threshold_ms,

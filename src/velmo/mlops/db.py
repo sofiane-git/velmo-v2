@@ -2,7 +2,7 @@
 `eval_run` (résultat agrégé d'une exécution), `eval_case_result` (détail par
 cas). Append-only par convention applicative (voir §Robustesse du plan) — la
 restriction stricte au niveau rôle Postgres (INSERT/SELECT seuls) est une
-tâche d'exploitation documentée dans `docs/job/tuto_azure_deploiement.md`,
+tâche d'exploitation documentée dans `docs/tutorials/tuto_azure_deploiement.md`,
 pas quelque chose qu'une migration Alembic peut imposer sur un rôle qui
 n'existe pas encore dans ce projet à connexion unique.
 

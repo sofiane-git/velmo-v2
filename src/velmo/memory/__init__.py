@@ -144,7 +144,7 @@ class RemovedProcedure:
 @dataclass
 class ForgetReport:
     """Détail de ce qu'une suppression (`forget`/`forget_all`) a réellement
-    effacé — la traçabilité (`docs/reco_expert.md`) exige de pouvoir inspecter
+    effacé — la traçabilité (`docs/reference/reco_expert.md`) exige de pouvoir inspecter
     ce qui a été retenu, donc aussi ce qui a été rendu à l'oubli."""
 
     count: int
@@ -604,7 +604,7 @@ class MemoryManager:
         return report
 
     def forget_all(self, user_id: str) -> ForgetReport:
-        """Droit à l'oubli total (`docs/reco_expert.md`, R5) : purge toute la
+        """Droit à l'oubli total (`docs/reference/reco_expert.md`, R5) : purge toute la
         mémoire d'un utilisateur, court terme comme long terme.
 
         `forget(target)` ne cible qu'un élément ; ceci supprime tout — faits,

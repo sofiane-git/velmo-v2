@@ -233,7 +233,7 @@ def _canonicalize_key(key: str) -> str:
     autre "order_O-2024-0101_status" pour le même fait. `upsert_fact` matche
     sur clé exacte : sans canonicalisation, ça crée un doublon au lieu d'une
     mise à jour, et les deux copies peuvent diverger silencieusement au lieu
-    d'être une seule source de vérité par utilisateur (cf. `docs/reco_expert.md`,
+    d'être une seule source de vérité par utilisateur (cf. `docs/reference/reco_expert.md`,
     traçabilité des écritures mémoire).
 
     On isole les identifiants métier (commande, contrat) du reste des mots,

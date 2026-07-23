@@ -42,7 +42,7 @@ guardrails = [
     "azure-ai-textanalytics>=5.3,<6",
 ]
 # Orchestration du tour + persistance de thread (remplace les tables maison
-# Conversation/Message — voir docs/job/conceptions/conception_chantier1_memoire.md).
+# Conversation/Message — voir docs/reference/conceptions/conception_chantier1_memoire.md).
 graph = [
     "langgraph>=1.2,<1.3",
     "langgraph-checkpoint-postgres>=3.1,<3.2",

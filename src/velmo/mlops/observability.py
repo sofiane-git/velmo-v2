@@ -1,6 +1,6 @@
 """Observabilité : interface pluggable (`ObservabilitySink`), implémentation
 par défaut no-op (`NullSink`), implémentation réelle (`LangfuseSink`, Langfuse
-Cloud EU — voir deploy/langfuse/README.md pour la config). `eval_run` ne stocke qu'un pointeur
+Cloud EU — voir docs/how-to/langfuse-setup.md pour la config). `eval_run` ne stocke qu'un pointeur
 (`langfuse_trace_url`), jamais la donnée de décision — voir
 conception_chantier3_evaluation_mlops.md §Observabilité.
 

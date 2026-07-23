@@ -8,7 +8,7 @@ Velmo 2.0: support agent for a vintage/collector football-jersey shop, rebuilt a
 - `pyproject.toml` enforces `mypy strict = true` and Ruff (line-length 100); keep new code passing both
 - CI (`.github/workflows/quality.yml`) gates merges on the full chain: `ruff check`, `ruff format --check`, `mypy` (strict), `lint-imports` (isolation contracts), `pytest tests/acceptance/`, then the MLOps quality gate (`python -m velmo.mlops.score`, degraded/offline mode on PRs; real model on release/nightly, min-score 0.80). The four suites in `tests/acceptance/` (`test_memory.py`, `test_guardrails.py`, `test_mlops.py`, `test_business.py`) must stay green
 - Core logic lives under `src/velmo/`: `memory/` (short+long term, isolation, forgetting), `guardrails/` (input/output filtering), `mlops/` (eval suites, versioning) — keep new code in the matching module rather than `agent.py`
-- Long-term memory requirements are R1-R6 per `docs/reco_expert.md` — any change to `memory/` should be checked against those, not just against existing tests
+- Long-term memory requirements are R1-R6 per `docs/reference/reco_expert.md` — any change to `memory/` should be checked against those, not just against existing tests
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 

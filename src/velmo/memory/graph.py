@@ -1,7 +1,7 @@
 """Orchestration du tour via LangGraph : un `StateGraph` à un nœud
 (`append_turn`), persisté par thread_id via un checkpointer Postgres (prod) ou
 SQLite (hors-ligne) — remplace les tables maison `Conversation`/`Message`
-supprimées en LangChain 1.x (`docs/job/conceptions/conception_chantier1_memoire.md`).
+supprimées en LangChain 1.x (`docs/reference/conceptions/conception_chantier1_memoire.md`).
 
 `get_checkpointer` suit la même convention que `memory.db.make_memory_engine` :
 Postgres réel si joignable, sinon repli SQLite fichier persistant (jamais

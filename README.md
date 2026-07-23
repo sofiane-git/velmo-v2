@@ -29,10 +29,10 @@ uv sync --extra vector --extra llm        # Chroma + Azure AI Inference
 
 ## Démarrage
 
-> **Parcours guidé complet (dev → prod)** en 3 parties dans `docs/job/` :
-> [`tuto_dev_local.md`](docs/job/tuto_dev_local.md) (local) →
-> [`tuto_azure_deploiement.md`](docs/job/tuto_azure_deploiement.md) (infra + Key Vault) →
-> [`tuto_github_actions_release.md`](docs/job/tuto_github_actions_release.md) (CI/CD).
+> **Parcours guidé complet (dev → prod)** en 3 parties dans `docs/tutorials/` :
+> [`tuto_dev_local.md`](docs/tutorials/tuto_dev_local.md) (local) →
+> [`tuto_azure_deploiement.md`](docs/tutorials/tuto_azure_deploiement.md) (infra + Key Vault) →
+> [`tuto_github_actions_release.md`](docs/tutorials/tuto_github_actions_release.md) (CI/CD).
 > Ci-dessous : le raccourci local minimal.
 
 ```bash
@@ -77,7 +77,7 @@ src/velmo/
   memory/           Mémoire court + long terme, isolation, droit à l'oubli
   guardrails/       Garde-fous de contenu entrée/sortie (pipeline I/O)
   mlops/            Évaluation, note globale, seuil bloquant, versioning, rapport
-docs/reco_expert.md Note de recommandations (stack + exigences)
+docs/reference/reco_expert.md Note de recommandations (stack + exigences)
 kb/docs/            Base de connaissances FAQ
 scripts/            seed.py (Postgres) + seed_kb.py (Chroma)
 alembic/            Migrations
