@@ -1,68 +1,62 @@
-# Tutoriel — CI/CD GitHub Actions et releases de Velmo 2.0
+# Partie 3 — CI/CD GitHub Actions (gate qualité, releases, nightly)
 
-> **Portée.** Ce tutoriel explique, pour quelqu'un qui découvre CI/CD et GitHub Actions,
-> **comment ça marche déjà dans ce repo** (`.github/workflows/*.yml`) et **comment finir de
-> configurer GitHub** pour que ça fonctionne comme prévu dans
-> `docs/job/conceptions/conception_chantier3_evaluation_mlops.md` (§Boucle qualité). Constat
-> fait le 2026-07-22 sur le repo `sofiane-git/velmo-v2` : **`main` n'est pas protégée** et
-> **aucun GitHub Environment n'existe** — donc l'approbation manuelle prévue avant prod n'est
-> pas encore active. Ce doc corrige ça.
+> **Place dans le parcours** : après **Partie 1** (`tuto_dev_local.md`) et **Partie 2**
+> (`tuto_azure_deploiement.md` — les ressources existent, les secrets sont dans **Key
+> Vault**). Ici : configurer GitHub pour que la CI protège `main`, que les releases passent
+> par le gate qualité + une approbation humaine, et que la nightly surveille la dérive des
+> modèles. **Les secrets GitHub se remplissent depuis Key Vault** (§5) — jamais retapés.
 >
-> **Deux chemins équivalents** pour la config GitHub : **CLI** (`gh`, scriptable) et
-> **portail** (`github.com/sofiane-git/velmo-v2/settings`). Les deux configurent exactement la
-> même chose.
-
----
+> Constat de départ (2026-07-22, repo `sofiane-git/velmo-v2`) : `main` non protégée, aucun
+> Environment — ce doc configure tout.
+>
+> **Format de chaque étape** : **But** → **Terminal** (`gh`/`az`) → **Vérifie** → **Portail**
+> (github.com / portal.azure.com).
 
 ## Prérequis
 
-Avant de suivre ce tutoriel, avoir sous la main :
-
-- **`gh` CLI** authentifié en **admin du repo** (`gh auth login`, scope `repo` + `admin:org`
-  si org) — pour la branch protection et les Environments (§2.1, §2.2).
-- **`az` CLI** authentifié (`az login`) avec un **accès admin au tenant Azure AD** — l'OIDC
-  (§2.3) crée une app registration + service principal + federated credential, impossible via
-  `gh`, et le role assignment exige un rôle Owner/User Access Administrator sur le groupe de
-  ressources.
-- Les 3 déploiements Azure déjà créés (voir `tuto_azure_deploiement.md`) : `Mistral-Large-3`,
-  `gpt-5-mini`, `claude-opus-4-5`.
-- Droits d'écriture sur les **Secrets/Variables Actions** du repo.
+| Quoi | Vérifie |
+|---|---|
+| `gh` CLI authentifié **admin du repo** | `gh auth status` |
+| `az` CLI authentifié, **admin du tenant Entra ID** (pour l'OIDC §4) | `az account show` |
+| Partie 2 terminée (3 déploiements + Key Vault rempli) | checklist de sortie Partie 2 |
+| Droits d'écriture Secrets/Variables Actions du repo | onglet Settings du repo visible |
 
 ---
 
 ## 0. Concepts de base (si CI/CD est nouveau pour toi)
 
-- **CI (Continuous Integration)** : à chaque changement de code, une machine (pas toi)
-  réinstalle le projet et fait tourner les tests. Si ça casse, tu le sais avant que ça arrive
-  sur `main`. Ici : `quality.yml`.
-- **CD (Continuous Delivery/Deployment)** : une fois le code validé, l'amener automatiquement
-  (ou avec un clic) jusqu'en prod. Ici : `release.yml`.
-- **Workflow** = un fichier YAML dans `.github/workflows/`. Chaque workflow a un déclencheur
-  (`on:`) et un ou plusieurs `jobs:` (suites d'étapes qui tournent sur une machine GitHub
-  jetable).
-- **Tag semver** (`v1.2.3`) = une étiquette posée sur un commit précis. Dans ce repo, poser un
-  tag `v*.*.*` et le pousser est **l'action qui déclenche une release** (`release.yml`).
-- **Environment GitHub** = une cible de déploiement (`production`, `staging`...) sur laquelle
-  tu peux poser des règles : "ce job ne démarre pas sans qu'un humain clique Approve".
-- **Branch protection** = des règles sur `main` : interdiction de push direct, obligation que
-  les checks CI soient verts avant de merger une PR.
+- **CI (Continuous Integration)** : à chaque changement, une machine (pas toi) réinstalle le
+  projet et fait tourner les vérifications. Ça casse ? Tu le sais **avant** `main`. Ici :
+  `quality.yml`.
+- **CD (Continuous Delivery)** : amener le code validé jusqu'en prod (automatiquement ou
+  avec un clic). Ici : `release.yml`.
+- **Workflow** : un YAML dans `.github/workflows/` — un déclencheur (`on:`) + des `jobs:`.
+- **Tag semver** (`v1.2.3`) : étiquette sur un commit. Ici, pousser un tag `v*.*.*` **est**
+  l'acte qui déclenche une release.
+- **Environment GitHub** : cible de déploiement avec règles (« ce job ne part pas sans
+  qu'un humain clique Approve »).
+- **Branch protection** : règles sur `main` (pas de push direct, checks verts obligatoires).
 
-## 1. Les 4 workflows existants — vue d'ensemble
+## 1. Les 4 workflows du repo — vue d'ensemble
 
 | Fichier | Déclencheur | Rôle | Bloquant ? |
 |---|---|---|---|
-| `quality.yml` | push sur `main`, ou toute PR | Installe le projet (`uv sync`), vérifie les contrats d'imports, lance `tests/acceptance/`, puis `velmo.mlops.score --min-score 0.8` | **Oui** — si un check échoue, la PR ne doit pas être mergeable (voir §3) |
-| `release.yml` | push d'un tag `v*.*.*` | Job `gate` : rejoue les 3 suites contre le tag. Job `approve-and-promote` : attend une approbation manuelle sur l'Environment `production`, puis crée une **GitHub Release** | **Oui** pour le gate ; approbation humaine ensuite |
-| `hotfix.yml` | push sur `hotfix/**` | Suite réduite (mémoire + garde-fous seulement), non bloquante pour le score global | Non (garde-fous restent bloquants, le score MLOps est informatif) |
-| `nightly.yml` | cron 3h UTC + déclenchable à la main | 2 déclencheurs indépendants : `check-model-drift` (relève la version des 3 déploiements Azure, rejoue seulement la/les suite(s) touchée(s) si ça a bougé) + `scheduled-eval` (3 suites, un lundi sur deux) | Non — informatif |
+| `quality.yml` | push `main`, toute PR | ruff + format + mypy strict + import-linter + acceptance + gate qualité (mode dégradé déterministe) | **Oui** (avec §2) |
+| `release.yml` | push tag `v*.*.*` | job `gate` : migrations Alembic + 3 suites **vrai modèle** contre le tag ; puis `approve-and-promote` : approbation humaine → GitHub Release | **Oui** + humain |
+| `hotfix.yml` | push `hotfix/**` | suite réduite (mémoire + garde-fous), score MLOps informatif | Non |
+| `nightly.yml` | cron 3h UTC + manuel | `check-model-drift` (OIDC : lit les versions des 3 déploiements Azure, rejoue les suites touchées) + `scheduled-eval` (3 suites, un lundi sur deux) | Non — signal |
 
-## 2. Configurer GitHub une fois (ce qui manque aujourd'hui)
+> Les jobs Postgres (`release` gate, `nightly` ×2) exécutent `alembic upgrade head` avant
+> toute évaluation (stamp-once des bases historiques) — Alembic est l'unique source du
+> schéma sur Postgres.
 
-### 2.1 Protéger `main`
+---
 
-Objectif : personne ne push direct sur `main`, toute PR doit avoir `quality` vert avant merge.
+## 2. Protéger `main`
 
-**Via `gh` CLI** :
+**But :** personne ne push direct ; toute PR exige `quality` vert avant merge.
+
+**Terminal :**
 
 ```bash
 gh api -X PUT repos/sofiane-git/velmo-v2/branches/main/protection \
@@ -80,38 +74,37 @@ gh api -X PUT repos/sofiane-git/velmo-v2/branches/main/protection \
 EOF
 ```
 
-`"contexts": ["quality"]` correspond au nom du job dans `quality.yml` (`jobs.quality`). Si
-GitHub affiche un nom différent dans l'onglet Actions (ex. `quality / quality`), reprends le
-nom exact affiché — il doit matcher pour que la règle s'applique.
+> `"contexts": ["quality"]` = le nom du job dans `quality.yml`. Si l'onglet Actions affiche
+> un autre libellé (ex. `quality / quality`), reprendre le nom exact affiché.
 
-**Via le portail** : `github.com/sofiane-git/velmo-v2/settings/branches` → **Add branch
-protection rule** → `Branch name pattern` = `main` → cocher **Require status checks to pass
-before merging** → chercher `quality` dans la liste (elle n'apparaît que si le workflow a déjà
-tourné au moins une fois) → **Create**.
-
-Vérifie :
+**Vérifie :**
 
 ```bash
-gh api repos/sofiane-git/velmo-v2/branches/main/protection --jq '.required_status_checks.contexts, .enforce_admins.enabled'
-# → doit afficher: ["quality"]  puis  true
+gh api repos/sofiane-git/velmo-v2/branches/main/protection \
+  --jq '.required_status_checks.contexts, .enforce_admins.enabled'
+# → ["quality"]  puis  true
 ```
 
-> Solo aujourd'hui donc pas de "Require pull request reviews" obligatoire (tu ne peux pas
-> t'auto-approuver une PR) — à activer dès qu'une 2e personne rejoint, cf. décision SPOF déjà
-> actée dans `release.yml`.
+**Portail :** `github.com/sofiane-git/velmo-v2/settings/branches` → **Add branch protection
+rule** → pattern `main` → cocher **Require status checks to pass before merging** → chercher
+`quality` (n'apparaît que si le workflow a déjà tourné une fois) → **Create**.
 
-### 2.2 Créer l'Environment `production` avec approbation manuelle
+> Solo : pas de « Require pull request reviews » (impossible de s'auto-approuver) — à activer
+> dès qu'une 2ᵉ personne rejoint (décision SPOF actée dans `release.yml`).
 
-Objectif : le job `approve-and-promote` de `release.yml` ne parte pas tout seul — il attend
-que tu cliques "Approve" dans l'onglet Actions.
+---
 
-**Via `gh` CLI** (en deux temps — créer l'environment, puis poser le required reviewer) :
+## 3. Environment `production` + approbation manuelle
+
+**But :** `approve-and-promote` (release) attend ton clic **Approve** au lieu de partir seul.
+
+**Terminal :**
 
 ```bash
-# 1. Crée l'environment (vide, sans règle) s'il n'existe pas déjà
+# 1. Créer l'environment
 gh api -X PUT repos/sofiane-git/velmo-v2/environments/production
 
-# 2. Ajoute-toi comme required reviewer (id récupéré via `gh api user --jq .id`)
+# 2. Te poser en required reviewer (ton id : gh api user --jq .id)
 gh api -X PUT repos/sofiane-git/velmo-v2/environments/production \
   --input - <<'EOF'
 {
@@ -125,46 +118,46 @@ gh api -X PUT repos/sofiane-git/velmo-v2/environments/production \
 }
 EOF
 
-# 3. Restreint le déploiement aux tags semver uniquement (pas n'importe quelle branche)
+# 3. Restreindre aux tags semver
 gh api -X POST repos/sofiane-git/velmo-v2/environments/production/deployment-branch-policies \
   -f name='v*.*.*' -f type='tag'
 ```
 
-**Via le portail** : `github.com/sofiane-git/velmo-v2/settings/environments` → **New
-environment** → nom `production` → **Configure environment** → cocher **Required reviewers**
-→ ajouter `sofiane-git` → section **Deployment branches and tags** → `Selected branches and
-tags` → **Add deployment tag rule** → pattern `v*.*.*` → **Save protection rules**.
-
-Une fois fait, vérifie :
+**Vérifie :**
 
 ```bash
 gh api repos/sofiane-git/velmo-v2/environments --jq '.environments[].name'
-# → doit afficher: production
+# → production
 ```
 
-### 2.3 OIDC Azure AD (pour `check-model-drift` de `nightly.yml`)
+**Portail :** `settings/environments` → **New environment** → `production` → **Configure** →
+cocher **Required reviewers** → ajouter `sofiane-git` → **Deployment branches and tags** →
+`Selected branches and tags` → **Add deployment tag rule** → `v*.*.*` → **Save protection
+rules**.
 
-Objectif : le job `check-model-drift` lit la version des 3 déploiements Azure
-(`Mistral-Large-3`, `gpt-5-mini`, `claude-opus-4-5`) sans stocker de secret client long-vécu —
-`azure/login@v2` échange un token GitHub OIDC contre un token Azure via une **federated
-credential**. Nécessite l'accès admin sur le tenant Azure AD (pas faisable via `gh`, seulement
-via `az`).
+---
+
+## 4. OIDC Azure (nightly lit les versions de modèles sans clé stockée)
+
+**But :** `check-model-drift` s'authentifie à Azure en échangeant un token GitHub OIDC contre
+un token Azure (federated credential) — **aucune clé Azure long-vécue** dans GitHub. Exige
+l'admin du tenant (pas faisable via `gh`).
+
+**Terminal :**
 
 ```bash
-# 1. App registration dédiée (identité utilisée par le workflow, pas un utilisateur)
+# 1. App registration (l'identité du workflow)
 az ad app create --display-name "velmo-v2-github-actions" --query appId -o tsv
-# → note l'APP_ID retourné
+# → note APP_ID
 
-# 2. Service principal pour cette app
+# 2. Service principal
 az ad sp create --id <APP_ID>
 
-# 3. Droit lecture seule sur le groupe de ressources des 3 comptes Cognitive Services
+# 3. Lecture seule sur le groupe de ressources des 3 comptes (Partie 2)
 az role assignment create --assignee <APP_ID> --role Reader \
-  --scope /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/sconanRG
+  --scope /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RG>
 
-# 4. Federated credential : fait confiance aux tokens OIDC émis par GitHub Actions
-#    pour ce repo, sur la branche main (déclencheur schedule/workflow_dispatch de
-#    nightly.yml tourne dans le contexte de la branche par défaut)
+# 4. Federated credential : confiance aux tokens OIDC de CE repo, branche main
 az ad app federated-credential create --id <APP_ID> --parameters '{
   "name": "velmo-v2-nightly-main",
   "issuer": "https://token.actions.githubusercontent.com",
@@ -173,79 +166,110 @@ az ad app federated-credential create --id <APP_ID> --parameters '{
 }'
 ```
 
-Vérifie les 4 étapes :
+**Vérifie :**
 
 ```bash
-az ad sp show --id <APP_ID> --query appId -o tsv
-# → doit renvoyer <APP_ID> (le service principal existe)
-
-az role assignment list --assignee <APP_ID> -o table
-# → doit lister Reader sur .../resourceGroups/sconanRG
-
+az ad sp show --id <APP_ID> --query appId -o tsv          # → <APP_ID>
+az role assignment list --assignee <APP_ID> -o table       # → Reader sur le RG
 az ad app federated-credential list --id <APP_ID> --query '[].name' -o tsv
-# → doit afficher: velmo-v2-nightly-main
+# → velmo-v2-nightly-main
 ```
 
-Puis pose les 3 secrets (le seul chemin, pas d'équivalent portail plus rapide que
-`Settings → Secrets and variables → Actions → New repository secret`) :
+**Portail :** `portal.azure.com` → « Microsoft Entra ID » → **App registrations** → **+ New
+registration** → `velmo-v2-github-actions` → **Register**. Page de l'app → **Certificates &
+secrets** → onglet **Federated credentials** → **+ Add credential** → scénario **GitHub
+Actions deploying Azure resources** → Organization/Repository, `Entity type` = **Branch**,
+branche `main` → **Add**. Noter sur **Overview** : `Application (client) ID` et `Directory
+(tenant) ID`. Enfin, droits : RG → **Access control (IAM)** → **+ Add role assignment** →
+**Reader** → sélectionner `velmo-v2-github-actions` → **Review + assign**.
+
+---
+
+## 5. Secrets & variables — remplis DEPUIS Key Vault (zéro copier-coller)
+
+**But :** poser tout ce que les workflows consomment. **Source unique = Key Vault (Partie 2
+§D)** — les valeurs ne transitent jamais par un presse-papier.
+
+**Terminal :**
 
 ```bash
-gh secret set AZURE_CLIENT_ID --body "<APP_ID>"
-gh secret set AZURE_TENANT_ID --body "$(az account show --query tenantId -o tsv)"
+KV="kv-<suffix>"   # ton vault Partie 2
+
+# Identité OIDC (§4)
+gh secret set AZURE_CLIENT_ID       --body "<APP_ID>"
+gh secret set AZURE_TENANT_ID       --body "$(az account show --query tenantId -o tsv)"
 gh secret set AZURE_SUBSCRIPTION_ID --body "$(az account show --query id -o tsv)"
+
+# Clés modèles + DB — tirées du coffre
+for pair in \
+  "AZURE_AI_INFERENCE_ENDPOINT azure-ai-inference-endpoint" \
+  "AZURE_AI_INFERENCE_API_KEY azure-ai-inference-api-key" \
+  "AZURE_OPENAI_GUARD_ENDPOINT azure-openai-guard-endpoint" \
+  "AZURE_OPENAI_GUARD_API_KEY azure-openai-guard-api-key" \
+  "ANTHROPIC_FOUNDRY_ENDPOINT anthropic-foundry-endpoint" \
+  "ANTHROPIC_API_KEY anthropic-api-key" \
+  "DB_URL db-url"; do
+  set -- $pair
+  gh secret set "$1" --body "$(az keyvault secret show --vault-name "$KV" --name "$2" --query value -o tsv)"
+done
+
+# Variables (non secrètes) : les NOMS de tes ressources Azure (Partie 2)
+gh variable set AZURE_RESOURCE_GROUP        --body "<RG>"
+gh variable set AZURE_AI_INFERENCE_ACCOUNT  --body "<aoai-…-chat>"
+gh variable set AZURE_OPENAI_GUARD_ACCOUNT  --body "<aoai-…-guard>"
+gh variable set AZURE_FOUNDRY_ACCOUNT       --body "<aif-…-async>"
 ```
 
-Vérifie :
+**Vérifie :**
 
 ```bash
-gh secret list
-# → doit afficher AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+gh secret list     # → AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+                   #   AZURE_AI_INFERENCE_*, AZURE_OPENAI_GUARD_*, ANTHROPIC_*, DB_URL
+gh variable list   # → AZURE_RESOURCE_GROUP + les 3 comptes
 ```
 
-### 2.4 Secrets et variables — récapitulatif
+**Portail :** `settings/secrets/actions` → **New repository secret** (et onglet
+**Variables**) — plus lent que la CLI, mêmes champs.
 
-| Nom | Type | Valeur | Posé ? |
-|---|---|---|---|
-| `AZURE_CLIENT_ID` | Secret | App ID (§2.3) | À faire — nécessite accès tenant |
-| `AZURE_TENANT_ID` | Secret | Tenant ID (§2.3) | À faire |
-| `AZURE_SUBSCRIPTION_ID` | Secret | Subscription ID (§2.3) | À faire |
-| `AZURE_RESOURCE_GROUP` | Variable | `sconanRG` | ✅ posé |
-| `AZURE_AI_INFERENCE_ACCOUNT` | Variable | `sconanext-8976-resource` | ✅ posé |
-| `AZURE_OPENAI_GUARD_ACCOUNT` | Variable | `sconanext-8458-resource` | ✅ posé |
-| `AZURE_FOUNDRY_ACCOUNT` | Variable | `sconanext-7665-resource` | ✅ posé |
+> `${{ github.token }}` reste le seul credential de `quality.yml`/`hotfix.yml` — ils
+> n'appellent pas Azure. Sans les secrets ci-dessus, `release.yml`/`nightly.yml` **refusent
+> de tourner** (garde anti-silence : plutôt échouer que d'évaluer le stub).
 
-`${{ github.token }}` reste le seul credential utilisé par `quality.yml`/`release.yml`/
-`hotfix.yml` — ces 3 workflows n'appellent pas Azure directement.
+---
 
-## 3. Le cycle quotidien (CI)
+## 6. Le cycle quotidien (CI)
 
-1. Tu bosses sur une branche (`feature/...`), tu ouvres une PR vers `main`.
-2. `quality.yml` se déclenche automatiquement (`on: pull_request`) — visible dans l'onglet
-   **Actions** du repo, ou directement sous la PR ("Some checks haven't completed yet").
-3. Si `quality` est rouge → clique sur le run → l'étape en échec affiche le log complet (ex.
-   pytest qui liste le test cassé). Corrige, repush sur la même branche, ça relance seul.
-4. Une fois vert et §2.1 configuré, GitHub bloque le bouton "Merge" jusqu'à ce que ce soit le
-   cas — tu n'as plus besoin d'y penser.
+**But :** comprendre ce qui se passe à chaque PR — rien à configurer.
 
-Commande utile pour suivre depuis le terminal sans ouvrir le navigateur :
+1. Branche `feature/...` → PR vers `main`.
+2. `quality.yml` part seul (visible sous la PR et dans **Actions**).
+3. Rouge ? → clic sur le run → le step en échec affiche le log → corrige → repush (relance
+   automatique).
+4. Vert + §2 en place → le bouton **Merge** se débloque seul.
+
+**Terminal (suivi sans navigateur) :**
 
 ```bash
 gh run list --workflow=quality.yml --limit 5
-gh run watch                      # suit le run en cours en direct
-gh run view --log-failed          # affiche uniquement les logs des étapes en échec
+gh run watch                      # suit le run en cours
+gh run view --log-failed          # logs des seuls steps en échec
 ```
 
-## 4. Faire une release
+**Équivalent local avant push :** `make ci` (même chaîne, même ordre — Partie 1 §6).
 
-### 4.1 Ce que tu n'as **pas** besoin de faire
+---
 
-Pas besoin de monter la version dans `pyproject.toml` (`version = "2.0.0"`) — elle n'est pas
-utilisée comme identité de version pour le gate. `src/velmo/mlops/versioning.py` calcule
-l'identité réelle (hash du prompt, de la config mémoire, des seuils garde-fous +
-`git describe --tags --exact-match` sur le tag qui déclenche `release.yml`). Le champ
-`pyproject.toml` reste un artefact PyPI classique, décorrélé.
+## 7. Faire une release
 
-### 4.2 Poser et pousser le tag
+### 7.1 Ce que tu n'as PAS à faire
+
+Pas de bump de `version` dans `pyproject.toml` : l'identité de version est calculée
+(`mlops/versioning.py` — hash du prompt, des configs mémoire/garde-fous/gate +
+`git describe --tags`). Le champ pyproject est un artefact PyPI décorrélé.
+
+### 7.2 Poser et pousser le tag
+
+**Terminal :**
 
 ```bash
 git checkout main && git pull
@@ -253,55 +277,55 @@ git tag -a v2.1.0 -m "Release 2.1.0"
 git push origin v2.1.0
 ```
 
-Vérifie :
+**Vérifie :**
 
 ```bash
 git ls-remote --tags origin v2.1.0
-# → doit afficher le hash du commit taggé (le tag est bien sur le remote)
+# → le hash du commit taggé
 ```
 
-Ça déclenche `release.yml` (`on: push: tags: v*.*.*`) immédiatement.
+### 7.3 Suivre le gate puis approuver
 
-### 4.3 Suivre le gate puis approuver
+**Terminal :**
 
 ```bash
 gh run list --workflow=release.yml --limit 1
 gh run watch          # suit le job `gate`
 ```
 
-Si `gate` échoue (score < 0.8 sur le tag) → **la release s'arrête là**, `approve-and-promote`
-ne se lance jamais. Corrige, supprime le tag (`git push --delete origin v2.1.0 && git tag -d
-v2.1.0`), retag une fois corrigé.
+- `gate` **échoue** (score < 0.80 sur le tag) → la release s'arrête là. Corriger, supprimer
+  le tag (`git push --delete origin v2.1.0 && git tag -d v2.1.0`), retagger.
+- `gate` **passe** → `approve-and-promote` affiche **Waiting**.
 
-Si `gate` passe → `approve-and-promote` apparaît **"Waiting"** :
+**Approuver — portail (le plus simple) :** page du run → bandeau **Review pending
+deployments** → cocher `production` → **Approve and deploy**.
 
-- **Portail** : `github.com/sofiane-git/velmo-v2/actions/runs/<id>` → bandeau jaune "Review
-  pending deployments" → **Review deployments** → cocher `production` → **Approve and
-  deploy**.
-- **CLI** (le portail reste plus simple pour ce geste ponctuel) :
+**Approuver — terminal :**
 
-  ```bash
-  RUN_ID=$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
-  # Récupère l'id numérique de l'environment en attente :
-  ENV_ID=$(gh api repos/sofiane-git/velmo-v2/actions/runs/$RUN_ID/pending_deployments \
-    --jq '.[0].environments[0].id')
-  # -F (pas -f) : environment_ids attend un tableau d'entiers, -f enverrait une string → 422.
-  gh api -X POST repos/sofiane-git/velmo-v2/actions/runs/$RUN_ID/pending_deployments \
-    -F "environment_ids[]=$ENV_ID" -f state=approved -f comment=ok
-  ```
+```bash
+RUN_ID=$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+ENV_ID=$(gh api repos/sofiane-git/velmo-v2/actions/runs/$RUN_ID/pending_deployments \
+  --jq '.[0].environments[0].id')
+# -F (pas -f) : environment_ids attend un tableau d'entiers — -f enverrait une string → 422.
+gh api -X POST repos/sofiane-git/velmo-v2/actions/runs/$RUN_ID/pending_deployments \
+  -F "environment_ids[]=$ENV_ID" -f state=approved -f comment=ok
+```
 
-### 4.4 Ce qui se passe après l'approbation — et ce qui ne se passe pas encore
+### 7.4 Après l'approbation — et ce qui n'existe pas (encore)
 
-`approve-and-promote` crée une **GitHub Release** (visible sous l'onglet **Releases**) avec le
-tag et une note. **Il n'y a pas de commande de déploiement applicatif** (pas de redémarrage de
-service, pas de promotion d'image conteneur) — l'hébergement de l'app n'est pas encore choisi
-(le commentaire dans `release.yml` le dit explicitement). Tant que ce choix n'est pas fait,
-"faire une release" = valider qualité + créer la trace GitHub Release, pas mettre en ligne. Ne
-pas inventer cette étape avant que l'hébergement soit tranché.
+`approve-and-promote` crée une **GitHub Release** (onglet Releases). **Aucun déploiement
+applicatif** (pas de redémarrage, pas de promotion d'image) : l'hébergement n'est pas
+tranché — décision documentée. Une release = qualité validée + trace, pas une mise en ligne.
+Ne pas inventer cette étape avant de trancher l'hébergement (le jour venu : voir Partie 2 §D3
+pour l'accès Key Vault de l'hôte).
 
-## 5. Hotfix — quand l'utiliser
+---
 
-Urgence en prod, tu ne veux pas attendre le cycle normal PR→main→tag :
+## 8. Hotfix
+
+**But :** urgence sans le cycle complet.
+
+**Terminal :**
 
 ```bash
 git checkout -b hotfix/nom-du-bug main
@@ -309,45 +333,75 @@ git checkout -b hotfix/nom-du-bug main
 git push origin hotfix/nom-du-bug
 ```
 
-Vérifie :
+**Vérifie :**
 
 ```bash
 gh run list --workflow=hotfix.yml --limit 1
-# → doit afficher un run "in_progress" ou "completed" sur ta branche hotfix/...
+# → un run sur ta branche hotfix/...
 ```
 
-`hotfix.yml` se déclenche sur `hotfix/**`, ne fait tourner que mémoire + garde-fous
-(bloquant), le score MLOps tourne en informatif (`|| true`, jamais rouge le run). Une fois
-mergé dans `main`, retague normalement (§4) pour repasser par le cycle complet.
+Suite réduite (mémoire + garde-fous bloquants, score informatif). Une fois mergé dans
+`main` : retagger normalement (§7).
 
-## 6. Nightly — rien à faire (config Azure §2.3 une fois exceptée)
+---
 
-Tourne seul chaque nuit à 3h UTC, 2 jobs indépendants :
+## 9. Nightly — rien à faire au quotidien
 
-- **`check-model-drift`** : se connecte à Azure en OIDC (`azure/login@v2`, pas de secret client
-  stocké), relève `model.version` sur les 3 déploiements (`Mistral-Large-3`, `gpt-5-mini`,
-  `claude-opus-4-5`), compare à `.github/state/model-versions.json`. Si un provider a changé de
-  version sous nos pieds (aucun diff de code ne le révèle), le job suivant (`drift-check-eval`)
-  rejoue uniquement la/les suite(s) concernée(s) (`quality,memory` pour Mistral/Claude,
-  `guardrails` pour gpt-5-mini) via `python -m velmo.mlops.drift_check` — pas le gate complet,
-  juste un rapport (voir `src/velmo/mlops/drift_check.py`).
-- **`scheduled-eval`** : rejoue les 3 suites en entier un lundi sur deux (parité de semaine ISO)
-  — plus de branche "1re nuit après un tag" : un tag est déjà passé par le gate complet de
-  `quality.yml` à la fusion, le rejouer la nuit même sur un code identique n'apporte rien.
+Chaque nuit 3h UTC, deux jobs indépendants :
 
-Config Azure requise une fois (pas encore faite au 2026-07-22) : voir §2.3.
+- **`check-model-drift`** : login OIDC (§4) → lit `model.version` des 3 déploiements
+  (`Mistral-Large-3`, `gpt-5-mini`, `claude-opus-4-5`) → compare à
+  `.github/state/model-versions.json` → si un provider a changé un modèle sous tes pieds,
+  rejoue **la/les suite(s) concernée(s)** (`quality,memory` pour Mistral/Claude,
+  `guardrails` pour gpt-5-mini) via `velmo.mlops.drift_check` — exit 1 sous le plancher.
+- **`scheduled-eval`** : les 3 suites complètes, un lundi sur deux (parité de semaine ISO).
 
-Déclenchable à la main si besoin :
+**Terminal (déclenchement manuel / suivi) :**
 
 ```bash
 gh workflow run nightly.yml
+gh run list --workflow=nightly.yml --limit 3
 ```
 
-## 7. Limites connues (ne pas les découvrir en prod)
+---
 
-- **Un seul reviewer possible** sur `production` (toi) — SPOF assumé en solo, déjà documenté
-  dans `conception_chantier3_evaluation_mlops.md`. À étendre dès qu'une 2e personne rejoint.
-- **Pas de déploiement applicatif réel** — voir §4.4.
-- **`enforce_admins: true`** dans §2.1 veut dire que même toi (admin du repo) ne peux pas
-  bypasser la protection de `main` par accident. Si un jour tu as besoin d'un push direct
-  d'urgence, il faudra désactiver temporairement la règle, pas la contourner avec `--force`.
+## 10. Limites connues (à ne pas découvrir en prod)
+
+- **Un seul reviewer** sur `production` (toi) — SPOF assumé en solo, documenté ; à étendre
+  dès une 2ᵉ personne.
+- **Pas de déploiement applicatif** — §7.4.
+- **`enforce_admins: true`** (§2) : même toi ne bypasses pas `main`. Besoin exceptionnel de
+  push direct → désactiver temporairement la règle, jamais `--force`.
+
+---
+
+# Récapitulatifs
+
+## Secrets & variables GitHub — la table complète
+
+| Nom | Type | Origine | Consommé par |
+|---|---|---|---|
+| `AZURE_CLIENT_ID` | Secret | App ID (§4) | `nightly.yml` (OIDC) |
+| `AZURE_TENANT_ID` | Secret | `az account show` (§4) | `nightly.yml` (OIDC) |
+| `AZURE_SUBSCRIPTION_ID` | Secret | `az account show` (§4) | `nightly.yml` (OIDC) |
+| `AZURE_AI_INFERENCE_ENDPOINT` / `_API_KEY` | Secret | **Key Vault** (§5) | `release.yml`, `nightly.yml` |
+| `AZURE_OPENAI_GUARD_ENDPOINT` / `_API_KEY` | Secret | **Key Vault** | `release.yml`, `nightly.yml` |
+| `ANTHROPIC_FOUNDRY_ENDPOINT` / `ANTHROPIC_API_KEY` | Secret | **Key Vault** | `release.yml`, `nightly.yml` |
+| `DB_URL` | Secret | **Key Vault** (`db-url`) | `release.yml`, `nightly.yml` (baseline + migrations) |
+| `AZURE_RESOURCE_GROUP` | Variable | nom du RG (Partie 2) | `nightly.yml` |
+| `AZURE_AI_INFERENCE_ACCOUNT` | Variable | nom ressource B1 | `nightly.yml` |
+| `AZURE_OPENAI_GUARD_ACCOUNT` | Variable | nom ressource B2 | `nightly.yml` |
+| `AZURE_FOUNDRY_ACCOUNT` | Variable | nom ressource B3 | `nightly.yml` |
+
+## Checklist de sortie de la Partie 3
+
+- [ ] §2 — `main` protégée (`["quality"]`, `enforce_admins: true`)
+- [ ] §3 — Environment `production` + required reviewer + tag rule `v*.*.*`
+- [ ] §4 — app registration + SP + Reader + federated credential (`velmo-v2-nightly-main`)
+- [ ] §5 — `gh secret list` / `gh variable list` complets (table ci-dessus)
+- [ ] §6 — une PR de test : `quality` apparaît et bloque le merge tant que rouge
+- [ ] §7 — un tag de test : `gate` tourne (vrai modèle), `approve-and-promote` attend ton clic
+- [ ] §9 — `gh workflow run nightly.yml` : login OIDC OK, versions relevées
+
+**Fin du parcours** — dev local ✅ (Partie 1), infra + coffre ✅ (Partie 2), CI/CD ✅
+(Partie 3). L'app est gouvernée du commit à la release.

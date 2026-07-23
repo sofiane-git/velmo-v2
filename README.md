@@ -29,6 +29,12 @@ uv sync --extra vector --extra llm        # Chroma + Azure AI Inference
 
 ## Démarrage
 
+> **Parcours guidé complet (dev → prod)** en 3 parties dans `docs/job/` :
+> [`tuto_dev_local.md`](docs/job/tuto_dev_local.md) (local) →
+> [`tuto_azure_deploiement.md`](docs/job/tuto_azure_deploiement.md) (infra + Key Vault) →
+> [`tuto_github_actions_release.md`](docs/job/tuto_github_actions_release.md) (CI/CD).
+> Ci-dessous : le raccourci local minimal.
+
 ```bash
 cp .env.example .env   # renseigner les clés Azure/Ollama (ou laisser vide : repli hors-ligne en dev)
 make up           # docker compose : app + postgres + chroma + ollama
