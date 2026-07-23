@@ -194,7 +194,7 @@ d'aucun service externe qui pourrait être indisponible.
 
 **Où c'est dans le code** : `src/velmo/mlops/`. Détail complet des seuils, des formules de
 score et des choix d'architecture dans le
-[document de conception](conceptions/conception_chantier3_evaluation_mlops.md).
+[document de conception](../reference/conceptions/conception_chantier3_evaluation_mlops.md).
 
 ---
 
@@ -235,8 +235,8 @@ qu'avant.
 | Voir le dernier rapport qualité | `mlops/report.md` (généré, pas dans git) |
 | Voir ce qui déclenche quoi en CI | `.github/workflows/*.yml` |
 | Comprendre les cas de test rejoués | `eval/*.jsonl` |
-| Voir l'architecture cible détaillée (référence) | `docs/job/conceptions/conception_chantierN_*.md` |
-| Voir l'état actuel du code (as-built) | `docs/job/presentation_chantierN_*.md` |
+| Voir l'architecture cible détaillée (référence) | `docs/reference/conceptions/conception_chantierN_*.md` |
+| Voir l'état actuel du code (as-built) | `docs/explanation/presentation_chantierN_*.md` |
 
 ---
 

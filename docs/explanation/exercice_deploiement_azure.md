@@ -1,9 +1,9 @@
 # Exercice — Héberger Velmo 2.0 sur Azure (hébergement, secrets, schéma cible)
 
 > Réponse aux 3 objectifs, appuyée sur l'architecture réelle de Velmo 2.0. Le *pourquoi*
-> détaillé vit dans `conceptions/conception_chantier3_evaluation_mlops.md` §Cible de
-> déploiement ; le *comment* (commandes `az`) dans `tuto_azure_deploiement.md` §C/§D/§F ; le
-> schéma canonique dans `schemas/05-deploiement-azure.md`.
+> détaillé vit dans `docs/reference/conceptions/conception_chantier3_evaluation_mlops.md` §Cible de
+> déploiement ; le *comment* (commandes `az`) dans `docs/tutorials/tuto_azure_deploiement.md` §C/§D/§F ; le
+> schéma canonique dans `docs/reference/schemas/05-deploiement-azure.md`.
 
 ---
 
@@ -105,7 +105,7 @@ Seuils garde-fous & qualité (`MEMORY_CONFIDENCE_THRESHOLD`, `MEMORY_TOKEN_BUDGE
 
 ## 3. Schéma de déploiement cible
 
-Schéma canonique : [`schemas/05-deploiement-azure.md`](schemas/05-deploiement-azure.md).
+Schéma canonique : [`docs/reference/schemas/05-deploiement-azure.md`](../reference/schemas/05-deploiement-azure.md).
 Reproduit ci-dessous — la chaîne
 **garde-fou entrée → mémoire lecture → Azure OpenAI → garde-fou sortie → mémoire écriture** est
 préservée à l'intérieur de l'hôte.

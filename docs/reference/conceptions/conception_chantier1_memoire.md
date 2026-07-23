@@ -508,7 +508,7 @@ légale explicite**, pas seulement une justification technique.
   (marketing, profilage commercial) — **aucun tel usage ici**.
 
 Le registre consolidé de ces traitements (finalités, durées, sous-traitants,
-droits) vit dans [`docs/rgpd/registre_traitements.md`](../../rgpd/registre_traitements.md)
+droits) vit dans [`docs/reference/registre_traitements.md`](../registre_traitements.md)
 (art. 30). Droits exposés : accès (R6, `memory_audit`), effacement (R5,
 `forget_all`) ; la **portabilité** (art. 20, export) reste un **gap connu** à
 implémenter côté API mémoire.

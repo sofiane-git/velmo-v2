@@ -3,7 +3,7 @@
 Projet pédagogique (pas de vraies conversations client en prod) → Langfuse Cloud plutôt que
 self-host, pour un setup en quelques minutes. Self-host resterait la bonne pratique si ce
 projet traitait un jour de vraies données client (voir
-`docs/job/conceptions/conception_chantier3_evaluation_mlops.md` §Gouvernance RGPD).
+`docs/reference/conceptions/conception_chantier3_evaluation_mlops.md` §Gouvernance RGPD).
 
 ## Setup
 

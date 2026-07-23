@@ -7,7 +7,7 @@
 > depuis lui).
 >
 > Ce tutoriel instancie les décisions des 3 docs de conception
-> (`docs/job/conceptions/conception_chantier{1,2,3}_*.md`) — il donne le *comment*, pas le
+> (`docs/reference/conceptions/conception_chantier{1,2,3}_*.md`) — il donne le *comment*, pas le
 > *pourquoi*.
 >
 > **Format de chaque étape** : **But** → **Terminal** (`az`, scriptable, à préférer) →
@@ -822,7 +822,7 @@ notable = corriger `token_pricing`.
 ## G3. Langfuse Cloud (observabilité — hors Azure)
 
 Décision révisée : projet pédagogique → **Langfuse Cloud région EU** (pas de self-host, pas
-de ressource Azure). Procédure compte/projet/clés : `deploy/langfuse/README.md`. Les clés
+de ressource Azure). Procédure compte/projet/clés : `docs/how-to/langfuse-setup.md`. Les clés
 vont dans Key Vault (D2 : `langfuse-public-key`/`langfuse-secret-key`) et alimentent
 `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL`. Self-host (module Terraform
 `langfuse/langfuse-terraform-azure`, région UE) si un jour vraies données client.

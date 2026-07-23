@@ -394,7 +394,7 @@ jetable.
   applicative — pas un Postgres par utilisateur.
 
 Chroma ne porte plus que la KB FAQ (hors mémoire épisodique, migrée vers `pgvector`). Le schéma
-de déploiement cible complet est dans `docs/job/schemas/05-deploiement-azure.md`.
+de déploiement cible complet est dans `docs/reference/schemas/05-deploiement-azure.md`.
 
 ## Boucle qualité : trunk-based + tags + Environments
 

@@ -24,8 +24,8 @@ ce contrat, pas une configuration divergente.
 - **Store** : Azure Database for PostgreSQL Flexible Server (managé, PITR, `pgvector`).
 
 Pas de manifeste IaC dédié ici : les commandes `az` de bout en bout sont dans
-`docs/job/tuto_azure_deploiement.md` §C/§D/§F (source unique), le *pourquoi* dans
-`docs/job/conceptions/conception_chantier3_evaluation_mlops.md` §Cible de déploiement.
+`docs/tutorials/tuto_azure_deploiement.md` §C/§D/§F (source unique), le *pourquoi* dans
+`docs/reference/conceptions/conception_chantier3_evaluation_mlops.md` §Cible de déploiement.
 
 ## Services requis (backing services, 12-factor)
 
@@ -53,4 +53,4 @@ l'image sous `/app/alembic`).
 
 ## Observabilité
 
-Langfuse Cloud EU — voir [`langfuse/README.md`](langfuse/README.md).
+Langfuse Cloud EU — voir [`docs/how-to/langfuse-setup.md`](../docs/how-to/langfuse-setup.md).

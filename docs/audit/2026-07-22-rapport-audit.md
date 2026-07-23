@@ -75,7 +75,7 @@
 - **Reco :** ajouter `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src` à quality.yml.
 
 ### ✅ B7 (lot 6) · Tuto Azure : étape sur une ressource jamais créée — `D7-01`
-- **Fichier :** `docs/job/tuto_azure_deploiement.md:468`
+- **Fichier :** `docs/tutorials/tuto_azure_deploiement.md:468`
 - **Constat :** `az webapp identity assign --name "<nom-app>"` alors que le tuto ne crée jamais d'App Service/Container App (hébergement explicitement non tranché, cf. release.yml:38-43). Commande inexécutable dans le flux nominal.
 - **Fix :** doc · **Plugin :** oui — vérifier le graphe de dépendances des étapes d'un tuto (chaque commande opère sur une ressource créée en amont).
 - **Reco :** section conditionnelle « une fois l'hébergement choisi » ou renvoi au tuto release §4.4.
@@ -86,7 +86,7 @@
 
 ### Docs & cohérence (D1, D2)
 
-- ✅ **`D1-01`** (lot 6) (+`D2-03`) · `docs/job/schemas/04-outils.md:83` — Store vectoriel contradictoire : schémas actent **ChromaDB** (pgvector écarté), conceptions ch1 actent **pgvector** (ChromaDB écarté), avec conséquences opposées sur l'atomicité R5. **Fix :** doc. **Reco :** trancher (pgvector, plus récent et mieux argumenté : atomicité R5, store unique) et aligner schemas/04 (l.13, 83, 115, 118) + schemas/01 (l.21, 62, 64) ; si Chroma « imposé par le brief », documenter l'écart assumé.
+- ✅ **`D1-01`** (lot 6) (+`D2-03`) · `docs/reference/schemas/04-outils.md:83` — Store vectoriel contradictoire : schémas actent **ChromaDB** (pgvector écarté), conceptions ch1 actent **pgvector** (ChromaDB écarté), avec conséquences opposées sur l'atomicité R5. **Fix :** doc. **Reco :** trancher (pgvector, plus récent et mieux argumenté : atomicité R5, store unique) et aligner schemas/04 (l.13, 83, 115, 118) + schemas/01 (l.21, 62, 64) ; si Chroma « imposé par le brief », documenter l'écart assumé.
 - ✅ **`D2-02`** (lot 6) · `src/velmo/guardrails/judge.py:364-377` — Repli runtime « RuleBasedJudge si Azure indisponible » non branché : `ShadowingJudge.evaluate` propage l'exception sans basculer ; panne partielle du juge → G5/G6 non évalués. **Fix :** code. **Reco :** retourner le verdict du shadow quand le primary lève (loggé `method='fallback'`), ou appliquer la ligne fail-closed dès l'échec du juge seul.
 - ✅ **`D2-04`** *(corrigé : lot 7 — create_all guardé SQLite-only sur les 4 sites Postgres-capables ; couplé D7-17 : `alembic upgrade head` câblé dans release/nightly avec stamp-once des bases legacy ; complétude migrations↔modèles prouvée sur Postgres frais)* · `src/velmo/memory/db.py:202` — Doc : « jamais create_all » ; code : `Base.metadata.create_all` inconditionnel dans 5 modules, y compris sur Postgres (concurrent d'Alembic). **Fix :** code. **Reco :** garde explicite (create_all réservé SQLite offline/tests), Alembic seul sur Postgres.
 - ✅ **`D2-05`** (lot 6) · `conception_chantier3_evaluation_mlops.md:124-125` — Append-only « forcé côté base » (INSERT/SELECT only) sans aucune trace d'implémentation (`grep GRANT alembic` vide). **Fix :** infra. **Reco :** migration posant les GRANT/REVOKE, ou marquer non-implémenté.

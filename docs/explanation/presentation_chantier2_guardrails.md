@@ -5,7 +5,7 @@
 > ⚠️ **Statut : as-built (implémentation actuelle), pas la référence de conception.**
 > Ce document décrit le code **tel qu'il tourne aujourd'hui** (Prompt Shields + PII redaction
 > déjà branchés, repli fail-open sur timeout). La **référence d'architecture cible** est
-> [`conceptions/conception_chantier2_guardrails.md`](conceptions/conception_chantier2_guardrails.md)
+> [`docs/reference/conceptions/conception_chantier2_guardrails.md`](../reference/conceptions/conception_chantier2_guardrails.md)
 > (Prompt Shields + PII redaction en **feature-flag à activation mesurée**, **matrice de repli
 > par catégorie** fail-closed/fail-open, cross-check `user_id` explicite pour G4…). Le code sera
 > **réaligné sur la conception** ; ce support sera régénéré à ce moment-là. En cas de divergence,
