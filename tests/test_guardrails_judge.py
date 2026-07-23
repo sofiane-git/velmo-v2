@@ -451,3 +451,18 @@ def test_azure_judge_retries_without_logprobs_when_unsupported(monkeypatch):
     calls.clear()
     judge.evaluate("texte")  # mémorisé : plus aucun essai logprobs
     assert len(calls) == 1 and "logprobs" not in calls[0]
+
+
+def test_azure_judge_skips_logprobs_when_disabled(monkeypatch):
+    # AZURE_OPENAI_GUARD_LOGPROBS=false : aucun essai logprobs, donc ni
+    # aller-retour perdu ni warning au premier appel (déploiement connu pour
+    # refuser le paramètre).
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_ENDPOINT", "https://example.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_API_KEY", "fake-key")
+    monkeypatch.setenv("AZURE_OPENAI_GUARD_LOGPROBS", "false")
+    calls: list[dict] = []
+    _patch_azure_openai(monkeypatch, "{}", calls)
+
+    AzureJudge().evaluate("texte")
+
+    assert len(calls) == 1 and "logprobs" not in calls[0]

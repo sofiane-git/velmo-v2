@@ -273,12 +273,14 @@ class AzureJudge:
         from openai import BadRequestError, OpenAI  # import différé : dépendance optionnelle
 
         self._bad_request_error: type[Exception] = BadRequestError
+        settings = settings or get_settings()
         # None = inconnu (premier appel) ; certains déploiements (constaté en
         # réel sur gpt-5-mini) rejettent `logprobs` en 400 — mémorisé après le
         # premier échec pour ne pas payer un aller-retour raté à chaque message.
-        self._logprobs_supported: bool | None = None
-
-        settings = settings or get_settings()
+        # `AZURE_OPENAI_GUARD_LOGPROBS=false` court-circuite même le 1er essai.
+        self._logprobs_supported: bool | None = (
+            None if settings.azure_openai_guard_logprobs else False
+        )
         endpoint = require(settings.azure_openai_guard_endpoint, "AZURE_OPENAI_GUARD_ENDPOINT")
         api_key = require(settings.azure_openai_guard_api_key, "AZURE_OPENAI_GUARD_API_KEY")
 
