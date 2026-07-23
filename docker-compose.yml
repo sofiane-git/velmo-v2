@@ -73,7 +73,9 @@ services:
       start_period: 30s
 
   web:
-    build: ./web
+    build:
+      context: ./web
+      target: dev
     environment:
       NUXT_PUBLIC_API_BASE: http://localhost:8000
     ports:
