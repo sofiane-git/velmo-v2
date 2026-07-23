@@ -61,6 +61,6 @@ docs/superpowers/
 # Playwright
 .playwright-mcp/
 
-docs/reference/conceptions/agnostic/
+docs/
 
 .claude/skills/
