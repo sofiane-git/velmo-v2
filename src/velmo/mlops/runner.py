@@ -29,14 +29,13 @@ def _seeded_session(db_url: str | None = None) -> Session:
     from sqlalchemy import select
     from sqlalchemy.orm import sessionmaker
 
-    from velmo.db import Base, Order, make_engine
+    from velmo.db import Order, make_business_engine
     from velmo.sampledata import seed
 
-    engine = make_engine(db_url)
-    # SQLite seulement (repli hors-ligne/tests) — sur Postgres, le schéma vient
-    # d'Alembic (D2-04), jamais d'un create_all concurrent.
-    if engine.url.drivername.startswith("sqlite"):
-        Base.metadata.create_all(engine, checkfirst=True)
+    # `make_business_engine` (pas `make_engine`) : bascule sur SQLite si le
+    # Postgres ambiant est injoignable (gate CI en mode dégradé hors-ligne,
+    # `quality.yml` — aucun service Postgres dans ce job) au lieu d'échouer.
+    engine = make_business_engine(db_url)
     session = sessionmaker(bind=engine, expire_on_commit=False, future=True)()
     if session.execute(select(Order)).first() is None:
         seed(session)

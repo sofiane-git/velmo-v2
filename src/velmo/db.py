@@ -8,7 +8,9 @@ en production, SQLite en mémoire pour les tests.
 from __future__ import annotations
 
 import enum
+import warnings
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import (
@@ -33,7 +35,7 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
-from velmo.config import get_settings
+from velmo.config import get_settings, require_durable_store
 
 
 class Base(DeclarativeBase):
@@ -223,6 +225,39 @@ def _postgres_reachable(url: str, timeout_seconds: int = 1) -> bool:
 
 def session_factory(url: str | None = None) -> sessionmaker[Session]:
     return sessionmaker(bind=make_engine(url), expire_on_commit=False, future=True)
+
+
+def _default_sqlite_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "var" / "velmo_business.db"
+
+
+def make_business_engine(url: str | None = None) -> Engine:
+    """Comme `make_engine`, avec repli SQLite si Postgres est injoignable
+    (même convention que `memory/db.py::make_memory_engine` et
+    `guardrails/db.py::make_guardrails_engine`) — réservé aux appelants qui
+    doivent tolérer ce repli (ex. `mlops.runner._seeded_session`, gate CI en
+    mode dégradé hors-ligne). `make_engine` reste la primitive stricte (sans
+    repli) utilisée par Alembic (`alembic/env.py`) : une migration ne doit
+    jamais basculer silencieusement sur une base différente de sa cible."""
+    if url is None:
+        url = get_settings().db_url
+
+    if url.startswith("postgresql") and not _postgres_reachable(url):
+        require_durable_store("business_db", url)
+        warnings.warn(
+            f"Postgres injoignable ({url!r}) : repli sur SQLite ({_default_sqlite_path()}).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        path = _default_sqlite_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        engine = create_engine(f"sqlite:///{path}", future=True)
+    else:
+        engine = create_engine(url, future=True)
+
+    if engine.url.drivername.startswith("sqlite"):
+        Base.metadata.create_all(engine, checkfirst=True)
+    return engine
 
 
 def fresh_sqlite_session() -> Session:
