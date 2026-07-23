@@ -298,6 +298,10 @@ renseigné.
 ## 3. Azure Database for PostgreSQL Flexible Server — `pgvector` + PITR
 
 ```bash
+# Mot de passe admin généré aléatoirement, jamais écrit en clair : gardé en variable pour
+# être poussé dans Key Vault au §4 (openssl rand → ~32 caractères).
+PG_ADMIN_PWD=$(openssl rand -base64 24)
+
 az postgres flexible-server create \
   --name "psql-${SUFFIX}" \
   --resource-group "$RG" \
@@ -307,7 +311,7 @@ az postgres flexible-server create \
   --storage-size 64 \
   --version 16 \
   --admin-user "velmo_admin" \
-  --admin-password "<généré, stocké dans Key Vault — jamais en clair>" \
+  --admin-password "$PG_ADMIN_PWD" \
   --high-availability Disabled \
   --backup-retention 35 \
   --geo-redundant-backup Disabled
@@ -486,23 +490,31 @@ important, l'ancien modèle « Vault access policy » est déconseillé pour un 
 **Secrets** → **+ Generate/Import** → `Name` = `azure-openai-guard-key`, `Value` = coller la
 clé → **Create**. Répéter pour chaque secret.
 
-Accès applicatif via **identité managée** (pas de clé Key Vault stockée dans l'app elle-même) :
+Accès applicatif via **identité managée** (pas de clé Key Vault stockée dans l'app elle-même).
+
+> ⚠️ **Conditionnel — l'hébergement de l'app n'est pas encore tranché** (cf.
+> `tuto_github_actions_release.md` §4.4 : pas de déploiement applicatif décidé). Ce tutoriel ne
+> crée **aucun** App Service / Container App : les commandes ci-dessous s'appliquent **une fois
+> que tu as créé un hôte** avec une identité managée — remplace `$APP_PRINCIPAL_ID` par le
+> `principalId` de cette identité. Ne pas exécuter dans le flux nominal tant que l'hôte n'existe pas.
 
 ```bash
-az webapp identity assign --name "<nom-app>" --resource-group "$RG"
-az keyvault set-policy --name "kv-${SUFFIX}" \
-  --object-id "$(az webapp identity show -n <nom-app> -g $RG --query principalId -o tsv)" \
-  --secret-permissions get list
+APP_PRINCIPAL_ID="<principalId de l'identité managée de ton hôte, une fois créé>"
+KV_ID=$(az keyvault show --name "kv-${SUFFIX}" --query id -o tsv)
+
+# Vault en mode RBAC (--enable-rbac-authorization true, plus haut) → role assignment,
+# PAS `az keyvault set-policy` (les access policies sont incompatibles avec le mode RBAC).
+az role assignment create \
+  --assignee "$APP_PRINCIPAL_ID" \
+  --role "Key Vault Secrets User" \
+  --scope "$KV_ID"
 ```
 
 Vérifie :
 
 ```bash
-az webapp identity show --name "<nom-app>" --resource-group "$RG" --query principalId -o tsv
-# → doit renvoyer un GUID (identité managée activée)
-
-az keyvault show --name "kv-${SUFFIX}" --query "properties.accessPolicies[?objectId=='$(az webapp identity show -n <nom-app> -g $RG --query principalId -o tsv)']" -o table
-# → doit lister get/list sur secretPermissions
+az role assignment list --assignee "$APP_PRINCIPAL_ID" --scope "$KV_ID" -o table
+# → doit lister "Key Vault Secrets User" sur le Key Vault
 ```
 
 **Via le portail** : sur la ressource hébergeant l'application (App Service, Container Apps,
@@ -526,6 +538,9 @@ Déploiement auto-hébergé, cohérent avec le choix "gratuit". Une instance con
 suffit pour démarrer (bascule vers une VM dédiée seulement si la latence mesurée l'exige) :
 
 ```bash
+# Le pull du modèle est intégré à la commande de démarrage du conteneur : `az container exec`
+# ne prend pas d'arguments de commande de façon fiable (limitation ACI documentée), donc on ne
+# s'appuie pas dessus pour `ollama pull`.
 az container create \
   --resource-group "$RG" \
   --name "ollama-${SUFFIX}" \
@@ -534,11 +549,8 @@ az container create \
   --memory 8 \
   --ports 11434 \
   --restart-policy Always \
-  --location "$LOCATION"
-
-# Une fois le conteneur up, tirer le modèle :
-az container exec --resource-group "$RG" --name "ollama-${SUFFIX}" \
-  --exec-command "ollama pull llama-guard3:8b"
+  --location "$LOCATION" \
+  --command-line "/bin/sh -c 'ollama serve & sleep 5 && ollama pull llama-guard3:8b && wait'"
 ```
 
 Vérifie :
@@ -547,8 +559,9 @@ Vérifie :
 az container show --resource-group "$RG" --name "ollama-${SUFFIX}" --query instanceView.state -o tsv
 # → doit afficher: Running
 
-az container exec --resource-group "$RG" --name "ollama-${SUFFIX}" --exec-command "ollama list"
-# → doit lister llama-guard3:8b
+# Vérifier le pull via les logs (pas `az container exec`, cf. limitation ci-dessus) :
+az container logs --resource-group "$RG" --name "ollama-${SUFFIX}" | grep -iE "llama-guard3|success"
+# → la sortie doit montrer le pull de llama-guard3:8b terminé
 ```
 
 **Via le portail** : **Create a resource** → rechercher « Container Instances » → **Create**.
@@ -601,12 +614,23 @@ Décision Ch.2 (Q7) : deux canaux séparés (support G2, sécurité G7/récidive
 dédié tant que l'équipe est solo. Option gratuite et simple : **Azure Logic Apps** (tier
 gratuit, quota mensuel d'exécutions) déclenché par un webhook, envoyant un e-mail :
 
+**Via le portail (recommandé — la définition JSON complète n'est pas triviale à écrire à la
+main)** : `portal.azure.com` → **Create a resource** → « Logic App » → **Consumption** (tier à
+quota gratuit) → `Name` = `escalade-guardrails`, `$RG`, `$LOCATION` → **Create**. Puis **Logic
+app designer** → trigger **When a HTTP request is received** → action **Send an email (V2)**
+(connecteur Outlook/Gmail gratuit) → **Save**. L'URL de webhook générée est celle que le canal
+d'escalade appelle.
+
+Pour une définition **versionnée** (plutôt que dessinée à la main, non reproductible),
+l'exporter une fois puis la recréer depuis le fichier :
+
 ```bash
-az logic workflow create \
-  --resource-group "$RG" \
-  --name "escalade-guardrails" \
-  --location "$LOCATION" \
-  --definition '{...}'   # définition du workflow : trigger HTTP -> action "Send an email" (Outlook/Gmail connector gratuit)
+# Export (après l'avoir créée au portail) :
+az logic workflow show --resource-group "$RG" --name "escalade-guardrails" \
+  --query definition > deploy/logic-app/escalade.json
+# Recréation reproductible depuis le fichier versionné :
+az logic workflow create --resource-group "$RG" --name "escalade-guardrails" \
+  --location "$LOCATION" --definition @deploy/logic-app/escalade.json
 ```
 
 Vérifie :
@@ -783,6 +807,31 @@ restent **optionnelles par conception** — absence des deux variables d'un coup
 gracieux (`pii_redaction.py`/`prompt_shields.py` en no-op), y compris en production.
 `validate_startup()` (`src/velmo/config.py`) échoue seulement sur un couple à moitié
 renseigné (typo, oubli d'une des deux variables) — pas sur l'absence complète.
+
+---
+
+## Vérification finale — smoke test bout-en-bout
+
+Une fois toutes les ressources créées et les secrets dans Key Vault, valider la chaîne
+complète **app → LLM → DB → garde-fous** avant de considérer le déploiement prêt :
+
+```bash
+# 1. Renseigner .env depuis Key Vault (adapter les noms de secrets créés au §4) :
+export AZURE_AI_INFERENCE_ENDPOINT=$(az keyvault secret show --vault-name "kv-${SUFFIX}" --name azure-ai-inference-endpoint --query value -o tsv)
+export AZURE_AI_INFERENCE_API_KEY=$(az keyvault secret show --vault-name "kv-${SUFFIX}" --name azure-ai-inference-api-key --query value -o tsv)
+# ... idem pour les autres couples endpoint/clé (guard, foundry, language, content-safety).
+
+# 2. Config cohérente — échoue si un couple endpoint/clé est à moitié renseigné :
+ENVIRONMENT=production uv run python -c "from velmo.config import validate_startup; validate_startup(); print('config OK')"
+
+# 3. Un échange agent réel (LLM principal + mémoire + garde-fous entrée/sortie) :
+uv run python -m velmo.cli --user smoke-test <<< "Quel est le statut de ma commande O-2024-0101 ?"
+```
+
+Attendu : l'étape 2 affiche `config OK` (aucune variable Azure manquante ni à moitié posée) ;
+l'étape 3 renvoie une **vraie réponse de l'agent** (pas le repli `EchoLLM`, pas un refus
+garde-fou sur une question légitime). Un échec ici = une variable ou une ressource mal câblée,
+à corriger **avant** la mise en ligne.
 
 ---
 
