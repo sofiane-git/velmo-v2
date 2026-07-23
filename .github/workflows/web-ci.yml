@@ -23,6 +23,12 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          # `defaults.run.working-directory: web` ne s'applique qu'aux steps
+          # `run:`, pas à cette action — sans ce chemin explicite, elle
+          # cherche `packageManager` dans un package.json à la racine du
+          # repo (inexistant), pas dans web/package.json.
+          package_json_file: web/package.json
 
       - name: Install node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
