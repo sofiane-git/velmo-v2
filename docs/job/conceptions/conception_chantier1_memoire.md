@@ -490,6 +490,29 @@ défait l'intérêt même d'avoir résumé :
   `PostgresSaver.delete_thread` (même chemin idempotent que R5). À inscrire comme un **2ᵉ usage
   distinct** au registre de traitement RGPD, à côté de celui des épisodes.
 
+### Base légale (art. 6) & information de la personne
+
+La mémoire persistante traite des données personnelles : elle a donc une **base
+légale explicite**, pas seulement une justification technique.
+
+- **T1/T2/T3 (mémoire fonctionnelle : faits, épisodes, fil)** — base **art.
+  6(1)(b), exécution du contrat de support** : mémoriser les préférences et
+  l'historique d'un client fait partie du service de support de commande
+  attendu. Pas de consentement séparé requis pour cette finalité (elle est le
+  cœur de la prestation), mais l'utilisateur en est **informé** (mention « je
+  garde le contexte de vos échanges » dans la présentation de l'agent / CGU).
+- **T4 (journal garde-fous)** — base **art. 6(1)(f), intérêt légitime** de
+  sécurité : détecter et tracer les abus. C'est ce qui justifie qu'il **survive**
+  à l'effacement R5 (à anonymiser, pas à conserver identifiant en clair).
+- **Consentement (art. 6(1)(a))** : réservé à tout usage **hors support**
+  (marketing, profilage commercial) — **aucun tel usage ici**.
+
+Le registre consolidé de ces traitements (finalités, durées, sous-traitants,
+droits) vit dans [`docs/rgpd/registre_traitements.md`](../../rgpd/registre_traitements.md)
+(art. 30). Droits exposés : accès (R6, `memory_audit`), effacement (R5,
+`forget_all`) ; la **portabilité** (art. 20, export) reste un **gap connu** à
+implémenter côté API mémoire.
+
 ### Versioning du modèle d'embeddings
 
 Le modèle d'embeddings est **pinné** (id + version), comme tout autre modèle de la stack : un
