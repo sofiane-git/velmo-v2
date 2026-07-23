@@ -313,11 +313,14 @@ gh api -X POST repos/sofiane-git/velmo-v2/actions/runs/$RUN_ID/pending_deploymen
 
 ### 7.4 Après l'approbation — et ce qui n'existe pas (encore)
 
-`approve-and-promote` crée une **GitHub Release** (onglet Releases). **Aucun déploiement
-applicatif** (pas de redémarrage, pas de promotion d'image) : l'hébergement n'est pas
-tranché — décision documentée. Une release = qualité validée + trace, pas une mise en ligne.
-Ne pas inventer cette étape avant de trancher l'hébergement (le jour venu : voir Partie 2 §D3
-pour l'accès Key Vault de l'hôte).
+`approve-and-promote` crée une **GitHub Release** (onglet Releases). Une release = qualité
+validée + trace, **pas une promotion automatique en ligne** : ce workflow ne redéploie pas
+l'app. L'hébergement, lui, **est tranché** — **Azure Container Apps** (Partie 2 §F, le
+*pourquoi* en `conception_chantier3_evaluation_mlops.md` §Cible de déploiement). La mise à
+jour de l'hôte reste **manuelle** dans ce périmètre : reconstruire/pousser l'image
+(Partie 2 §F2) puis `az containerapp update --image …:<sha du tag>`. Brancher un job CD
+(OIDC → `az containerapp update`) est l'évolution naturelle, volontairement hors périmètre
+ici pour garder « release = gate + trace ».
 
 ---
 
@@ -369,7 +372,8 @@ gh run list --workflow=nightly.yml --limit 3
 
 - **Un seul reviewer** sur `production` (toi) — SPOF assumé en solo, documenté ; à étendre
   dès une 2ᵉ personne.
-- **Pas de déploiement applicatif** — §7.4.
+- **Pas de déploiement *automatique* (CD)** — l'hôte est tranché (ACA, Partie 2 §F), mais la
+  promotion de l'image reste manuelle dans ce périmètre. §7.4.
 - **`enforce_admins: true`** (§2) : même toi ne bypasses pas `main`. Besoin exceptionnel de
   push direct → désactiver temporairement la règle, jamais `--force`.
 

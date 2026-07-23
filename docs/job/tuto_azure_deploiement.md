@@ -63,7 +63,7 @@ az group show --name "$RG" --query provisioningState -o tsv
 ## A2. Région : UE obligatoire
 
 **But :** tout déploiement traitant du contenu client en clair (conversations = PII) reste en
-**région UE** (`francecentral` ou `westeurope`) — cohérent avec Langfuse Cloud EU (§F3).
+**région UE** (`francecentral` ou `westeurope`) — cohérent avec Langfuse Cloud EU (§G3).
 
 **Terminal (vérifier la dispo d'un service dans la région) :**
 
@@ -335,8 +335,8 @@ az postgres flexible-server create \
   --name "psql-${SUFFIX}" \
   --resource-group "$RG" \
   --location "$LOCATION" \
-  --sku-name "Standard_D2ds_v5" \
-  --tier "GeneralPurpose" \
+  --sku-name "Standard_B1ms" \
+  --tier "Burstable" \
   --storage-size 64 \
   --version 16 \
   --admin-user "velmo_admin" \
@@ -354,9 +354,9 @@ az postgres flexible-server show --name "psql-${SUFFIX}" --resource-group "$RG" 
 ```
 
 **Portail :** **Create a resource** → « Azure Database for PostgreSQL flexible server » →
-**Basics** : `Server name` = `psql-velmo-prod`, `PostgreSQL version` = **16**, tier proche de
-`Standard_D2ds_v5` (le portail propose des paliers nommés avec vCPU/RAM affichés),
-`High availability` = **Disabled**. **Backup** : rétention **35 days**, geo-redundancy
+**Basics** : `Server name` = `psql-velmo-prod`, `PostgreSQL version` = **16**, `Workload type`
+= **Development** → tier **Burstable**, taille `Standard_B1ms` (1 vCPU / 2 Go ; le portail
+affiche vCPU/RAM par palier), `High availability` = **Disabled**. **Backup** : rétention **35 days**, geo-redundancy
 **Disabled**. Admin user/password (le mot de passe généré — jamais collé ailleurs qu'en
 Phase D). **Review + create**.
 
@@ -530,7 +530,7 @@ az keyvault secret set --vault-name "$KV" --name postgres-admin-password       -
 az keyvault secret set --vault-name "$KV" --name postgres-app-password         --value "<mdp velmo_app C3>"
 az keyvault secret set --vault-name "$KV" --name db-url \
   --value "postgresql+psycopg://velmo_app:<mdp>@psql-${SUFFIX}.postgres.database.azure.com:5432/velmo"
-# Optionnel (observabilité, §F3) :
+# Optionnel (observabilité, §G3) :
 az keyvault secret set --vault-name "$KV" --name langfuse-public-key --value "pk-lf-..."
 az keyvault secret set --vault-name "$KV" --name langfuse-secret-key --value "sk-lf-..."
 ```
@@ -545,17 +545,18 @@ az keyvault secret list --vault-name "$KV" --query '[].name' -o tsv | sort
 **Portail :** ressource vault → **Objects → Secrets** → **+ Generate/Import** → `Name` +
 `Value` → **Create**, pour chaque secret.
 
-## D3. Accès applicatif (conditionnel — hébergement non tranché)
+## D3. Accès applicatif au coffre — identité managée de l'hôte
 
-> ⚠️ Le projet n'a **pas encore d'hébergement applicatif** (décision documentée, Partie 3
-> §7.4 : une release = gate + trace GitHub, pas de mise en ligne). Ce bloc s'applique **une
-> fois un hôte créé** (App Service / Container Apps) avec identité managée — ne pas
-> l'exécuter avant.
+> ℹ️ **Hébergement tranché : Azure Container Apps** (Phase F ; le *pourquoi* — ACA vs App
+> Service, R2/R3 — est dans `conception_chantier3_evaluation_mlops.md` §Cible de déploiement).
+> Ce bloc donne à l'**identité managée de l'app** le droit de **lire** les secrets. Il
+> s'exécute **après** la création de l'app (F3), qui produit le `principalId` utilisé
+> ci-dessous — Phase F §F4 y renvoie.
 
 **Terminal :**
 
 ```bash
-APP_PRINCIPAL_ID="<principalId de l'identité managée de ton hôte, une fois créé>"
+APP_PRINCIPAL_ID="<principalId de l'identité managée de l'app ACA — voir F4>"
 KV_ID=$(az keyvault show --name "kv-${SUFFIX}" --query id -o tsv)
 
 # Vault en mode RBAC → role assignment, PAS `az keyvault set-policy`
@@ -629,9 +630,154 @@ Other registry, `Image` = `ollama/ollama:latest`, Linux, 4 vCPU / 8 Go. **Networ
 
 ---
 
-# Phase F — Compléments
+# Phase F — Héberger l'application (Azure Container Apps)
 
-## F1. Escalade humaine — Logic App (canal gratuit)
+**But :** mettre l'agent en ligne. Choix tranché : **Azure Container Apps (ACA)** — l'image
+conteneur existe déjà (`Dockerfile`, `deploy/README.md`), scale-to-zero (coût ≈ 0 à l'arrêt),
+identité managée native pour lire Key Vault. Le *pourquoi* (ACA vs App Service, R2/R3) :
+`conception_chantier3_evaluation_mlops.md` §Cible de déploiement.
+
+> ACA tire l'image d'un **registre** : on crée d'abord un Azure Container Registry (F1), on y
+> pousse l'image (F2), on déploie (F3), puis on câble les secrets du coffre (F4).
+
+## F1. Azure Container Registry — héberger l'image
+
+**But :** un registre privé d'où ACA tire l'image.
+
+**Terminal :**
+
+```bash
+# Nom ACR : alphanumérique uniquement (pas de tiret) — d'où `acrvelmoprod`.
+export ACR="acrvelmoprod"
+az acr create --resource-group "$RG" --name "$ACR" --sku Basic --admin-enabled false
+```
+
+**Vérifie :**
+
+```bash
+az acr show --name "$ACR" --query provisioningState -o tsv
+# → Succeeded
+```
+
+**Portail :** **Create a resource** → « Container Registry » → SKU **Basic** → **Create**.
+
+## F2. Construire et pousser l'image
+
+**But :** produire l'image dans le registre, sans Docker local (`az acr build` construit côté cloud).
+
+**Terminal :**
+
+```bash
+az acr build --registry "$ACR" --image "velmo:$(git rev-parse --short HEAD)" --file Dockerfile .
+```
+
+**Vérifie :**
+
+```bash
+az acr repository show-tags --name "$ACR" --repository velmo -o table
+# → le tag (sha court) apparaît
+```
+
+> Tag = sha git court : l'image déployée est **traçable** au commit (même logique que le tag
+> semver de la Partie 3).
+
+## F3. Créer l'environnement + déployer l'app
+
+**But :** l'app servie en HTTPS, scale-to-zero, sonde de santé sur `/health` (déjà exposé par
+`velmo.api`).
+
+**Terminal :**
+
+```bash
+# Environnement ACA (crée un workspace Log Analytics implicite pour les logs) :
+az containerapp env create --name "cae-${SUFFIX}" --resource-group "$RG" --location "$LOCATION"
+
+IMAGE="${ACR}.azurecr.io/velmo:$(git rev-parse --short HEAD)"
+
+az containerapp create \
+  --name "ca-${SUFFIX}" \
+  --resource-group "$RG" \
+  --environment "cae-${SUFFIX}" \
+  --image "$IMAGE" \
+  --registry-server "${ACR}.azurecr.io" \
+  --system-assigned \
+  --ingress external --target-port 8000 \
+  --min-replicas 0 --max-replicas 3 \
+  --env-vars ENVIRONMENT=production VELMO_WEB_ORIGINS="https://<ton-front>"
+```
+
+**Vérifie :**
+
+```bash
+FQDN=$(az containerapp show --name "ca-${SUFFIX}" --resource-group "$RG" \
+  --query properties.configuration.ingress.fqdn -o tsv)
+curl -fsS "https://$FQDN/health"
+# → le corps de GET /health (200)
+```
+
+> **`--min-replicas 0` = scale-to-zero** : coût nul à l'arrêt, mais **cold start** au 1er
+> appel après inactivité. Passer à `1` si la latence de démarrage n'est pas tolérable — seul
+> arbitrage coût/latence de l'hôte (le juge garde-fous bloquant, lui, reste toujours chaud
+> côté Azure OpenAI). **Sonde `/health`** : ACA sonde par défaut le `--target-port` ; pour une
+> sonde HTTP explicite sur `/health`, ajouter un health probe (`az containerapp update --yaml`,
+> la syntaxe `--health-probe-*` variant selon la version de la CLI).
+
+## F4. Identité managée → secrets Key Vault → variables d'app
+
+**But :** l'app lit ses secrets **du coffre**, jamais une valeur en clair dans la config ACA.
+
+**Terminal :**
+
+```bash
+# 1. principalId de l'identité managée de l'app (créée en F3 via --system-assigned) :
+export APP_PRINCIPAL_ID=$(az containerapp show --name "ca-${SUFFIX}" --resource-group "$RG" \
+  --query identity.principalId -o tsv)
+
+# 2. Lui donner l'accès LECTURE au coffre → exécuter le bloc D3 (rôle « Key Vault Secrets User »).
+
+# 3. Déclarer chaque secret ACA comme une RÉFÉRENCE Key Vault (résolue par l'identité) :
+KV_URI="https://kv-${SUFFIX}.vault.azure.net/secrets"
+az containerapp secret set --name "ca-${SUFFIX}" --resource-group "$RG" --secrets \
+  db-url="keyvaultref:${KV_URI}/db-url,identityref:system" \
+  ai-key="keyvaultref:${KV_URI}/azure-ai-inference-api-key,identityref:system" \
+  guard-key="keyvaultref:${KV_URI}/azure-openai-guard-api-key,identityref:system" \
+  anthropic-key="keyvaultref:${KV_URI}/anthropic-api-key,identityref:system"
+
+# 4. Mapper secrets (clés) ET endpoints (non-secrets) sur les variables lues par config.py :
+az containerapp update --name "ca-${SUFFIX}" --resource-group "$RG" --set-env-vars \
+  DB_URL=secretref:db-url \
+  AZURE_AI_INFERENCE_API_KEY=secretref:ai-key \
+  AZURE_OPENAI_GUARD_API_KEY=secretref:guard-key \
+  ANTHROPIC_API_KEY=secretref:anthropic-key \
+  AZURE_AI_INFERENCE_ENDPOINT="$(az keyvault secret show --vault-name kv-${SUFFIX} --name azure-ai-inference-endpoint --query value -o tsv)" \
+  AZURE_OPENAI_GUARD_ENDPOINT="$(az keyvault secret show --vault-name kv-${SUFFIX} --name azure-openai-guard-endpoint --query value -o tsv)" \
+  ANTHROPIC_FOUNDRY_ENDPOINT="$(az keyvault secret show --vault-name kv-${SUFFIX} --name anthropic-foundry-endpoint --query value -o tsv)" \
+  OLLAMA_URL="http://<ip-privée-ollama>:11434"
+```
+
+**Vérifie :**
+
+```bash
+az containerapp show --name "ca-${SUFFIX}" --resource-group "$RG" \
+  --query "properties.template.containers[0].env[].name" -o tsv
+# → DB_URL, AZURE_*, ANTHROPIC_*, OLLAMA_URL (les valeurs des clés ne s'affichent jamais : secretref)
+curl -fsS "https://$FQDN/health"   # toujours 200 après le redémarrage de la révision
+```
+
+> **Migrations avant tout trafic réel** : le schéma prod se pose avec le rôle `velmo_migrator`
+> (C3), pas au runtime — `alembic upgrade head` une fois (job ponctuel `az containerapp job`
+> ou depuis une machine d'admin joignant le Postgres), exactement comme le gate release
+> (Partie 3). L'app tourne ensuite avec `velmo_app` (aucun droit DDL).
+
+> **Endpoints en clair, clés en référence** : un endpoint est une URL publique (pas un
+> secret) → variable d'app ordinaire ; seules les **clés** et la **chaîne de connexion**
+> (mot de passe) passent par `secretref` → Key Vault. Même séparation qu'en D2/D3.
+
+---
+
+# Phase G — Compléments
+
+## G1. Escalade humaine — Logic App (canal gratuit)
 
 **But :** deux canaux d'escalade (support G2, sécurité G7/récidive G6) sans outil de
 ticketing — un webhook qui envoie un e-mail, appelé sur
@@ -663,7 +809,7 @@ az logic workflow show --resource-group "$RG" --name "escalade-guardrails" --que
 
 Alternative zéro-service : SMTP direct vers une boîte dédiée — suffisant à faible volume.
 
-## F2. Tarification — vérification trimestrielle
+## G2. Tarification — vérification trimestrielle
 
 **But :** la table `token_pricing` (config versionnée) doit suivre les prix réels, **pour
 chaque vendor** (Azure OpenAI ≠ Foundry/Anthropic — dérives indépendantes).
@@ -673,7 +819,7 @@ chaque vendor** (Azure OpenAI ≠ Foundry/Anthropic — dérives indépendantes)
 `Granularity` = mensuel → comparer au coût recalculé (`eval_run.cost_per_conv`). Écart
 notable = corriger `token_pricing`.
 
-## F3. Langfuse Cloud (observabilité — hors Azure)
+## G3. Langfuse Cloud (observabilité — hors Azure)
 
 Décision révisée : projet pédagogique → **Langfuse Cloud région EU** (pas de self-host, pas
 de ressource Azure). Procédure compte/projet/clés : `deploy/langfuse/README.md`. Les clés
@@ -681,7 +827,7 @@ vont dans Key Vault (D2 : `langfuse-public-key`/`langfuse-secret-key`) et alimen
 `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL`. Self-host (module Terraform
 `langfuse/langfuse-terraform-azure`, région UE) si un jour vraies données client.
 
-## F4. RuleBasedJudge en shadow mode — déjà implémenté (rappel)
+## G4. RuleBasedJudge en shadow mode — déjà implémenté (rappel)
 
 Rien à provisionner : `ShadowingJudge` (`src/velmo/guardrails/judge.py`) calcule le verdict
 du repli déterministe sur **chaque** message, en tâche de fond, et le journalise
@@ -736,7 +882,10 @@ ressource mal câblée — corriger **avant** la Partie 3.
 | `psql-${SUFFIX}` | C | PostgreSQL 16 + pgvector, PITR 35 j |
 | `kv-${SUFFIX}` | D | Key Vault (RBAC) — source de vérité des secrets |
 | `ollama-${SUFFIX}` | E | Llama Guard 3 (ACI, CPU, privé) |
-| Logic App `escalade-guardrails` | F1 | webhook d'escalade → e-mail |
+| `acrvelmoprod` | F1 | Azure Container Registry — héberge l'image `velmo` |
+| `cae-${SUFFIX}` | F3 | Container Apps environment (Log Analytics implicite) |
+| `ca-${SUFFIX}` | F3 | **l'app servie** (ACA, ingress HTTPS, identité managée) |
+| Logic App `escalade-guardrails` | G1 | webhook d'escalade → e-mail |
 
 ## Mapping secrets — variable app ↔ secret Key Vault ↔ origine ↔ forme
 
@@ -755,7 +904,7 @@ ressource mal câblée — corriger **avant** la Partie 3.
 | `DB_URL` | `db-url` | C1/C3 | `postgresql+psycopg://velmo_app:…` |
 | — (admin, jamais côté app) | `postgres-admin-password` | C1 | — |
 | — (rôle app) | `postgres-app-password` | C3 | — |
-| `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` *(opt.)* | `langfuse-public-key`/`-secret-key` | F3 | — |
+| `LANGFUSE_PUBLIC_KEY`/`SECRET_KEY` *(opt.)* | `langfuse-public-key`/`-secret-key` | G3 | — |
 | `OLLAMA_URL` | *(pas un secret)* | E | `http://<ip-privée>:11434` |
 
 ## Checklist de sortie de la Partie 2
@@ -766,6 +915,7 @@ ressource mal câblée — corriger **avant** la Partie 3.
 - [ ] C — Postgres `Ready`, `vector` activé, 3 rôles SQL créés, `alembic upgrade head` (head), test de restauration fait puis supprimé
 - [ ] D — vault RBAC créé, **tous les secrets posés** (liste D2 complète), 2 vaults si staging+prod
 - [ ] E — Ollama `Running`, modèle pullé (logs), réseau privé
+- [ ] F — image poussée sur ACR, app ACA déployée (`/health` = 200), identité managée → Key Vault, secrets en `secretref`, `alembic upgrade head` sur le Postgres prod
 - [ ] Smoke final : `config OK` + vraie réponse agent
 
 → **Partie 3 : `tuto_github_actions_release.md`** (brancher la CI sur ces ressources).
