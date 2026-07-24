@@ -327,12 +327,40 @@ class CombinedClassifier:
 
 
 def get_classifier() -> ModerationClassifier:
-    """Llama Guard 3 (Ollama) combiné au repli lexical si `OLLAMA_URL` est
-    configuré, sinon repli lexical seul."""
-    ollama_url = get_settings().ollama_url
-    if not ollama_url:
-        return LexicalClassifier()
-    try:
-        return CombinedClassifier(LlamaGuardClassifier(base_url=ollama_url))
-    except Exception:
-        return LexicalClassifier()
+    """Choisit le backend réel (Content Safety ou Llama Guard), toujours
+    combiné en OR avec le repli lexical (`CombinedClassifier`), ou repli
+    lexical seul si rien n'est configuré.
+
+    `Settings.guardrail_classifier_backend` force un choix explicite —
+    erreur bruyante (`KeyError`/`ValueError`) si ce choix est mal configuré,
+    jamais un repli silencieux (D4-05). Sans préférence explicite, ordre de
+    détection : Content Safety (backend prod retenu, coût nul au repos) puis
+    Llama Guard (repli dev-local offline) puis lexical seul — comportement
+    inchangé pour qui ne configure rien (CI reste réseau-libre).
+    """
+    settings = get_settings()
+    backend = settings.guardrail_classifier_backend
+
+    if backend == "content_safety":
+        return CombinedClassifier(ContentSafetyClassifier())
+    if backend == "llama_guard":
+        return CombinedClassifier(
+            LlamaGuardClassifier(base_url=require(settings.ollama_url, "OLLAMA_URL"))
+        )
+    if backend is not None:
+        raise ValueError(
+            f"GUARDRAIL_CLASSIFIER_BACKEND={backend!r} inconnu "
+            f"(attendu : 'content_safety' ou 'llama_guard')."
+        )
+
+    if settings.azure_content_safety_endpoint and settings.azure_content_safety_key:
+        try:
+            return CombinedClassifier(ContentSafetyClassifier())
+        except Exception:
+            return LexicalClassifier()
+    if settings.ollama_url:
+        try:
+            return CombinedClassifier(LlamaGuardClassifier(base_url=settings.ollama_url))
+        except Exception:
+            return LexicalClassifier()
+    return LexicalClassifier()

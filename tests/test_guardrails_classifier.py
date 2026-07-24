@@ -382,3 +382,55 @@ def test_content_safety_classifier_requires_endpoint():
 def test_content_safety_classifier_requires_key():
     with pytest.raises(KeyError):
         ContentSafetyClassifier(endpoint="https://example.cognitiveservices.azure.com", key=None)
+
+
+def test_get_classifier_explicit_content_safety_raises_when_unconfigured(monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "content_safety")
+    monkeypatch.delenv("AZURE_CONTENT_SAFETY_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_CONTENT_SAFETY_KEY", raising=False)
+    with pytest.raises(KeyError):
+        get_classifier()
+
+
+def test_get_classifier_explicit_llama_guard_raises_when_unconfigured(monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "llama_guard")
+    monkeypatch.delenv("OLLAMA_URL", raising=False)
+    with pytest.raises(KeyError):
+        get_classifier()
+
+
+def test_get_classifier_explicit_unknown_backend_raises_value_error(monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "made_up_backend")
+    with pytest.raises(ValueError):
+        get_classifier()
+
+
+def test_get_classifier_explicit_content_safety_returns_combined(monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "content_safety")
+    monkeypatch.setenv(
+        "AZURE_CONTENT_SAFETY_ENDPOINT", "https://example.cognitiveservices.azure.com"
+    )
+    monkeypatch.setenv("AZURE_CONTENT_SAFETY_KEY", "k")
+    assert isinstance(get_classifier(), CombinedClassifier)
+
+
+def test_get_classifier_auto_detects_content_safety_over_llama_guard(monkeypatch):
+    monkeypatch.delenv("GUARDRAIL_CLASSIFIER_BACKEND", raising=False)
+    monkeypatch.setenv(
+        "AZURE_CONTENT_SAFETY_ENDPOINT", "https://example.cognitiveservices.azure.com"
+    )
+    monkeypatch.setenv("AZURE_CONTENT_SAFETY_KEY", "k")
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    classifier = get_classifier()
+    assert isinstance(classifier, CombinedClassifier)
+    assert isinstance(classifier._primary, ContentSafetyClassifier)
+
+
+def test_get_classifier_auto_detects_llama_guard_without_content_safety(monkeypatch):
+    monkeypatch.delenv("GUARDRAIL_CLASSIFIER_BACKEND", raising=False)
+    monkeypatch.delenv("AZURE_CONTENT_SAFETY_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_CONTENT_SAFETY_KEY", raising=False)
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    classifier = get_classifier()
+    assert isinstance(classifier, CombinedClassifier)
+    assert isinstance(classifier._primary, LlamaGuardClassifier)
