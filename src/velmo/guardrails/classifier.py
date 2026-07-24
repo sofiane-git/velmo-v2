@@ -152,6 +152,62 @@ def _llama_guard_reasoning(content: str, scores: dict[str, float]) -> dict[str, 
     return reasoning
 
 
+CONTENT_SAFETY_CATEGORY_MAP: dict[str, str] = {
+    "Hate": "hate",
+    "Violence": "violence",
+    "SelfHarm": "violence",  # même convention que S11 dans LLAMA_GUARD_CATEGORY_MAP —
+    # pas de catégorie séparée pour l'auto-agression dans ce pipeline.
+    "Sexual": "sexual",
+}
+
+# Premier jet, aligné sur les paliers d'action déjà tunés du pipeline
+# (FLAG_THRESHOLD=0.4, BLOCK_THRESHOLD=0.7, ESCALATE_THRESHOLD=0.9, pipeline.py)
+# plutôt qu'une échelle linéaire arbitraire (severity/6 laisserait severity=2
+# sous FLAG_THRESHOLD et severity=4 sous BLOCK_THRESHOLD). À recalibrer via
+# eval/calibrate_thresholds.py une fois assez de cas labellisés disponibles —
+# même statut que ESCALATE_THRESHOLD aujourd'hui.
+_CONTENT_SAFETY_SEVERITY_TO_SCORE: dict[int, float] = {0: 0.0, 2: 0.5, 4: 0.8, 6: 0.95}
+
+
+class ContentSafetyClassifier:
+    """Backend réel : Azure AI Content Safety (`analyze_text`), même ressource
+    que Prompt Shields (`prompt_shields.py`, Phase B4 du tutoriel Azure) —
+    aucune nouvelle ressource Azure. Alternative à `LlamaGuardClassifier`,
+    sélectionnée via `Settings.guardrail_classifier_backend` ou auto-détectée
+    par `get_classifier()`."""
+
+    def __init__(self, endpoint: str | None = None, key: str | None = None) -> None:
+        from azure.ai.contentsafety import ContentSafetyClient
+        from azure.core.credentials import AzureKeyCredential
+
+        settings = get_settings()
+        self._endpoint = require(
+            endpoint or settings.azure_content_safety_endpoint, "AZURE_CONTENT_SAFETY_ENDPOINT"
+        )
+        self._key = require(key or settings.azure_content_safety_key, "AZURE_CONTENT_SAFETY_KEY")
+        self._client = ContentSafetyClient(self._endpoint, AzureKeyCredential(self._key))
+
+    def score(self, text: str) -> dict[str, float]:
+        return self.score_detailed(text).scores
+
+    def score_detailed(self, text: str) -> ClassifierResult:
+        from azure.ai.contentsafety.models import AnalyzeTextOptions
+
+        response = self._client.analyze_text(AnalyzeTextOptions(text=text))
+        scores: dict[str, float] = {"hate": 0.0, "violence": 0.0, "sexual": 0.0}
+        reasoning: dict[str, str] = {}
+        for item in response.categories_analysis:
+            category = CONTENT_SAFETY_CATEGORY_MAP.get(item.category)
+            if category is None:
+                continue
+            severity = item.severity if item.severity is not None else 0
+            score = _CONTENT_SAFETY_SEVERITY_TO_SCORE.get(severity, 0.0)
+            if score > scores[category]:
+                scores[category] = score
+                reasoning[category] = f"Content Safety : sévérité {item.severity} ({item.category})"
+        return ClassifierResult(scores=scores, reasoning=reasoning)
+
+
 class LlamaGuardClassifier:
     """Backend réel : Llama Guard 3 (Meta), servi localement via Ollama —
     modèle multilingue (FR inclus), taxonomie MLCommons S1-S13 mappée sur
@@ -271,12 +327,40 @@ class CombinedClassifier:
 
 
 def get_classifier() -> ModerationClassifier:
-    """Llama Guard 3 (Ollama) combiné au repli lexical si `OLLAMA_URL` est
-    configuré, sinon repli lexical seul."""
-    ollama_url = get_settings().ollama_url
-    if not ollama_url:
-        return LexicalClassifier()
-    try:
-        return CombinedClassifier(LlamaGuardClassifier(base_url=ollama_url))
-    except Exception:
-        return LexicalClassifier()
+    """Choisit le backend réel (Content Safety ou Llama Guard), toujours
+    combiné en OR avec le repli lexical (`CombinedClassifier`), ou repli
+    lexical seul si rien n'est configuré.
+
+    `Settings.guardrail_classifier_backend` force un choix explicite —
+    erreur bruyante (`KeyError`/`ValueError`) si ce choix est mal configuré,
+    jamais un repli silencieux (D4-05). Sans préférence explicite, ordre de
+    détection : Content Safety (backend prod retenu, coût nul au repos) puis
+    Llama Guard (repli dev-local offline) puis lexical seul — comportement
+    inchangé pour qui ne configure rien (CI reste réseau-libre).
+    """
+    settings = get_settings()
+    backend = settings.guardrail_classifier_backend
+
+    if backend == "content_safety":
+        return CombinedClassifier(ContentSafetyClassifier())
+    if backend == "llama_guard":
+        return CombinedClassifier(
+            LlamaGuardClassifier(base_url=require(settings.ollama_url, "OLLAMA_URL"))
+        )
+    if backend is not None:
+        raise ValueError(
+            f"GUARDRAIL_CLASSIFIER_BACKEND={backend!r} inconnu "
+            f"(attendu : 'content_safety' ou 'llama_guard')."
+        )
+
+    if settings.azure_content_safety_endpoint and settings.azure_content_safety_key:
+        try:
+            return CombinedClassifier(ContentSafetyClassifier())
+        except Exception:
+            return LexicalClassifier()
+    if settings.ollama_url:
+        try:
+            return CombinedClassifier(LlamaGuardClassifier(base_url=settings.ollama_url))
+        except Exception:
+            return LexicalClassifier()
+    return LexicalClassifier()

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import pytest
 import requests
 
 from velmo.guardrails._scoring import FALLBACK_MAX_SCORE
 from velmo.guardrails.classifier import (
     ClassifierResult,
     CombinedClassifier,
+    ContentSafetyClassifier,
     LexicalClassifier,
     LlamaGuardClassifier,
     _extract_p_unsafe,
@@ -293,3 +295,142 @@ def test_llama_guard_logs_warning_above_latency_threshold(monkeypatch, caplog) -
     with caplog.at_level(logging.WARNING, logger="velmo.guardrails.classifier"):
         clf.score_detailed("bonjour")
     assert any("latence" in r.message.lower() for r in caplog.records)
+
+
+class _FakeCategoryAnalysis:
+    def __init__(self, category: str, severity: int) -> None:
+        self.category = category
+        self.severity = severity
+
+
+class _FakeAnalyzeResponse:
+    def __init__(self, categories_analysis: list[_FakeCategoryAnalysis]) -> None:
+        self.categories_analysis = categories_analysis
+
+
+def test_content_safety_classifier_maps_hate_severity_to_score(monkeypatch):
+    from azure.ai.contentsafety import ContentSafetyClient
+
+    def fake_analyze_text(self, options):
+        return _FakeAnalyzeResponse([_FakeCategoryAnalysis("Hate", 4)])
+
+    monkeypatch.setattr(ContentSafetyClient, "analyze_text", fake_analyze_text)
+
+    clf = ContentSafetyClassifier(endpoint="https://example.cognitiveservices.azure.com", key="k")
+    scores = clf.score("peu importe")
+    assert scores == {"hate": 0.8, "violence": 0.0, "sexual": 0.0}
+
+
+def test_content_safety_classifier_maps_self_harm_to_violence(monkeypatch):
+    from azure.ai.contentsafety import ContentSafetyClient
+
+    def fake_analyze_text(self, options):
+        return _FakeAnalyzeResponse([_FakeCategoryAnalysis("SelfHarm", 6)])
+
+    monkeypatch.setattr(ContentSafetyClient, "analyze_text", fake_analyze_text)
+
+    clf = ContentSafetyClassifier(endpoint="https://example.cognitiveservices.azure.com", key="k")
+    result = clf.score_detailed("peu importe")
+    assert result.scores == {"hate": 0.0, "violence": 0.95, "sexual": 0.0}
+    assert result.reasoning["violence"] == "Content Safety : sévérité 6 (SelfHarm)"
+
+
+def test_content_safety_classifier_zero_severity_gives_zero_score(monkeypatch):
+    from azure.ai.contentsafety import ContentSafetyClient
+
+    def fake_analyze_text(self, options):
+        return _FakeAnalyzeResponse(
+            [
+                _FakeCategoryAnalysis("Hate", 0),
+                _FakeCategoryAnalysis("Violence", 0),
+                _FakeCategoryAnalysis("SelfHarm", 0),
+                _FakeCategoryAnalysis("Sexual", 0),
+            ]
+        )
+
+    monkeypatch.setattr(ContentSafetyClient, "analyze_text", fake_analyze_text)
+
+    clf = ContentSafetyClassifier(endpoint="https://example.cognitiveservices.azure.com", key="k")
+    result = clf.score_detailed("Comment retourner un maillot ?")
+    assert result.scores == {"hate": 0.0, "violence": 0.0, "sexual": 0.0}
+    assert result.reasoning == {}
+
+
+def test_content_safety_classifier_keeps_max_when_violence_and_self_harm_both_hit(monkeypatch):
+    from azure.ai.contentsafety import ContentSafetyClient
+
+    def fake_analyze_text(self, options):
+        return _FakeAnalyzeResponse(
+            [
+                _FakeCategoryAnalysis("Violence", 2),
+                _FakeCategoryAnalysis("SelfHarm", 6),
+            ]
+        )
+
+    monkeypatch.setattr(ContentSafetyClient, "analyze_text", fake_analyze_text)
+
+    clf = ContentSafetyClassifier(endpoint="https://example.cognitiveservices.azure.com", key="k")
+    scores = clf.score("peu importe")
+    assert scores["violence"] == 0.95  # le pire des deux signaux, pas le dernier lu
+
+
+def test_content_safety_classifier_requires_endpoint():
+    with pytest.raises(KeyError):
+        ContentSafetyClassifier(endpoint=None, key="k")
+
+
+def test_content_safety_classifier_requires_key():
+    with pytest.raises(KeyError):
+        ContentSafetyClassifier(endpoint="https://example.cognitiveservices.azure.com", key=None)
+
+
+def test_get_classifier_explicit_content_safety_raises_when_unconfigured(monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "content_safety")
+    monkeypatch.delenv("AZURE_CONTENT_SAFETY_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_CONTENT_SAFETY_KEY", raising=False)
+    with pytest.raises(KeyError):
+        get_classifier()
+
+
+def test_get_classifier_explicit_llama_guard_raises_when_unconfigured(monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "llama_guard")
+    monkeypatch.delenv("OLLAMA_URL", raising=False)
+    with pytest.raises(KeyError):
+        get_classifier()
+
+
+def test_get_classifier_explicit_unknown_backend_raises_value_error(monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "made_up_backend")
+    with pytest.raises(ValueError):
+        get_classifier()
+
+
+def test_get_classifier_explicit_content_safety_returns_combined(monkeypatch):
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "content_safety")
+    monkeypatch.setenv(
+        "AZURE_CONTENT_SAFETY_ENDPOINT", "https://example.cognitiveservices.azure.com"
+    )
+    monkeypatch.setenv("AZURE_CONTENT_SAFETY_KEY", "k")
+    assert isinstance(get_classifier(), CombinedClassifier)
+
+
+def test_get_classifier_auto_detects_content_safety_over_llama_guard(monkeypatch):
+    monkeypatch.delenv("GUARDRAIL_CLASSIFIER_BACKEND", raising=False)
+    monkeypatch.setenv(
+        "AZURE_CONTENT_SAFETY_ENDPOINT", "https://example.cognitiveservices.azure.com"
+    )
+    monkeypatch.setenv("AZURE_CONTENT_SAFETY_KEY", "k")
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    classifier = get_classifier()
+    assert isinstance(classifier, CombinedClassifier)
+    assert isinstance(classifier._primary, ContentSafetyClassifier)
+
+
+def test_get_classifier_auto_detects_llama_guard_without_content_safety(monkeypatch):
+    monkeypatch.delenv("GUARDRAIL_CLASSIFIER_BACKEND", raising=False)
+    monkeypatch.delenv("AZURE_CONTENT_SAFETY_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_CONTENT_SAFETY_KEY", raising=False)
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    classifier = get_classifier()
+    assert isinstance(classifier, CombinedClassifier)
+    assert isinstance(classifier._primary, LlamaGuardClassifier)
