@@ -103,3 +103,16 @@ def test_validate_startup_tolerates_trailing_slash_on_suffix():
         azure_ai_inference_api_key="key",
     )
     validate_startup(settings)  # ne lève pas
+
+
+def test_guardrail_classifier_backend_defaults_to_none():
+    from velmo.config import Settings
+
+    assert Settings().guardrail_classifier_backend is None
+
+
+def test_guardrail_classifier_backend_reads_env(monkeypatch):
+    from velmo.config import get_settings
+
+    monkeypatch.setenv("GUARDRAIL_CLASSIFIER_BACKEND", "content_safety")
+    assert get_settings().guardrail_classifier_backend == "content_safety"

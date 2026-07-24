@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     # signal seulement, la décision de changer de modèle reste opérationnelle.
     llama_guard_latency_threshold_ms: float = 800.0
 
+    # Sélection explicite du backend de modération (G1/G2/G3) quand plusieurs
+    # sont configurés simultanément — évite l'ambiguïté d'un ordre de priorité
+    # implicite si OLLAMA_URL et AZURE_CONTENT_SAFETY_ENDPOINT sont tous les
+    # deux posés. None = auto-détection (voir classifier.get_classifier()).
+    guardrail_classifier_backend: str | None = None  # "content_safety" | "llama_guard"
+
     # PII redaction en texte libre : Azure AI Language.
     azure_language_endpoint: str | None = None
     azure_language_key: str | None = None
