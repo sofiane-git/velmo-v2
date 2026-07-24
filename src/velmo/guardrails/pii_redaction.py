@@ -18,6 +18,14 @@ from __future__ import annotations
 
 from velmo.config import Settings, get_settings
 
+# Confiance minimale avant de traiter une entité Azure AI Language comme PII à
+# masquer — filtre le bruit de basse confiance : mesuré à 0.65 sur "2024-0101"
+# dans "O-2024-0101" (numéro de commande), classé "PhoneNumber" par erreur.
+# Premier jet, à recalibrer via eval/calibrate_thresholds.py une fois des cas
+# labellisés disponibles — "pii" reste une catégorie fail-open (D4-05), un
+# faux négatif ici n'est pas un risque de sécurité du même ordre que G1/G2/G3.
+PII_CONFIDENCE_THRESHOLD = 0.7
+
 
 def scan(text: str, settings: Settings | None = None) -> list[tuple[int, int]] | None:
     """Spans PII détectés (`(offset, length)`) ; `[]` si aucun ; `None` si le
@@ -47,7 +55,11 @@ def scan(text: str, settings: Settings | None = None) -> list[tuple[int, int]] |
         # Erreur du service configuré : ne pas la déguiser en « aucune PII »
         # (fuite silencieuse) — remonter pour que le repli G4 s'applique.
         raise RuntimeError(f"Azure AI Language a échoué : {result.error}")
-    return [(e.offset, e.length) for e in result.entities]
+    return [
+        (e.offset, e.length)
+        for e in result.entities
+        if e.confidence_score >= PII_CONFIDENCE_THRESHOLD
+    ]
 
 
 def redact_spans(text: str, spans: list[tuple[int, int]]) -> str:
