@@ -111,6 +111,12 @@ jobs:
       AZURE_OPENAI_GUARD_API_KEY: ${{ secrets.AZURE_OPENAI_GUARD_API_KEY }}
       ANTHROPIC_FOUNDRY_ENDPOINT: ${{ secrets.ANTHROPIC_FOUNDRY_ENDPOINT }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Couple B4, optionnel : sans eux, la suite guardrails (drift gpt-5-mini
+      # ci-dessous) ne teste que le repli lexical (dégradation silencieuse).
+      AZURE_CONTENT_SAFETY_ENDPOINT: ${{ secrets.AZURE_CONTENT_SAFETY_ENDPOINT }}
+      AZURE_CONTENT_SAFETY_KEY: ${{ secrets.AZURE_CONTENT_SAFETY_KEY }}
+      AZURE_LANGUAGE_ENDPOINT: ${{ secrets.AZURE_LANGUAGE_ENDPOINT }}
+      AZURE_LANGUAGE_KEY: ${{ secrets.AZURE_LANGUAGE_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
@@ -156,6 +162,12 @@ jobs:
       AZURE_OPENAI_GUARD_API_KEY: ${{ secrets.AZURE_OPENAI_GUARD_API_KEY }}
       ANTHROPIC_FOUNDRY_ENDPOINT: ${{ secrets.ANTHROPIC_FOUNDRY_ENDPOINT }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Couple B4, optionnel : sans eux, la suite guardrails (drift gpt-5-mini
+      # ci-dessous) ne teste que le repli lexical (dégradation silencieuse).
+      AZURE_CONTENT_SAFETY_ENDPOINT: ${{ secrets.AZURE_CONTENT_SAFETY_ENDPOINT }}
+      AZURE_CONTENT_SAFETY_KEY: ${{ secrets.AZURE_CONTENT_SAFETY_KEY }}
+      AZURE_LANGUAGE_ENDPOINT: ${{ secrets.AZURE_LANGUAGE_ENDPOINT }}
+      AZURE_LANGUAGE_KEY: ${{ secrets.AZURE_LANGUAGE_KEY }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
