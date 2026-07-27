@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..db import Escalation
 from ._common import new_id
+from ._idempotency import idempotent_action
 
 
 def escalate_to_human(
@@ -25,20 +26,34 @@ def escalate_to_human(
     (fuite confirmée G7, récidive d'injection G6) — deux files distinctes,
     cf. doc de conception. Notification par le canal gratuit déjà en place
     (email/webhook) ; pas d'outil de ticketing dédié à ce stade."""
-    escalation_id = new_id("esc")
-    session.add(
-        Escalation(
-            id=escalation_id,
-            customer_id=customer_id,
-            order_id=order_id,
-            reason=reason,
-            channel=channel,
+
+    def _act() -> dict[str, Any]:
+        escalation_id = new_id("esc")
+        session.add(
+            Escalation(
+                id=escalation_id,
+                customer_id=customer_id,
+                order_id=order_id,
+                reason=reason,
+                channel=channel,
+            )
         )
+        session.flush()
+        return {
+            "action": "escalated",
+            "escalation_id": escalation_id,
+            "reason": reason,
+            "channel": channel,
+        }
+
+    # Idempotent (Ch.4 §A5) : une escalade dupliquée réveille deux fois un humain
+    # — même classe de problème qu'un double remboursement, coût différent.
+    return idempotent_action(
+        session,
+        user_id=customer_id,
+        tool="escalate_to_human",
+        tool_class="É",
+        arguments={"reason": reason, "order_id": order_id, "channel": channel},
+        resource_id=order_id,
+        action=_act,
     )
-    session.commit()
-    return {
-        "action": "escalated",
-        "escalation_id": escalation_id,
-        "reason": reason,
-        "channel": channel,
-    }
