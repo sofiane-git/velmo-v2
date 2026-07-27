@@ -11,8 +11,10 @@ from .config import get_settings, validate_startup
 
 
 def _run_purge() -> None:
+    from velmo.db import session_factory
     from velmo.memory import MemoryManager
     from velmo.memory.retention import purge_expired_episodes, purge_inactive_threads
+    from velmo.tools._intent import purge_stale_intents
 
     manager = MemoryManager()
     session = manager._Session()
@@ -22,8 +24,18 @@ def _run_purge() -> None:
     finally:
         session.close()
     removed_threads = purge_inactive_threads(manager)
+
+    # Intentions consommées/expirées (Ch.4 §A4) : elles vivent dans la base
+    # métier, pas dans celle de la mémoire — d'où une session distincte.
+    business = session_factory()()
+    try:
+        removed_intents = purge_stale_intents(business)
+    finally:
+        business.close()
+
     print(
-        f"Purge : {removed_episodes} épisode(s) expiré(s), {removed_threads} thread(s) inactif(s)."
+        f"Purge : {removed_episodes} épisode(s) expiré(s), {removed_threads} thread(s) inactif(s), "
+        f"{removed_intents} intention(s) obsolète(s)."
     )
 
 

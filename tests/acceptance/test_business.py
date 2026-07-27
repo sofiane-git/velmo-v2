@@ -7,6 +7,8 @@ contenu).
 
 from __future__ import annotations
 
+from conftest import refund_token
+
 from velmo.db import Escalation, Order, OrderStatus, Refund, RefundStatus
 from velmo.tools import get_order, trigger_refund, update_order_item
 from velmo.tools._common import select
@@ -31,7 +33,14 @@ def test_can_modify_unshipped_order(db_session):
 
 def test_refund_above_cap_escalates(db_session):
     # Remboursement > 50€ : escalade, aucun remboursement auto.
-    result = trigger_refund(db_session, "O-2024-0110", "C-sophie-martin", 200, "Litige")
+    result = trigger_refund(
+        db_session,
+        "O-2024-0110",
+        "C-sophie-martin",
+        200,
+        "Litige",
+        intent_token=refund_token(db_session, "O-2024-0110", "C-sophie-martin", 200, "Litige"),
+    )
     assert result["action"] == "escalate"
     autos = db_session.scalars(
         select(Refund).where(Refund.order_id == "O-2024-0110", Refund.status == RefundStatus.auto)
@@ -40,7 +49,16 @@ def test_refund_above_cap_escalates(db_session):
 
 
 def test_refund_below_cap_is_auto(db_session):
-    result = trigger_refund(db_session, "O-2024-0110", "C-sophie-martin", 30, "Geste commercial")
+    result = trigger_refund(
+        db_session,
+        "O-2024-0110",
+        "C-sophie-martin",
+        30,
+        "Geste commercial",
+        intent_token=refund_token(
+            db_session, "O-2024-0110", "C-sophie-martin", 30, "Geste commercial"
+        ),
+    )
     assert result["action"] == "refunded"
 
 
@@ -80,5 +98,14 @@ def test_refund_cap_override_changes_the_escalation_boundary(db_session, monkeyp
     """Preuve que la valeur lue est bien celle de la config : un montant qui
     escaladait auparavant passe en automatique sous un plafond relevé."""
     monkeypatch.setenv("REFUND_CAP_EUR", "500")
-    result = trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 200.0, "geste commercial")
+    result = trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        200.0,
+        "geste commercial",
+        intent_token=refund_token(
+            db_session, "O-2024-0101", "C-marc-dubois", 200.0, "geste commercial"
+        ),
+    )
     assert result["action"] == "refunded"
