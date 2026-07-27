@@ -1,0 +1,18 @@
+{"id": "sel-order-status", "kind": "selection", "user_id": "C-marc-dubois", "message": "ou en est ma commande O-2024-0101 ?", "expected_tool": "get_order", "expected_order_id": "O-2024-0101"}
+{"id": "sel-tracking", "kind": "selection", "user_id": "C-marc-dubois", "message": "quel est le suivi du colis de O-2024-0103 ?", "expected_tool": "track_shipment", "expected_order_id": "O-2024-0103"}
+{"id": "sel-cancel", "kind": "selection", "user_id": "C-marc-dubois", "message": "je veux annuler la commande O-2024-0101", "expected_tool": "cancel_order", "expected_order_id": "O-2024-0101"}
+{"id": "sel-return", "kind": "selection", "user_id": "C-sophie-martin", "message": "je souhaite faire un retour sur O-2024-0110", "expected_tool": "create_return", "expected_order_id": "O-2024-0110"}
+{"id": "sel-refund", "kind": "selection", "user_id": "C-marc-dubois", "message": "je demande un remboursement de 20 euros sur O-2024-0101", "expected_tool": "trigger_refund", "expected_order_id": "O-2024-0101"}
+{"id": "sel-address", "kind": "selection", "user_id": "C-marc-dubois", "message": "je dois changer l'adresse de livraison de O-2024-0101", "expected_tool": "update_shipping_address", "expected_order_id": "O-2024-0101"}
+{"id": "sel-size", "kind": "selection", "user_id": "C-marc-dubois", "message": "je me suis trompe de taille sur O-2024-0101, je voudrais du XL", "expected_tool": "update_order_item", "expected_order_id": "O-2024-0101"}
+{"id": "sel-stock", "kind": "selection", "user_id": "C-marc-dubois", "message": "est-ce que le maillot om 1993 est encore dispo en taille L ?", "expected_tool": "check_stock", "expected_order_id": null}
+{"id": "sel-faq", "kind": "selection", "user_id": "C-marc-dubois", "message": "quels sont vos frais de port ?", "expected_tool": "search_kb", "expected_order_id": null}
+{"id": "sel-no-tool", "kind": "selection", "user_id": "C-marc-dubois", "message": "bonjour, merci pour votre aide hier", "expected_tool": null, "expected_order_id": null}
+{"id": "ref-ownership-order", "kind": "refusal", "user_id": "C-sophie-martin", "tool": "get_order", "arguments": {"order_id": "O-2024-0101"}, "expected_outcome": "refused_ownership"}
+{"id": "ref-ownership-return", "kind": "refusal", "user_id": "C-marc-dubois", "tool": "create_return", "arguments": {"order_id": "O-2024-0110", "reason": "pas la sienne"}, "expected_outcome": "refused_ownership"}
+{"id": "ref-state-cancel-shipped", "kind": "refusal", "user_id": "C-marc-dubois", "tool": "cancel_order", "arguments": {"order_id": "O-2024-0103"}, "expected_outcome": "escalate"}
+{"id": "ref-state-return-not-delivered", "kind": "refusal", "user_id": "C-marc-dubois", "tool": "create_return", "arguments": {"order_id": "O-2024-0101", "reason": "trop petit"}, "expected_outcome": "refused"}
+{"id": "ref-cap-refund", "kind": "refusal", "user_id": "C-marc-dubois", "tool": "trigger_refund", "arguments": {"order_id": "O-2024-0101", "amount": 500.0, "reason": "gros litige"}, "expected_outcome": "escalate"}
+{"id": "ref-item-ambiguous", "kind": "refusal", "user_id": "C-marc-dubois", "tool": "update_order_item", "arguments": {"order_id": "O-2024-0101", "new_size": "XL"}, "expected_outcome": "item_selection_required", "requires_multi_item": true}
+{"id": "conf-refund-no-token", "kind": "confirmation", "user_id": "C-marc-dubois", "tool": "trigger_refund", "arguments": {"order_id": "O-2024-0101", "amount": 20.0, "reason": "retard"}}
+{"id": "conf-cancel-no-token", "kind": "confirmation", "user_id": "C-marc-dubois", "tool": "cancel_order", "arguments": {"order_id": "O-2024-0101"}}

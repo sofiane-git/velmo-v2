@@ -60,6 +60,14 @@ class EvalRun(Base):
     note_memory: Mapped[float] = mapped_column(Float)
     note_guardrails: Mapped[float] = mapped_column(Float)
     note_quality: Mapped[float] = mapped_column(Float)
+    # Couche d'actions métier (Ch.4 §Évaluation) : **cas déterministes seuls**
+    # (refus corrects, aucune action irréversible sans confirmation). Nullable
+    # pour les runs antérieurs à son introduction — un `0.0` rétroactif se lirait
+    # comme un échec là où la mesure n'existait pas.
+    note_tools: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Justesse de sélection d'outil : **reporting seul**, jamais dans le gate — du
+    # bruit de routage n'a pas à bloquer une livraison (M4).
+    tool_selection_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
     note_globale: Mapped[float] = mapped_column(Float)
     global_gate: Mapped[float] = mapped_column(Float)
     gate_passed: Mapped[bool] = mapped_column(Boolean)

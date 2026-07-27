@@ -132,6 +132,9 @@ def test_gate_run_streams_suite_events_then_final(monkeypatch, tmp_path) -> None
         ("suite_done", "guardrails"),
         ("suite_start", "quality"),
         ("suite_done", "quality"),
+        # 4ᵉ suite : couche d'actions métier (Ch.4 §Évaluation).
+        ("suite_start", "tools"),
+        ("suite_done", "tools"),
     ]
     assert events[-1][1]["gate_passed"] in (True, False)
     # le verrou doit être relâché une fois le stream terminé
