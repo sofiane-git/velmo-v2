@@ -10,7 +10,21 @@ from sqlalchemy.orm import Session
 
 from ..db import Order, OrderStatus
 
-REFUND_CAP = 50.0
+
+def refund_cap() -> float:
+    """Plafond de remboursement automatique, lu depuis la configuration.
+
+    Était une constante de module, donc **absente du hash de version d'agent** :
+    changer le plafond ne changeait pas la version évaluée, alors que ce plafond
+    décide quelles actions s'exécutent sans humain (Ch.4 §A3, audit TOO-05).
+    Lu à l'appel plutôt que capturé à l'import, pour qu'une surcharge
+    d'environnement soit effective en test comme au déploiement.
+    """
+    from ..config import get_settings
+
+    return get_settings().refund_cap_eur
+
+
 # Une commande n'est modifiable / annulable que tant qu'elle n'est pas partie.
 MODIFIABLE_STATUSES = {OrderStatus.paid, OrderStatus.prepared}
 RETURNABLE_STATUSES = {OrderStatus.delivered}
@@ -42,7 +56,7 @@ def order_to_dict(order: Order) -> dict[str, Any]:
 
 
 __all__ = [
-    "REFUND_CAP",
+    "refund_cap",
     "MODIFIABLE_STATUSES",
     "RETURNABLE_STATUSES",
     "new_id",

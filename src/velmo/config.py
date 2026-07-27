@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     # constante gravée : voir aussi le seuil équivalent des garde-fous (Ch.2).
     memory_confidence_threshold: float = 0.7
 
+    # Plafond de remboursement automatique, en euros — au-delà, `trigger_refund`
+    # n'exécute pas : il escalade (Ch.4 §A3). En configuration, donc **inclus dans
+    # le hash de version d'agent** : changer le plafond change la version évaluée,
+    # ce qu'une constante de module ne faisait pas (audit TOO-05).
+    refund_cap_eur: float = 50.0
+
     # Budget de tokens de la fenêtre court terme avant compression/résumé (R4).
     # Config versionnée (hashée dans `memory_config_hash`, mlops/versioning.py) :
     # un changement de budget change l'identité de version évaluée.
