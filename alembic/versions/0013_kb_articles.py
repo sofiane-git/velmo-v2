@@ -23,7 +23,6 @@ _EMBEDDING_DIM = 384
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
         embedding_col = sa.Column("embedding", Vector(_EMBEDDING_DIM), nullable=True)
     else:
         embedding_col = sa.Column("embedding", sa.Text(), nullable=True)

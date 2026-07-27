@@ -23,7 +23,11 @@ _EMBEDDING_DIM = 384
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        has_vector = bind.execute(
+            sa.text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+        ).scalar()
+        if not has_vector:
+            op.execute("CREATE EXTENSION IF NOT EXISTS vector")
         op.add_column("episode", sa.Column("embedding", Vector(_EMBEDDING_DIM), nullable=True))
         op.execute(
             "CREATE INDEX IF NOT EXISTS ix_episode_embedding_hnsw ON episode "
