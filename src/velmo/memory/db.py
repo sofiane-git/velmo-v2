@@ -31,8 +31,9 @@ from sqlalchemy import (
     text,
 )
 from pgvector.sqlalchemy import Vector
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 
 from velmo.config import get_settings, require_durable_store
 from velmo.memory.entities import CONTRACT_RE, ORDER_RE
@@ -201,6 +202,27 @@ def make_memory_engine(url: str | None = None) -> Engine:
         def _enable_sqlite_fk(dbapi_connection: object, connection_record: object) -> None:
             if isinstance(dbapi_connection, sqlite3.Connection):
                 dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    if engine.url.drivername.startswith("postgresql"):
+
+        @event.listens_for(engine, "checkin")
+        def _reset_rls_guc(
+            dbapi_connection: DBAPIConnection | None, connection_record: ConnectionPoolEntry
+        ) -> None:
+            # `_bind_user` (memory/__init__.py) fixe `app.current_user_id` avec
+            # `is_local=false` pour survivre aux commits intermédiaires d'un même
+            # appel — ce qui le fait aussi survivre au retour en pool. Sans ce
+            # reset, la prochaine connexion réutilisée hériterait du user_id de
+            # la requête précédente pour les policies RLS (fuite inter-utilisateur
+            # si un futur code path lit ces tables sans rappeler `_bind_user`).
+            if dbapi_connection is None:
+                return
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("RESET app.current_user_id")
+                dbapi_connection.commit()
+            finally:
+                cursor.close()
 
     # Schéma créé par l'app seulement en SQLite (repli hors-ligne/tests) ; sur
     # Postgres, Alembic est l'unique source du schéma (D2-04) — `alembic upgrade
