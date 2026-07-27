@@ -22,6 +22,7 @@ from . import pipeline
 from .classifier import ModerationClassifier, get_classifier
 from .db import bind_user, count_recent_audit, make_guardrails_engine, write_audit
 from .judge import Judge, get_judge
+from . import retrieved
 from .patterns import redact_pii, redact_secret_leak
 from .pii_redaction import redact_spans
 
@@ -45,6 +46,11 @@ CATEGORIES = (
     "out_of_scope",
     "prompt_injection",
     "secret_leak",
+    # G8 — injection indirecte (contenu récupéré, écriture mémoire). Contrôlée
+    # hors du pipeline à 3 étages : elle n'a de sens ni en `input` ni en
+    # `output`, mais aux points `retrieved` et `memory_write`
+    # (`check_retrieved` / `check_memory_write`).
+    "indirect_injection",
 )
 
 GENERIC_REFUSAL = (
@@ -204,6 +210,89 @@ class GuardrailEngine:
             stored_text=filtered,
             hits=decision.hits,
         )
+
+    def check_retrieved(self, text: str, *, source: str) -> Decision:
+        """Porte `GRET` — G8 sur un contenu **récupéré** (extrait de FAQ, champ
+        libre d'une commande, retour d'outil) avant qu'il n'entre dans le
+        contexte de l'agent.
+
+        Trois différences assumées avec `check_input`/`check_output` :
+
+        - **l'action est l'écartement, jamais le blocage du tour.** L'auteur du
+          contenu n'est pas le client : bloquer transformerait un document
+          empoisonné en déni de service sur toutes les questions qui le
+          touchent. On répond sans l'extrait.
+        - **la délimitation passe avant la détection** : un contenu propre
+          ressort *emballé* en donnée citée, pas simplement « autorisé ».
+        - **fail-open sur le jugement, fail-closed sur la délimitation** : la
+          neutralisation et l'emballage sont locaux et déterministes, ils ne
+          tombent jamais — c'est ce qui rend l'absence de juge tolérable ici,
+          contrairement à G5/G6 en entrée.
+        """
+        found = retrieved.find_instruction_patterns(text)
+        if found:
+            self._log_g8(source_kind=f"retrieved:{source}", location="retrieved", action="filter")
+            return Decision(
+                allowed=True,
+                action="filter",
+                category="indirect_injection",
+                reason=f"Contenu récupéré écarté — forme d'instruction détectée : {found[0]!r}",
+                filtered_text="",
+                stored_text="",
+            )
+        return Decision(
+            allowed=True,
+            action="allow",
+            filtered_text=retrieved.wrap_as_quoted_data(text, source=source),
+        )
+
+    def check_memory_write(self, value: str, *, kind: str) -> Decision:
+        """Contrôle une écriture mémoire **candidate** avant persistance — G8,
+        menace T5.
+
+        `kind="procedure"` est le cas critique : la règle sera réinjectée dans le
+        prompte système des sessions suivantes, donc une règle malveillante
+        pilote l'agent bien après le tour où elle a été soufflée. `kind="fact"`
+        est une donnée réinjectée comme contexte : on n'y applique que le
+        contrôle de forme d'instruction, pas la grammaire de règle.
+
+        **Fail-closed** : en cas de doute, on ne persiste pas. L'asymétrie des
+        coûts est nette — une écriture refusée est récupérable (l'extraction est
+        best-effort, le client peut redonner l'information explicitement), une
+        écriture malveillante persistée ne l'est pas.
+        """
+        if kind == "procedure":
+            ok, why = retrieved.rule_is_wellformed(value)
+        else:
+            found = retrieved.find_instruction_patterns(value)
+            ok, why = (
+                (not found),
+                (f"forme d'instruction système détectée : {found[0]!r}" if found else ""),
+            )
+        if ok:
+            return Decision(allowed=True, action="allow")
+        self._log_g8(source_kind=f"memory_write:{kind}", location="memory_write", action="block")
+        return Decision(
+            allowed=False,
+            action="block",
+            category="indirect_injection",
+            reason=f"Écriture mémoire refusée ({kind}) — {why}",
+        )
+
+    def _log_g8(self, *, source_kind: str, location: str, action: str) -> None:
+        """Journalise un événement G8. `category='indirect_injection'` et les
+        `location` `retrieved`/`memory_write` sont des valeurs de première classe
+        du journal (cf. conception §Modèle de données), pas des cas spéciaux."""
+        self.events.append(
+            {
+                "category": "indirect_injection",
+                "location": location,
+                "method": "regex",
+                "action": action,
+                "source_kind": source_kind,
+            }
+        )
+        logger.warning("Garde-fous G8 : %s — action=%s (%s).", location, action, source_kind)
 
     @staticmethod
     def _redact_for_storage(text: str, category: str | None) -> str:

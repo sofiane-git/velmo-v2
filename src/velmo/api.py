@@ -4,13 +4,13 @@ import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from velmo.config import get_settings, validate_startup
+from velmo.config import Settings, get_settings, validate_startup
 from velmo.guardrails import GuardrailEngine
 from velmo.guardrails.classifier import get_classifier
 from velmo.guardrails.judge import get_judge
@@ -112,8 +112,62 @@ def get_agent() -> Agent:
 
 
 class ChatRequest(BaseModel):
-    user_id: str
+    # `user_id` reste dans le contrat, mais n'est **autoritatif** que si aucune
+    # couche d'identité n'est configurée (voir `resolve_user_id`) : en présence
+    # d'un en-tête de confiance, cette valeur est ignorée.
+    user_id: str | None = None
     message: str
+
+
+def resolve_user_id(
+    *,
+    header_value: str | None,
+    body_value: str | None,
+    settings: Settings | None = None,
+) -> str:
+    """Résout l'identité de l'appelant — **source unique** pour tous les
+    endpoints (Ch.0 §2, audit Z-05).
+
+    Ordre de priorité, volontairement sans repli en cascade :
+
+    - en-tête de confiance **configuré** → seule source acceptée. Absent de la
+      requête = requête non authentifiée : on refuse plutôt que de retomber sur
+      le corps, sinon l'en-tête serait décoratif et l'authentification
+      contournable en omettant l'en-tête.
+    - en-tête **non configuré** (mode démonstrateur, Ch.0 §1) → le corps est
+      toléré. `validate_startup` interdit déjà cet état en production.
+
+    Lève `PermissionError` (traduite en 401 par les endpoints) quand aucune
+    identité utilisable n'est disponible.
+    """
+    settings = settings or get_settings()
+    header_name = settings.trusted_user_header
+    if header_name:
+        if header_value and header_value.strip():
+            return header_value.strip()
+        raise PermissionError(
+            f"identité absente : en-tête `{header_name}` attendu (le `user_id` du corps de "
+            f"requête n'est pas autoritatif quand une couche d'identité est configurée)"
+        )
+    if body_value and body_value.strip():
+        return body_value.strip()
+    raise PermissionError("identité absente : aucun `user_id` fourni")
+
+
+def _resolve_or_401(http_request: Request, body_value: str | None) -> str:
+    """Extrait l'en-tête de confiance **dont le nom vient de la config** (donc
+    lu dynamiquement : un alias `Header(...)` statique figerait le nom à
+    l'import), puis délègue la politique à `resolve_user_id`."""
+    settings = get_settings()
+    header_value = (
+        http_request.headers.get(settings.trusted_user_header)
+        if settings.trusted_user_header
+        else None
+    )
+    try:
+        return resolve_user_id(header_value=header_value, body_value=body_value)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 class ChatResponse(BaseModel):
@@ -149,12 +203,20 @@ class GateCaseOut(BaseModel):
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat_endpoint(request: ChatRequest, agent: Agent = Depends(get_agent)) -> ChatResponse:
+def chat_endpoint(
+    request: ChatRequest,
+    http_request: Request,
+    agent: Agent = Depends(get_agent),
+) -> ChatResponse:
     """
     Envoie un message à l'agent Velmo pour un utilisateur donné.
+
+    L'identité vient de l'en-tête de confiance quand une couche
+    d'authentification est configurée, jamais du corps (voir `resolve_user_id`).
     """
+    user_id = _resolve_or_401(http_request, request.user_id)
     try:
-        response_text = traced_reply(agent, request.user_id, request.message)
+        response_text = traced_reply(agent, user_id, request.message)
         return ChatResponse(response=response_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -171,15 +233,24 @@ def _stream_events(agent: Agent, user_id: str, message: str) -> Iterator[str]:
 
 @app.post("/chat/stream")
 def chat_stream_endpoint(
-    request: ChatRequest, agent: Agent = Depends(get_agent)
+    request: ChatRequest,
+    http_request: Request,
+    agent: Agent = Depends(get_agent),
 ) -> StreamingResponse:
     """
-    Même contrat que `/chat`, mais diffuse chaque étape du pipeline en SSE :
-    `input_guardrail`, `memory_read`, `routing`, `tool_result`? (si un outil a
-    été appelé), `output_guardrail`, `memory_write`, `final`.
+    Même contrat que `/chat` (identité incluse), mais diffuse chaque **étape**
+    du pipeline en SSE : `input_guardrail`, `memory_read`, `routing`,
+    `tool_result`? (si un outil a été appelé), `output_guardrail`,
+    `memory_write`, `final`.
+
+    Ce sont bien des étapes, pas des fragments de réponse : le texte n'est émis
+    qu'à l'événement `final`, **après** le garde-fou de sortie. Diffuser des
+    tokens détruirait la garantie de `GOUT` (un motif coupé entre deux
+    fragments échappe à tout filtrage incrémental) — décision Ch.0 §5.
     """
+    user_id = _resolve_or_401(http_request, request.user_id)
     return StreamingResponse(
-        _stream_events(agent, request.user_id, request.message),
+        _stream_events(agent, user_id, request.message),
         media_type="text/event-stream",
     )
 
