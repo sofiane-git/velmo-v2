@@ -70,3 +70,40 @@ def test_report_contains_signals(tmp_path):
     text = report.read_text(encoding="utf-8").lower()
     for signal in ["memoire", "blocage", "faux positif", "latence", "cout"]:
         assert signal in text
+
+
+def test_tools_dimension_blocks_delivery_when_it_collapses(monkeypatch):
+    """La 4ᵉ dimension doit **bloquer**, sinon elle est décorative.
+
+    On simule l'effondrement de la couche d'actions (tous les cas déterministes
+    en échec) et on vérifie que le `min(dims)` passe sous le plancher, alors que
+    les trois autres dimensions sont inchangées."""
+    # Patché sur `velmo.mlops`, pas sur le module d'origine : `run_eval_steps`
+    # importe `tools_scores` par son nom, donc la référence est liée à l'import.
+    import velmo.mlops as mlops_module
+
+    monkeypatch.setattr(mlops_module, "tools_scores", lambda results: (0.0, 1.0))
+    scores = run_eval(build_reference_agent(), agent_factory=build_reference_agent)
+    assert scores.tools == 0.0
+    assert scores.global_ == 0.0
+    with pytest.raises(DeliveryBlocked):
+        enforce_threshold(scores, 0.8)
+
+
+def test_tools_dimension_absent_does_not_block(monkeypatch):
+    """Une suite non exécutée (pas d'`agent_factory`) laisse le gate inchangé :
+    un run qui ne mesure pas n'est pas un run qui régresse."""
+    scores = run_eval(build_reference_agent())
+    assert scores.tools is None
+    assert scores.global_ > 0.0
+
+
+def test_selection_accuracy_does_not_gate(monkeypatch):
+    """Le bruit de routage ne doit jamais bloquer une livraison (M4) : une
+    justesse de sélection nulle laisse le gate au vert."""
+    import velmo.mlops as mlops_module
+
+    monkeypatch.setattr(mlops_module, "tools_scores", lambda results: (1.0, 0.0))
+    scores = run_eval(build_reference_agent(), agent_factory=build_reference_agent)
+    assert scores.tool_selection_accuracy == 0.0
+    enforce_threshold(scores, 0.8)  # ne doit pas lever

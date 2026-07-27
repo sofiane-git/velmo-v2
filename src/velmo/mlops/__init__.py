@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Any, Callable, Literal, Protocol, cast
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -24,6 +24,7 @@ from velmo.mlops.stats import non_regression_ok
 from velmo.mlops.suites.guardrails import guardrails_confusion_matrix, run_guardrails_suite_steps
 from velmo.mlops.suites.memory import run_memory_suite_steps
 from velmo.mlops.suites.quality import run_quality_suite_steps
+from velmo.mlops.suites.tools import run_tools_suite_steps, tools_scores
 from velmo.mlops.versioning import compute_version_hashes, current_git_commit, current_git_tag
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,10 @@ class Scores:
     judge_shadow_divergence_rate: float | None = None
     extractor_precision: float | None = None
     extractor_recall: float | None = None
+    # Couche d'actions : `tools` gate (cas déterministes), `tool_selection_accuracy`
+    # est du reporting. `None` = suite non exécutée sur ce run.
+    tools: float | None = None
+    tool_selection_accuracy: float | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +133,7 @@ def run_eval_steps(
     db_url: str | None = None,
     triggered_by: str = "manual",
     sink: ObservabilitySink | None = None,
+    agent_factory: Callable[[], Any] | None = None,
 ) -> Iterator[GateEvent]:
     """Exécute les trois suites (mémoire, garde-fous, qualité), calcule les
     notes, persiste `AgentVersion`/`EvalRun`/`EvalCaseResult` — même
@@ -240,7 +246,43 @@ def run_eval_steps(
 
     note_globale = 0.4 * note_memory + 0.4 * note_guardrails + 0.2 * note_quality
 
-    all_results = memory_results + guardrails_results + quality_results
+    # Suite Outils (Ch.4 §Évaluation). Exige un **agent frais par cas** : les cas
+    # d'action mutent l'état métier (annulation, remboursement), et les enchaîner
+    # sur une même base ferait dépendre un cas du précédent — un cas rejouable ne
+    # doit dépendre que de lui-même.
+    tools_results: list[CaseResult] = []
+    note_tools: float | None = None
+    tool_selection_accuracy: float | None = None
+    if agent_factory is not None:
+        yield GateEvent("suite_start", {"suite": "tools"})
+        for case_event in run_tools_suite_steps(agent_factory):
+            if case_event.kind == "start":
+                yield GateEvent("case_start", {"suite": "tools", "case_id": case_event.case_id})
+            else:
+                assert case_event.result is not None
+                tools_results.append(case_event.result)
+                yield GateEvent(
+                    "case_done",
+                    {
+                        "suite": "tools",
+                        "case_id": case_event.case_id,
+                        "passed": case_event.result.passed,
+                        "score": case_event.result.score,
+                    },
+                )
+        note_tools, tool_selection_accuracy = tools_scores(tools_results)
+        yield GateEvent(
+            "suite_done",
+            {
+                "suite": "tools",
+                "cases": len(tools_results),
+                "passed": sum(1 for r in tools_results if r.passed),
+                "note": note_tools,
+                "selection_accuracy": tool_selection_accuracy,
+            },
+        )
+
+    all_results = memory_results + guardrails_results + quality_results + tools_results
     latencies = sorted(r.latency_ms for r in all_results)
     latency_p50 = _percentile(latencies, 0.5)
     latency_p95 = _percentile(latencies, 0.95)
@@ -279,7 +321,14 @@ def run_eval_steps(
             latency_p95 <= gate_settings.gate_latency_p95_ceiling_ms
             and cost <= gate_settings.gate_cost_per_conv_ceiling
         )
-        global_gate = min(note_memory, note_guardrails, quality_gate_score) if nf_gate_ok else 0.0
+        # `note_tools` n'entre dans le `min` que si la suite a **tourné** : une
+        # suite sautée (pas de `agent_factory`) doit laisser le gate inchangé, pas
+        # le faire échouer à 0 — un run qui ne mesure pas n'est pas un run qui
+        # régresse (même logique que les runs incomplets, §Robustesse du harness).
+        gating_dims = [note_memory, note_guardrails, quality_gate_score]
+        if note_tools is not None:
+            gating_dims.append(note_tools)
+        global_gate = min(gating_dims) if nf_gate_ok else 0.0
 
         _persist_version(session, hashes, commit, version_tag)
         run_id = f"run-{uuid.uuid4().hex[:8]}"
@@ -289,6 +338,8 @@ def run_eval_steps(
             note_memory=note_memory,
             note_guardrails=note_guardrails,
             note_quality=note_quality,
+            note_tools=note_tools,
+            tool_selection_accuracy=tool_selection_accuracy,
             note_globale=note_globale,
             global_gate=global_gate,
             gate_passed=global_gate >= gate_settings.gate_min_score,
@@ -334,6 +385,8 @@ def run_eval_steps(
             "note_memory": note_memory,
             "note_guardrails": note_guardrails,
             "note_quality": note_quality,
+            "note_tools": note_tools,
+            "tool_selection_accuracy": tool_selection_accuracy,
             "note_globale": note_globale,
             "global_gate": global_gate,
             "gate_passed": global_gate >= get_settings().gate_min_score,
@@ -358,13 +411,20 @@ def run_eval(
     db_url: str | None = None,
     triggered_by: str = "manual",
     sink: ObservabilitySink | None = None,
+    agent_factory: Callable[[], Any] | None = None,
 ) -> Scores:
     """Comportement et signature inchangés — consomme `run_eval_steps`
     jusqu'à son événement `final` et reconstruit `Scores` à l'identique.
     Voir `run_eval_steps` pour le détail étape par étape (utilisé par l'API
     `/mlops/gate/run` pour diffuser la progression en direct)."""
     final_payload: dict[str, object] | None = None
-    for event in run_eval_steps(agent, db_url=db_url, triggered_by=triggered_by, sink=sink):
+    for event in run_eval_steps(
+        agent,
+        db_url=db_url,
+        triggered_by=triggered_by,
+        sink=sink,
+        agent_factory=agent_factory,
+    ):
         if event.stage == "final":
             final_payload = event.payload
     assert final_payload is not None  # run_eval_steps yields exactly one "final" event
@@ -387,6 +447,10 @@ def run_eval(
         ],
         extractor_precision=final_payload["extractor_precision"],  # type: ignore[arg-type]
         extractor_recall=final_payload["extractor_recall"],  # type: ignore[arg-type]
+        tools=final_payload["note_tools"],  # type: ignore[arg-type]
+        tool_selection_accuracy=final_payload[  # type: ignore[arg-type]
+            "tool_selection_accuracy"
+        ],
     )
 
 

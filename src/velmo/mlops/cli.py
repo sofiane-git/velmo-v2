@@ -39,7 +39,15 @@ def main() -> None:
     raw_sink = get_sink()
     cost_sink = CostAccumulatingSink(raw_sink)
     agent = build_gate_agent(cost_sink)
-    scores = run_eval(agent, triggered_by=args.triggered_by, sink=cost_sink)
+    # `agent_factory` : la suite Outils exige un agent frais par cas (état métier
+    # muté par les actions). Sans lui, elle serait sautée et la couche qui engage
+    # de l'argent ne gaterait rien.
+    scores = run_eval(
+        agent,
+        triggered_by=args.triggered_by,
+        sink=cost_sink,
+        agent_factory=lambda: build_gate_agent(cost_sink),
+    )
 
     report_path = Path("mlops") / "report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)

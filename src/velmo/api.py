@@ -264,7 +264,12 @@ def _gate_event_stream() -> Iterator[str]:
         raw_sink = get_sink()
         cost_sink = CostAccumulatingSink(raw_sink)
         agent = build_gate_agent(cost_sink)
-        for event in run_eval_steps(agent, triggered_by="manual", sink=cost_sink):
+        for event in run_eval_steps(
+            agent,
+            triggered_by="manual",
+            sink=cost_sink,
+            agent_factory=lambda: build_gate_agent(cost_sink),
+        ):
             yield _sse_format(event.stage, event.payload)
         close = getattr(raw_sink, "close", None)
         if close is not None:

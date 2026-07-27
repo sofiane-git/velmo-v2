@@ -64,6 +64,11 @@ def write_report(scores: Scores, path: Path) -> None:
 - Taux de faux positifs : {scores.false_positive_rate:.2%}
 - Divergence du juge de repli (shadow, seuil d'attention 20%) : {shadow}
 
+## Outils — actions metier
+
+- Note outils (cas deterministes : refus + confirmation) : {_pct(scores.tools)}
+- Justesse de selection d'outil (reporting) : {_pct(scores.tool_selection_accuracy)}
+
 ## Memoire — extracteur (reporting, hors gate)
 
 - Precision d'ecriture : {_pct(scores.extractor_precision)}
@@ -91,6 +96,8 @@ def write_report(scores: Scores, path: Path) -> None:
         "taux_divergence_shadow": scores.judge_shadow_divergence_rate,
         "extracteur_precision": scores.extractor_precision,
         "extracteur_rappel": scores.extractor_recall,
+        "note_outils": scores.tools,
+        "justesse_selection_outil": scores.tool_selection_accuracy,
         "latence_par_composant": [
             {
                 "composant": row.component,
