@@ -41,6 +41,9 @@ SYSTEM_PROMPT = (
 DEFAULT_REFUSAL = GENERIC_REFUSAL
 
 ORDER_RE = re.compile(r"O-\d{4}-\d{4}")
+# Référence d'article telle que l'outil la renvoie quand il demande au client de
+# désigner lequel modifier (commande multi-articles) — le client la recopie.
+ITEM_RE = re.compile(r"\boi-[\w-]+\b")
 SIZE_RE = re.compile(r"\b(XXL|XL|S|M|L)\b")
 AMOUNT_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:€|euros?)")
 _CONFIRM = ("je confirme", "confirme", "c'est confirmé", "oui je", "vas-y")
@@ -363,11 +366,15 @@ class Agent:
         ):
             size = SIZE_RE.search(message)
             new_size = size.group(1) if size else "M"
+            item = ITEM_RE.search(message)
+            item_id = item.group(0) if item else None
             answer, result = self._confirm_or_act(
                 confirmed,
                 f"changer la taille (vers {new_size}) de",
                 order_id,
-                lambda: tools.update_order_item(self.session, order_id, user_id, new_size),
+                lambda: tools.update_order_item(
+                    self.session, order_id, user_id, new_size, item_id=item_id
+                ),
             )
             return answer, RoutingInfo(
                 handler="tool", tool_name="update_order_item", order_id=order_id, tool_result=result
@@ -498,6 +505,23 @@ class Agent:
         result = action()
         if result.get("error"):
             return f"Je ne trouve pas la commande {order_id} à votre nom.", result
+        if result.get("action") == "item_selection_required":
+            # Refuser en demandant lequel, plutôt que de modifier un article que le
+            # client n'a pas désigné (le défaut silencieux corrigé au Ch.4 §État).
+            listing = ", ".join(
+                f"{it['item_id']} (taille {it['size']})" for it in result.get("items", [])
+            )
+            return (
+                f"Cette commande contient plusieurs articles : {listing}. "
+                "Lequel souhaitez-vous modifier ? Indiquez sa référence.",
+                result,
+            )
+        if result.get("action") == "item_not_found":
+            return (
+                f"Je ne retrouve pas cet article dans la commande {order_id}. "
+                "Vérifiez la référence indiquée.",
+                result,
+            )
         if result.get("action") == "escalate":
             return (
                 f"Cette demande sur la commande {order_id} dépasse ce que je peux faire seul "
