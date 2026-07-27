@@ -18,7 +18,8 @@ ce contrat, pas une configuration divergente.
 - **Hôte** : **Azure Container Apps** (ACA) — cette même image, `--target-port 8000`, ingress
   HTTPS externe, `--min-replicas 0` (scale-to-zero). Le code n'a aucune adhérence à l'hôte :
   config 12-factor, `GET /health` pour la sonde, `0.0.0.0:8000`.
-- **Registre** : Azure Container Registry (image poussée via `az acr build`, tag = sha git).
+- **Registre** : Azure Container Registry (image poussée via `az acr build`, tag = version du
+  tag de release, ex. `velmo:v2.1.0` — traçable au commit taggé).
 - **Secrets** : identité managée de l'app → Key Vault (`secretref`/`keyvaultref`), jamais de
   valeur en clair dans la config ACA ni dans l'image.
 - **Store** : Azure Database for PostgreSQL Flexible Server (managé, PITR, `pgvector`).
@@ -26,6 +27,11 @@ ce contrat, pas une configuration divergente.
 Pas de manifeste IaC dédié ici : les commandes `az` de bout en bout sont dans
 `docs/tutorials/tuto_azure_deploiement.md` §C/§D/§F (source unique), le *pourquoi* dans
 `docs/reference/conceptions/conception_chantier3_evaluation_mlops.md` §Cible de déploiement.
+Depuis `release.yml` (`approve-and-promote`), ce build+push+déploiement est **automatisé**
+après approbation humaine (Environment `production`) — voir
+`docs/tutorials/tuto_github_actions_release.md` §4bis/§7.4. Les commandes ci-dessus/§F
+restent la référence pour un geste manuel (debug, test hors-release). Le front (`web/`) a son
+propre cycle, sans registre conteneur — voir `docs/reference/cycle-de-vie-image.md`.
 
 ## Services requis (backing services, 12-factor)
 

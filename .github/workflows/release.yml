@@ -61,6 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write   # gh release create
+      id-token: write   # azure/login OIDC (déploiement ACA)
 
     # GitHub Environment "production" : configurer les required reviewers dans
     # Settings → Environments → production (geste manuel unique du cycle
@@ -70,17 +71,49 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Marque le tag comme promu (GitHub Release, pas de rebuild)
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          # Identité dédiée au déploiement (distincte de celle de nightly.yml,
+          # Reader seul) — federated credential scopée à l'Environment
+          # `production` (subject `repo:...:environment:production`), pas à un
+          # tag ni une branche : la confiance Azure colle exactement au clic
+          # d'approbation humaine ci-dessus. Mise en place ponctuelle :
+          # tuto_github_actions_release.md §4bis.
+          client-id: ${{ secrets.AZURE_DEPLOY_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Build + push l'image (ACR, tag = version du tag release)
+        env:
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: az acr build --registry "$ACR" --image "velmo:$TAG_NAME" --file Dockerfile .
+      - name: Déploie l'image sur Azure Container Apps
+        env:
+          ACR: ${{ vars.AZURE_ACR_NAME }}
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          az containerapp update --name "$APP" --resource-group "$RG" \
+            --image "${ACR}.azurecr.io/velmo:${TAG_NAME}"
+      - name: Vérifie /health sur la nouvelle révision
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+          APP: ${{ vars.AZURE_CONTAINERAPP_NAME }}
+        run: |
+          FQDN=$(az containerapp show --name "$APP" --resource-group "$RG" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          for i in $(seq 1 10); do
+            curl -fsS "https://$FQDN/health" && exit 0
+            sleep 5
+          done
+          echo "::error::$FQDN/health ne répond pas 200 après déploiement — rollback manuel : az containerapp update --image ...:<version précédente>"
+          exit 1
+      - name: Marque le tag comme promu (GitHub Release, après déploiement vérifié)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
           gh release create "$TAG_NAME" \
             --title "Velmo 2.0 $TAG_NAME" \
-            --notes "Promu en production après gate qualité vert (voir mlops/report.md du run CI associé)."
-      # Note : la commande de déploiement effective (redémarrage du service,
-      # promotion d'un slot, mise à jour d'une image conteneur...) dépend du
-      # choix d'hébergement de l'application — non tranché à ce jour dans ce
-      # repo. Ce job s'arrête à la trace de promotion (GitHub Release) ; la
-      # commande de déploiement réelle est à ajouter ici une fois
-      # l'hébergement choisi, jamais inventée en attendant.
+            --notes "Promu en production après gate qualité vert + déploiement ACA vérifié (voir mlops/report.md du run CI associé)."
