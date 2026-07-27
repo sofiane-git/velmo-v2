@@ -42,6 +42,21 @@ class Settings(BaseSettings):
     # cette valeur.
     allow_sqlite_fallback: bool = False
 
+    # Source d'identité (Ch.0 §2, audit Z-05). R3 garantit qu'aucune requête
+    # n'atteint les données d'un autre utilisateur *pour un `user_id` donné* ;
+    # elle ne garantit pas l'authenticité de ce `user_id`. Renseigné : le nom de
+    # l'en-tête HTTP posé par la couche d'authentification (passerelle/reverse
+    # proxy ayant validé le jeton) — l'identité vient de là, jamais du JSON
+    # métier. Vide : mode démonstrateur, le corps de requête est toléré.
+    trusted_user_header: str | None = None
+
+    # Accepter le `user_id` du corps de requête est un repli de développement.
+    # Même patron que `allow_sqlite_fallback` : en production, l'absence de
+    # source d'identité de confiance est une erreur au démarrage
+    # (`validate_startup`) sauf opt-in explicite ici. Un endpoint usurpable qui
+    # a l'apparence de l'isolation est pire qu'une panne.
+    allow_unauthenticated_user_id: bool = False
+
     # Agent principal : Azure AI Inference (Mistral-Large-3).
     azure_ai_inference_endpoint: str | None = None
     azure_ai_inference_api_key: str | None = None
@@ -241,6 +256,22 @@ def validate_startup(settings: Settings | None = None) -> None:
                 f"`{field.upper()}` doit se terminer par `{suffix}` — forme requise par le "
                 f"client (l'endpoint « nu » du portail échoue à chaque appel)"
             )
+    # Identité : en production, un endpoint dont le `user_id` vient du corps de
+    # requête est usurpable — R3 protège alors contre une fuite du système, pas
+    # contre une usurpation par l'appelant (Ch.0 §2). Fail-fast, sauf opt-in
+    # explicite : le repli reste possible, jamais par défaut.
+    if (
+        settings.environment == "production"
+        and not settings.trusted_user_header
+        and not settings.allow_unauthenticated_user_id
+    ):
+        errors.append(
+            "`TRUSTED_USER_HEADER` manquant en production : sans en-tête d'identité de "
+            "confiance, `user_id` viendrait du corps de requête et serait usurpable. "
+            "Configurez l'en-tête posé par la couche d'authentification, ou posez "
+            "`ALLOW_UNAUTHENTICATED_USER_ID=true` pour l'assumer explicitement "
+            "(déconseillé en prod)."
+        )
     if errors:
         raise ConfigurationError(
             "Configuration incohérente :\n" + "\n".join(f"- {e}" for e in errors)

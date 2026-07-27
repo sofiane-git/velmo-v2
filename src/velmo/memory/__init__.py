@@ -47,6 +47,7 @@ from .db import (
 )
 from velmo.llm import LLM, get_llm
 from velmo.config import get_settings
+from velmo.guardrails.retrieved import rule_is_wellformed
 
 from .episodic import EpisodicVectorStore, get_episodic_backend
 from .extractor import ExtractedFact, ExtractedProcedure, FactExtractor, get_extractor
@@ -55,6 +56,32 @@ from .graph import build_graph, get_checkpointer, replace_messages
 logger = logging.getLogger(__name__)
 
 Turn = tuple[str, str]
+
+
+def _rule_is_persistable(trigger: str, rule: str) -> bool:
+    """Garde G8 sur l'écriture d'une règle de comportement (menace T5).
+
+    Une `PROCEDURE` est une instruction en langage naturel, produite par un LLM
+    depuis du texte utilisateur, puis réinjectée dans le prompt **système** des
+    sessions suivantes : c'est une injection de prompt persistante par
+    conception, et elle échappe au garde-fou d'entrée du tour où elle agira
+    (le contenu hostile n'est alors plus dans le message, il est en base).
+
+    `trigger` était déjà contraint à un vocabulaire fermé côté extracteur ;
+    `rule` restait du texte libre non validé — c'est ce trou que ferme ce
+    contrôle. **Fail-closed** : au moindre doute on ne persiste pas. L'asymétrie
+    des coûts est nette — une écriture refusée est récupérable (l'extraction est
+    best-effort, le client peut redonner l'information), une écriture
+    malveillante persistée pilote toutes les sessions futures.
+
+    Le contrôle est **local et déterministe** (aucun appel réseau) : il ne peut
+    pas tomber, et n'ajoute rien au budget de latence de l'écriture mémoire.
+    """
+    ok, why = rule_is_wellformed(rule)
+    if not ok:
+        logger.warning("Écriture mémoire refusée (G8/T5) — trigger=%r : %s", trigger, why)
+    return ok
+
 
 # `render()` sérialise les faits dans le prompt LLM : les clés internes
 # (snake_case, ex. `shoe_size`) ne doivent jamais y apparaître telles quelles
@@ -396,6 +423,8 @@ class MemoryManager:
                     continue
                 if is_tombstoned(session, user_id, "procedure_trigger", ep.trigger):
                     continue
+                if not _rule_is_persistable(ep.trigger, ep.rule):
+                    continue
                 _, changed = upsert_procedure(
                     session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
                 )
@@ -461,6 +490,8 @@ class MemoryManager:
             if ep.confidence < self.confidence_threshold:
                 continue
             if is_tombstoned(session, user_id, "procedure_trigger", ep.trigger):
+                continue
+            if not _rule_is_persistable(ep.trigger, ep.rule):
                 continue
             _, changed = upsert_procedure(
                 session, user_id, ep.trigger, ep.rule, ep.confidence, thread.thread_id
