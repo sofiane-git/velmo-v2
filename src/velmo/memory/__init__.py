@@ -249,13 +249,19 @@ class MemoryManager:
     def _bind_user(self, session: Session, user_id: str) -> None:
         """Positionne le GUC PostgreSQL consommé par les policies RLS.
 
-        `set_config(..., is_local=true)` reste limité à la transaction courante.
+        `is_local=false` : le GUC survit aux `session.commit()` intermédiaires du
+        même appel (`get_or_create_user` puis `get_or_create_active_thread`
+        commitent chacun leur transaction). Sans quoi la policy RLS de la
+        deuxième table voit un GUC déjà effacé et rejette l'insert (constaté en
+        prod : `new row violates row-level security policy for table "thread"`
+        pour un utilisateur nouvellement créé). Sûr car chaque appel utilise une
+        session/connexion fraîche (`self._Session()`), pas de fuite inter-utilisateur.
         No-op hors Postgres (SQLite de test) : les policies RLS n'existent pas.
         """
         if session.get_bind().dialect.name != "postgresql":
             return
         session.execute(
-            text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": user_id}
+            text("SELECT set_config('app.current_user_id', :uid, false)"), {"uid": user_id}
         )
 
     def _embed_if_postgres(
