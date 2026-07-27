@@ -5,16 +5,18 @@ Surface publique stable consommée par la suite d'acceptance et la CI.
 
 from __future__ import annotations
 
+import logging
 import statistics
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from velmo.config import get_settings
+from velmo.mlops.budget import ComponentLatency, component_latency_report
 from velmo.mlops.db import AgentVersion, EvalCaseResult, EvalRun, make_mlops_engine
 from velmo.mlops.observability import CostAccumulatingSink, NullSink, ObservabilitySink
 from velmo.mlops.results import CaseResult
@@ -23,6 +25,8 @@ from velmo.mlops.suites.guardrails import guardrails_confusion_matrix, run_guard
 from velmo.mlops.suites.memory import run_memory_suite_steps
 from velmo.mlops.suites.quality import run_quality_suite_steps
 from velmo.mlops.versioning import compute_version_hashes, current_git_commit, current_git_tag
+
+logger = logging.getLogger(__name__)
 
 # Seuils SLO non-fonctionnels et plancher du gate : source unique en config
 # (`Settings.gate_*`, conception §Seuils — « chiffres versionnés dans un
@@ -50,6 +54,15 @@ class Scores:
     false_positive_rate: float
     latency_ms: float
     cost: float
+    # Mesures dotées d'un propriétaire dans le contrat de rapport (audit
+    # O-01/O-02/O-04). Toutes **hors gate** : elles informent la calibration et
+    # l'imputation d'un dépassement, elles ne bloquent pas une livraison.
+    # `None` = non mesuré sur ce run — volontairement distinct de `0.0`, qu'un
+    # lecteur interpréterait comme « mesuré et parfait » (voir `report.py`).
+    latency_by_component: list[ComponentLatency] = field(default_factory=list)
+    judge_shadow_divergence_rate: float | None = None
+    extractor_precision: float | None = None
+    extractor_recall: float | None = None
 
 
 @dataclass(frozen=True)
@@ -307,6 +320,14 @@ def run_eval_steps(
     finally:
         session.close()
 
+    # Mesures hors gate, dotées d'un propriétaire dans le rapport (audit
+    # O-01/O-02/O-04). Chacune est *best-effort* : une mesure de reporting qui
+    # ferait échouer un run de gate inverserait la hiérarchie — le gate décide,
+    # le reporting informe.
+    latency_by_component = component_latency_report(cost_sink.latencies_by_component)
+    shadow_rate = _measure_shadow_divergence()
+    extractor_precision, extractor_recall = _measure_extractor_quality()
+
     yield GateEvent(
         "final",
         {
@@ -323,6 +344,10 @@ def run_eval_steps(
             "cost_per_conv": cost,
             "run_id": run_id,
             "version_tag": version_tag,
+            "latency_by_component": [row.to_dict() for row in latency_by_component],
+            "judge_shadow_divergence_rate": shadow_rate,
+            "extractor_precision": extractor_precision,
+            "extractor_recall": extractor_recall,
         },
     )
 
@@ -353,7 +378,47 @@ def run_eval(
         false_positive_rate=final_payload["false_positive_rate"],  # type: ignore[arg-type]
         latency_ms=final_payload["latency_p95_ms"],  # type: ignore[arg-type]
         cost=final_payload["cost_per_conv"],  # type: ignore[arg-type]
+        latency_by_component=[
+            ComponentLatency.from_dict(row)
+            for row in cast(list[dict[str, object]], final_payload["latency_by_component"])
+        ],
+        judge_shadow_divergence_rate=final_payload[  # type: ignore[arg-type]
+            "judge_shadow_divergence_rate"
+        ],
+        extractor_precision=final_payload["extractor_precision"],  # type: ignore[arg-type]
+        extractor_recall=final_payload["extractor_recall"],  # type: ignore[arg-type]
     )
+
+
+def _measure_shadow_divergence(db_url: str | None = None) -> float | None:
+    """Divergence du juge de repli en shadow mode (audit O-02). Best-effort :
+    lire un agrégat de reporting ne doit jamais faire échouer un run de gate."""
+    from velmo.guardrails.db import make_guardrails_engine
+    from velmo.mlops.shadow import shadow_divergence_rate
+
+    try:
+        factory = sessionmaker(bind=make_guardrails_engine(db_url), future=True)
+        session = factory()
+        try:
+            return shadow_divergence_rate(session)
+        finally:
+            session.close()
+    except Exception:  # pragma: no cover - dépend de la disponibilité du store
+        logger.warning("Divergence shadow non mesurée (journal inaccessible).", exc_info=True)
+        return None
+
+
+def _measure_extractor_quality() -> tuple[float | None, float | None]:
+    """Précision/rappel d'écriture de l'extracteur (audit O-01). Best-effort
+    et hors gate : le jeu labellisé porte des cas limites, donc du bruit."""
+    from velmo.mlops.suites.extractor import run_extractor_suite
+
+    try:
+        result = run_extractor_suite()
+    except Exception:  # pragma: no cover - fixture absente d'un checkout partiel
+        logger.warning("Qualité de l'extracteur non mesurée.", exc_info=True)
+        return None, None
+    return result.precision, result.recall
 
 
 def _pass_rate(results: list[CaseResult]) -> float:
