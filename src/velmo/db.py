@@ -19,6 +19,7 @@ from sqlalchemy import (
     Engine,
     Enum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -180,6 +181,53 @@ class Escalation(Base):
     channel: Mapped[str] = mapped_column(String, default="support")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime(2024, 1, 1))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ToolAudit(Base):
+    """Journal des appels d'outils à effet de bord — Ch.4 §A6 (audit Z-01).
+
+    La mémoire avait `memory_audit`, les garde-fous `guardrail_audit`, les
+    **actions métier** n'avaient rien — alors que ce sont elles qui déplacent de
+    l'argent. Sans ce journal, impossible de répondre à « qui a déclenché ce
+    remboursement, sur quelle demande » ni de mesurer les refus, qui sont le
+    signal d'abus le plus direct.
+
+    Porte aussi la **clé d'idempotence** (Ch.4 §A5) : `UNIQUE` en base, ce qui
+    fait de l'unicité une garantie du store et non d'une vérification
+    applicative préalable — celle-ci perdrait la course entre deux appels
+    concurrents, qui est exactement le scénario du retry.
+
+    **Append-only** (pas d'`updated_at`) : un appel passé ne se modifie pas.
+    **Rétention** : régime `guardrail_audit`, pas `memory_audit` — une trace de
+    mouvement d'argent relève de l'obligation comptable et de l'intérêt légitime
+    anti-fraude, donc elle survit à une demande d'effacement, anonymisée plutôt
+    que détruite. D'où l'absence de FK vers `customers` : une suppression R5 ne
+    doit pas emporter le journal en cascade.
+    """
+
+    __tablename__ = "tool_audit"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    tool: Mapped[str] = mapped_column(String, index=True)
+    # "L" lecture client · "P" lecture publique · "É" écriture réversible ·
+    # "I" écriture irréversible (cf. Ch.4 §Inventaire et classification).
+    tool_class: Mapped[str] = mapped_column(String)
+    # JSON des arguments, **PII masquée** avant écriture : le journal d'actions
+    # ne doit pas devenir la copie non filtrée que le reste du système évite.
+    arguments: Mapped[str] = mapped_column(Text, default="{}")
+    # ok · refused_ownership · refused_state · escalated · capped · replayed · error
+    outcome: Mapped[str] = mapped_column(String, default="ok")
+    resource_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Résultat du premier appel, rejoué tel quel sur un doublon (A5).
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Jeton de confirmation consommé — réservé à A4 (confirmation explicite),
+    # non encore implémenté : la colonne existe pour que l'ajout de A4 ne soit
+    # pas une migration de plus sur une table append-only.
+    intent_token: Mapped[str | None] = mapped_column(String, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_thread_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime(2024, 1, 1))
 
 
 _EMBEDDING_DIM = 384
