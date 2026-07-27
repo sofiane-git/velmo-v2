@@ -30,6 +30,10 @@ def _write_outcome(result: dict[str, Any]) -> str:
         return "error"  # rien écrit : la clé d'idempotence est libérée
     if "error" in result:
         return "refused_ownership"
+    if result.get("action") in ("item_selection_required", "item_not_found"):
+        # Rien n'a été écrit, et l'action redeviendra possible dès que le client
+        # aura désigné l'article : la clé d'idempotence doit être libérée.
+        return "error"
     if result.get("action") == "escalate":
         return "refused_state"
     return "ok"
@@ -61,13 +65,28 @@ def track_shipment(session: Session, order_id: str, user_id: str) -> dict[str, A
 
 
 def update_order_item(
-    session: Session, order_id: str, user_id: str, new_size: str
+    session: Session,
+    order_id: str,
+    user_id: str,
+    new_size: str,
+    *,
+    item_id: str | None = None,
 ) -> dict[str, Any]:
     """Change la taille d'un article tant que la commande n'est pas expédiée.
 
-    Idempotent (Ch.4 §A5). Limite connue et documentée au Ch.4 §État : l'outil
-    opère sur `items[0]` sans sélecteur, donc sur une commande multi-articles il
-    modifie un article que le client n'a pas désigné.
+    **Sélection de l'article.** `item_id` désigne explicitement la ligne à
+    modifier. Omis, l'outil opère sur l'unique article de la commande — et
+    **refuse** s'il y en a plusieurs, en listant les articles pour que le client
+    tranche.
+
+    C'est le correctif d'un défaut silencieux : l'outil modifiait `items[0]`, donc
+    sur une commande multi-articles il changeait la taille d'un article que le
+    client n'avait pas désigné, tout en répondant « c'est fait ». Refuser vaut
+    mieux que deviner — une modification appliquée au mauvais article se découvre
+    à la livraison, et le client n'a aucune raison de la soupçonner.
+
+    Idempotent (Ch.4 §A5) : `item_id` fait partie de la clé, sinon modifier un
+    second article passerait pour un rejeu du premier.
     """
 
     def _act() -> dict[str, Any]:
@@ -85,16 +104,46 @@ def update_order_item(
             )
             session.flush()
             return {"action": "escalate", "reason": "already_shipped", "status": order.status.value}
-        order.items[0].size = Size(new_size)
+
+        if item_id is None:
+            if len(order.items) != 1:
+                # Zéro article : rien à modifier (l'ancien code levait `IndexError`).
+                # Plusieurs : ambiguïté que seul le client peut lever.
+                if not order.items:
+                    return {"action": "item_not_found", "order_id": order_id}
+                return {
+                    "action": "item_selection_required",
+                    "order_id": order_id,
+                    "items": [
+                        {"item_id": it.id, "size": it.size.value, "variant_id": it.variant_id}
+                        for it in order.items
+                    ],
+                }
+            target = order.items[0]
+        else:
+            # Résolu **dans la commande**, jamais globalement : sinon `item_id`
+            # deviendrait un moyen de modifier la ligne d'une autre commande —
+            # voire d'un autre client — que celle désignée par `order_id`.
+            matching = [it for it in order.items if it.id == item_id]
+            if not matching:
+                return {"action": "item_not_found", "order_id": order_id, "item_id": item_id}
+            target = matching[0]
+
+        target.size = Size(new_size)
         session.flush()
-        return {"action": "updated", "order_id": order_id, "new_size": new_size}
+        return {
+            "action": "updated",
+            "order_id": order_id,
+            "item_id": target.id,
+            "new_size": new_size,
+        }
 
     return idempotent_action(
         session,
         user_id=user_id,
         tool="update_order_item",
         tool_class="É",
-        arguments={"order_id": order_id, "new_size": new_size},
+        arguments={"order_id": order_id, "new_size": new_size, "item_id": item_id},
         resource_id=order_id,
         action=_act,
         outcome_of=_write_outcome,
