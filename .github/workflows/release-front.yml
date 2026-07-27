@@ -1,0 +1,40 @@
+name: release-front
+
+on:
+  push:
+    tags:
+      - "web-v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-front:
+    runs-on: ubuntu-latest
+    # Découplé du tag backend (v*.*.*) et de son gate qualité (release.yml) :
+    # le front n'a pas d'adhérence runtime à la version backend déployée
+    # (cf. docs/reference/cycle-de-vie-image.md §Frontend), donc pas de
+    # raison de le faire dépendre du gate MLOps ni d'attendre le même tag.
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm --dir web install --frozen-lockfile
+      - name: Build (preset Azure Static Web Apps — même commande que tuto §F5)
+        env:
+          NITRO_PRESET: azure-swa
+        run: pnpm --dir web build
+      - name: Déploie sur Azure Static Web Apps (même CLI que tuto §F5, en CI)
+        env:
+          SWA_DEPLOYMENT_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+        run: |
+          npx @azure/static-web-apps-cli deploy web/.output/public \
+            --api-location web/.output/server \
+            --deployment-token "$SWA_DEPLOYMENT_TOKEN" --env production
