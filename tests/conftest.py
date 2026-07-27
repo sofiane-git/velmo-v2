@@ -90,3 +90,38 @@ def reference_agent() -> Agent:
 @pytest.fixture
 def degraded_agent() -> Agent:
     return build_degraded_agent()
+
+
+def intent_token(session, *, user_id: str, tool: str, arguments: dict) -> str:
+    """Jeton de confirmation valide pour une action de classe I (Ch.4 §A4).
+
+    Les outils irréversibles exigent une confirmation préparée à un tour
+    antérieur ; les tests qui vérifient une *autre* propriété (plafond,
+    idempotence, journal) passent par ce helper plutôt que de dupliquer la
+    préparation."""
+    from velmo.tools._intent import prepare_intent
+
+    intent = prepare_intent(
+        session,
+        user_id=user_id,
+        tool=tool,
+        arguments=arguments,
+        resource_id=arguments.get("order_id"),
+    )
+    assert intent.token is not None, f"préparation refusée : {intent.refusal}"
+    return intent.token
+
+
+def refund_token(session, order_id: str, user_id: str, amount: float, reason: str) -> str:
+    return intent_token(
+        session,
+        user_id=user_id,
+        tool="trigger_refund",
+        arguments={"order_id": order_id, "amount": amount, "reason": reason},
+    )
+
+
+def cancel_token(session, order_id: str, user_id: str) -> str:
+    return intent_token(
+        session, user_id=user_id, tool="cancel_order", arguments={"order_id": order_id}
+    )

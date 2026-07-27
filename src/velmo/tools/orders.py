@@ -15,6 +15,7 @@ from ._common import (
     select,
 )
 from ._idempotency import idempotent_action
+from ._intent import consume_intent
 
 
 def _write_outcome(result: dict[str, Any]) -> str:
@@ -25,6 +26,8 @@ def _write_outcome(result: dict[str, Any]) -> str:
     traiter comme telle ferait réveiller deux fois un humain sur un simple retry.
     Seul le refus d'appartenance n'écrit rien.
     """
+    if result.get("action") == "confirmation_required":
+        return "error"  # rien écrit : la clé d'idempotence est libérée
     if "error" in result:
         return "refused_ownership"
     if result.get("action") == "escalate":
@@ -138,13 +141,28 @@ def update_shipping_address(
     )
 
 
-def cancel_order(session: Session, order_id: str, user_id: str) -> dict[str, Any]:
+def cancel_order(
+    session: Session, order_id: str, user_id: str, *, intent_token: str | None = None
+) -> dict[str, Any]:
     """Annule une commande tant qu'elle n'est pas expédiée.
 
-    Écriture **irréversible** (classe I) : idempotente (Ch.4 §A5).
+    Écriture **irréversible** (classe I) : exige un jeton d'intention valide
+    (Ch.4 §A4) et reste idempotente (§A5).
     """
+    arguments = {"order_id": order_id}
 
     def _act() -> dict[str, Any]:
+        # Consommation **dans** la garde d'idempotence : voir `refunds.py` pour le
+        # raisonnement (un retry rejoue le même jeton, déjà consommé).
+        verdict = consume_intent(
+            session, token=intent_token, user_id=user_id, tool="cancel_order", arguments=arguments
+        )
+        if not verdict.ok:
+            return {
+                "action": "confirmation_required",
+                "reason": verdict.reason,
+                "order_id": order_id,
+            }
         order = owned_order(session, order_id, user_id)
         if order is None:
             return {"error": "not_found_or_forbidden", "order_id": order_id}
@@ -168,7 +186,7 @@ def cancel_order(session: Session, order_id: str, user_id: str) -> dict[str, Any
         user_id=user_id,
         tool="cancel_order",
         tool_class="I",
-        arguments={"order_id": order_id},
+        arguments=arguments,
         resource_id=order_id,
         action=_act,
         outcome_of=_write_outcome,

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import pytest
 
+from conftest import cancel_token, refund_token
+
 from velmo.db import Escalation, Refund, Return, ToolAudit
 from velmo.tools import (
     cancel_order,
@@ -32,8 +34,26 @@ from velmo.tools._common import select
 def test_replayed_refund_produces_a_single_effect(db_session):
     """Le cas qui motive le lot : deux appels identiques = un seul mouvement
     d'argent."""
-    first = trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 30.0, "geste commercial")
-    second = trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 30.0, "geste commercial")
+    first = trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        30.0,
+        "geste commercial",
+        intent_token=refund_token(
+            db_session, "O-2024-0101", "C-marc-dubois", 30.0, "geste commercial"
+        ),
+    )
+    second = trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        30.0,
+        "geste commercial",
+        intent_token=refund_token(
+            db_session, "O-2024-0101", "C-marc-dubois", 30.0, "geste commercial"
+        ),
+    )
 
     refunds = db_session.scalars(select(Refund).where(Refund.order_id == "O-2024-0101")).all()
     assert len(refunds) == 1
@@ -44,8 +64,22 @@ def test_replay_returns_the_original_result_not_an_error(db_session):
     """Un rejeu doit être transparent pour l'appelant : il renvoie le résultat du
     premier appel. Lever une erreur obligerait l'agent à distinguer « déjà fait »
     de « échec », et il choisirait mal."""
-    first = trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 12.5, "retard")
-    second = trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 12.5, "retard")
+    first = trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        12.5,
+        "retard",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 12.5, "retard"),
+    )
+    second = trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        12.5,
+        "retard",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 12.5, "retard"),
+    )
     assert first == second
     assert second["action"] == "refunded"
 
@@ -53,8 +87,22 @@ def test_replay_returns_the_original_result_not_an_error(db_session):
 def test_different_amount_is_a_new_action(db_session):
     """La clé dérive des arguments : un montant différent est une action
     différente, pas un rejeu."""
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 10.0, "retard")
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 20.0, "retard")
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        10.0,
+        "retard",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 10.0, "retard"),
+    )
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        20.0,
+        "retard",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 20.0, "retard"),
+    )
     refunds = db_session.scalars(select(Refund).where(Refund.order_id == "O-2024-0101")).all()
     assert len(refunds) == 2
 
@@ -63,19 +111,38 @@ def test_different_reason_is_a_new_action(db_session):
     """Contrepartie assumée de la clé par contenu : un second remboursement
     réellement voulu du même montant doit porter un motif distinct. C'est la
     friction acceptée pour ne jamais payer deux fois."""
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 10.0, "retard")
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 10.0, "article abime")
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        10.0,
+        "retard",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 10.0, "retard"),
+    )
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        10.0,
+        "article abime",
+        intent_token=refund_token(
+            db_session, "O-2024-0101", "C-marc-dubois", 10.0, "article abime"
+        ),
+    )
     refunds = db_session.scalars(select(Refund).where(Refund.order_id == "O-2024-0101")).all()
     assert len(refunds) == 2
 
 
 def test_same_action_by_another_user_is_not_a_replay(db_session):
     """La clé inclut l'utilisateur : deux clients ne se volent pas leurs rejeux.
-    Ici le second n'est pas propriétaire, donc il est refusé — mais surtout, il ne
-    reçoit **pas** le résultat du premier."""
-    first = trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 10.0, "retard")
-    other = trigger_refund(db_session, "O-2024-0101", "C-sophie-martin", 10.0, "retard")
-    assert first["action"] == "refunded"
+
+    Éprouvé sur un outil de classe **É** : depuis A4, un outil de classe I refuse
+    un non-propriétaire encore plus tôt (jeton absent), si bien que le refus
+    d'appartenance n'y est plus atteignable — la défense la plus précoce gagne.
+    """
+    first = create_return(db_session, "O-2024-0110", "C-sophie-martin", "taille")
+    other = create_return(db_session, "O-2024-0110", "C-marc-dubois", "taille")
+    assert first["action"] == "return_opened"
     assert other.get("error") == "not_found_or_forbidden"
 
 
@@ -104,7 +171,7 @@ def test_replayed_escalation_produces_a_single_ticket(db_session):
 def test_ownership_refusal_leaves_the_action_retryable(db_session):
     """Un refus d'appartenance n'écrit rien : la clé doit être libérée, sinon une
     action qui redeviendra légitime resterait bloquée par un refus passé."""
-    trigger_refund(db_session, "O-2024-0101", "C-sophie-martin", 10.0, "test")
+    create_return(db_session, "O-2024-0110", "C-marc-dubois", "pas la sienne")
     row = db_session.scalars(
         select(ToolAudit).where(ToolAudit.outcome == "refused_ownership")
     ).first()
@@ -123,10 +190,20 @@ def test_state_refusal_is_deduplicated_because_it_escalates(db_session):
         )
 
     before = _count()
-    first = cancel_order(db_session, "O-2024-0103", "C-marc-dubois")
+    first = cancel_order(
+        db_session,
+        "O-2024-0103",
+        "C-marc-dubois",
+        intent_token=cancel_token(db_session, "O-2024-0103", "C-marc-dubois"),
+    )
     assert first["action"] == "escalate"  # commande expédiée
     after_first = _count()
-    cancel_order(db_session, "O-2024-0103", "C-marc-dubois")
+    cancel_order(
+        db_session,
+        "O-2024-0103",
+        "C-marc-dubois",
+        intent_token=cancel_token(db_session, "O-2024-0103", "C-marc-dubois"),
+    )
     assert after_first == before + 1
     assert _count() == after_first  # le retry ne réveille pas un 2e humain
 
@@ -134,8 +211,22 @@ def test_state_refusal_is_deduplicated_because_it_escalates(db_session):
 def test_capped_refund_is_deduplicated_because_it_escalates(db_session):
     """Même raison : au-dessus du plafond, l'outil écrit un remboursement
     `escalated` **et** une escalade."""
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 500.0, "gros litige")
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 500.0, "gros litige")
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        500.0,
+        "gros litige",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 500.0, "gros litige"),
+    )
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        500.0,
+        "gros litige",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 500.0, "gros litige"),
+    )
     refunds = db_session.scalars(select(Refund).where(Refund.order_id == "O-2024-0101")).all()
     assert len(refunds) == 1
 
@@ -153,7 +244,14 @@ def test_read_tools_are_not_journaled_as_actions(db_session):
 
 
 def test_successful_action_is_journaled(db_session):
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 15.0, "retard")
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        15.0,
+        "retard",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 15.0, "retard"),
+    )
     rows = db_session.scalars(select(ToolAudit).where(ToolAudit.tool == "trigger_refund")).all()
     assert len(rows) == 1
     row = rows[0]
@@ -166,14 +264,21 @@ def test_successful_action_is_journaled(db_session):
 def test_refusal_is_journaled_with_its_outcome(db_session):
     """Les refus sont le signal d'abus le plus direct : un journal qui ne garde
     que les succès ne les verrait jamais."""
-    trigger_refund(db_session, "O-2024-0101", "C-sophie-martin", 10.0, "test")
-    rows = db_session.scalars(select(ToolAudit).where(ToolAudit.tool == "trigger_refund")).all()
+    create_return(db_session, "O-2024-0110", "C-marc-dubois", "pas la sienne")
+    rows = db_session.scalars(select(ToolAudit).where(ToolAudit.tool == "create_return")).all()
     assert len(rows) == 1
     assert rows[0].outcome == "refused_ownership"
 
 
 def test_capped_refund_is_journaled_as_capped(db_session):
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 500.0, "gros litige")
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        500.0,
+        "gros litige",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 500.0, "gros litige"),
+    )
     rows = db_session.scalars(select(ToolAudit).where(ToolAudit.tool == "trigger_refund")).all()
     assert rows[0].outcome == "capped"
 
@@ -182,8 +287,22 @@ def test_replay_is_journaled_as_replayed(db_session):
     """Un rejeu laisse une trace distincte du premier appel : sans elle, un pic
     de retries (donc un problème réseau ou un agent qui boucle) serait
     invisible."""
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 15.0, "retard")
-    trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 15.0, "retard")
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        15.0,
+        "retard",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 15.0, "retard"),
+    )
+    trigger_refund(
+        db_session,
+        "O-2024-0101",
+        "C-marc-dubois",
+        15.0,
+        "retard",
+        intent_token=refund_token(db_session, "O-2024-0101", "C-marc-dubois", 15.0, "retard"),
+    )
     outcomes = db_session.scalars(
         select(ToolAudit.outcome).where(ToolAudit.tool == "trigger_refund")
     ).all()

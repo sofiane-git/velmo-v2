@@ -7,6 +7,7 @@ qualité MLOps (évaluation + gate + observabilité) sont opérationnels.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -20,7 +21,9 @@ from . import tools
 from .guardrails import GENERIC_REFUSAL, Decision, GuardrailEngine
 from .kb_store import KnowledgeBase
 from .llm import LLM, get_llm
+from .db import PendingAction
 from .memory import FACT_KEY_ALIASES, ForgetReport, MemoryContext, MemoryManager, WriteReport
+from .tools._intent import find_pending, prepare_intent
 
 logger = logging.getLogger(__name__)
 
@@ -315,12 +318,25 @@ class Agent:
         if any(t in low for t in _FORGET_TRIGGERS):
             return self._handle_forget(user_id, low)
 
+        # Confirmation d'une action irréversible préparée à un tour **antérieur**
+        # (Ch.4 §A4). Cette branche est volontairement en tête : c'est la présence
+        # d'une intention en attente qui fait autorité, pas la formulation du
+        # message. Un message qui porte à la fois la demande et « je confirme »
+        # n'a rien à consommer — il passe donc par la préparation, sans effet.
+        if confirmed:
+            pending = find_pending(self.session, user_id=user_id)
+            if pending is not None:
+                return self._execute_pending(user_id, pending)
+            if not order_id:
+                return (
+                    "Je n'ai aucune action en attente de confirmation. "
+                    "Dites-moi ce que vous souhaitez faire et je vous la ferai confirmer.",
+                    RoutingInfo(handler="llm_libre", query=message),
+                )
+
         if order_id and "annul" in low:
-            answer, result = self._confirm_or_act(
-                confirmed,
-                "annuler",
-                order_id,
-                lambda: tools.cancel_order(self.session, order_id, user_id),
+            answer, result = self._prepare_irreversible(
+                user_id, "cancel_order", {"order_id": order_id}, order_id
             )
             return answer, RoutingInfo(
                 handler="tool", tool_name="cancel_order", order_id=order_id, tool_result=result
@@ -403,6 +419,72 @@ class Agent:
 
         answer = self.llm.invoke(SYSTEM_PROMPT, context.render(), message)
         return answer, RoutingInfo(handler="llm_libre", query=message)
+
+    def _prepare_irreversible(
+        self, user_id: str, tool: str, arguments: dict[str, Any], order_id: str
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Premier temps d'une action **irréversible** (classe I) : on valide et on
+        demande confirmation, **sans effet**.
+
+        Le jeton produit ici est ce qui autorisera l'exécution au tour suivant. Il
+        n'est pas transporté dans l'état de la conversation : l'agent le retrouve
+        en base (`find_pending`), ce qui évite qu'un état conversationnel
+        falsifiable porte l'autorisation.
+        """
+        intent = prepare_intent(
+            self.session,
+            user_id=user_id,
+            tool=tool,
+            arguments=arguments,
+            resource_id=order_id,
+        )
+        if intent.token is None:
+            return f"Je ne trouve pas la commande {order_id} à votre nom.", None
+        return f"{intent.recap} Répondez « je confirme ».", None
+
+    def _execute_pending(self, user_id: str, pending: PendingAction) -> tuple[str, RoutingInfo]:
+        """Second temps : le client a confirmé, on exécute l'intention préparée.
+
+        C'est le **jeton** qui autorise, pas la formulation du « oui » : l'agent
+        rejoue les arguments figés à la préparation, jamais ceux qu'il
+        réinterpréterait du message de confirmation (sinon « je confirme, mais
+        500 € » changerait l'action confirmée).
+        """
+        arguments = json.loads(pending.arguments_json or "{}")
+        order_id = str(arguments.get("order_id", pending.resource_id or "—"))
+        if pending.tool == "cancel_order":
+            result = tools.cancel_order(self.session, order_id, user_id, intent_token=pending.token)
+        elif pending.tool == "trigger_refund":
+            result = tools.trigger_refund(
+                self.session,
+                order_id,
+                user_id,
+                float(arguments["amount"]),
+                str(arguments["reason"]),
+                intent_token=pending.token,
+            )
+        else:  # pragma: no cover - garde : seuls les outils de classe I préparent
+            return "Je n'ai pas d'action en attente exploitable.", RoutingInfo(handler="llm_libre")
+
+        answer = self._describe_result(order_id, result)
+        return answer, RoutingInfo(
+            handler="tool", tool_name=pending.tool, order_id=order_id, tool_result=result
+        )
+
+    def _describe_result(self, order_id: str, result: dict[str, Any]) -> str:
+        if result.get("error"):
+            return f"Je ne trouve pas la commande {order_id} à votre nom."
+        if result.get("action") == "confirmation_required":
+            return (
+                f"Je n'ai pas pu valider votre confirmation pour la commande {order_id}. "
+                "Reformulez votre demande et je vous la fais confirmer à nouveau."
+            )
+        if result.get("action") == "escalate":
+            return (
+                f"Cette demande sur la commande {order_id} dépasse ce que je peux faire seul "
+                "(commande déjà partie ou montant trop élevé). Je transmets à un conseiller."
+            )
+        return f"C'est fait pour la commande {order_id} ({result.get('action')})."
 
     def _confirm_or_act(
         self, confirmed: bool, label: str, order_id: str, action: Callable[[], dict[str, Any]]

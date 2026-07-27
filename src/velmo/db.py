@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import enum
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +181,54 @@ class Escalation(Base):
     channel: Mapped[str] = mapped_column(String, default="support")
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime(2024, 1, 1))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+def utcnow_naive() -> datetime:
+    """Horodatage UTC sans fuseau — même convention que `guardrails.db.utcnow`
+    (les colonnes `DateTime` du projet sont naïves ; mélanger aware et naïf
+    lèverait à la comparaison)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class PendingAction(Base):
+    """Intention d'action en attente de confirmation — Ch.4 §A4 (audit V-05).
+
+    **Pourquoi une table et pas l'historique de conversation.** La confirmation
+    était détectée dans le texte du message courant, si bien qu'un seul message
+    pouvait porter la demande *et* sa confirmation — une injection s'auto-validait,
+    et rien ne liait le « oui » à une action précise. Un état persisté déplace
+    l'autorité d'un texte interprétable vers quatre propriétés vérifiables :
+    appartenance à l'utilisateur, arguments figés, usage unique, expiration.
+
+    La ligne n'est **pas** un effet métier : sa création ne change rien à l'état
+    des commandes. Seule sa consommation autorise l'action.
+    """
+
+    __tablename__ = "pending_action"
+    # Le jeton EST la clé primaire : pas d'identifiant séparé à corréler, donc
+    # pas de chemin où un jeton valide pointerait une autre intention.
+    token: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True)
+    tool: Mapped[str] = mapped_column(String)
+    # Empreinte des arguments normalisés : on confirme **une** action précise, pas
+    # un type d'action — sinon confirmer un remboursement de 20 € en autoriserait
+    # un de 500 €.
+    arguments_hash: Mapped[str] = mapped_column(String)
+    # Arguments exacts, pour que la confirmation **rejoue** l'action préparée et
+    # non une action réinterprétée du message de confirmation (« je confirme, mais
+    # 500 € » ne doit rien changer). Stockés en clair, contrairement au journal
+    # d'actions : ils doivent reproduire le hash au caractère près, donc un
+    # masquage les invaliderait. Contrepartie tenue par la rétention — voir
+    # ci-dessous, une intention vit 15 minutes et est purgeable, là où
+    # `tool_audit` est un journal conservé.
+    arguments_json: Mapped[str] = mapped_column(Text, default="{}")
+    resource_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    recap: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    # `None` tant que non consommé — c'est la condition du `UPDATE` conditionnel
+    # qui rend l'usage unique atomique (voir `tools._intent.consume_intent`).
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ToolAudit(Base):
