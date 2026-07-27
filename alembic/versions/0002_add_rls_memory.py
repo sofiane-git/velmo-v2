@@ -50,7 +50,8 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.String(),
-            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"), nullable=False
+            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("summary", sa.Text(), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=False),
@@ -70,7 +71,8 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.String(),
-            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"), nullable=False
+            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("role", sa.String(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
@@ -83,7 +85,8 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.String(),
-            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"), nullable=False
+            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("key", sa.String(), nullable=False),
         sa.Column("value", sa.Text(), nullable=False),
@@ -100,7 +103,8 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.String(),
-            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"), nullable=False
+            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("trigger", sa.String(), nullable=False),
         sa.Column("rule", sa.Text(), nullable=False),
@@ -117,7 +121,8 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.String(),
-            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"), nullable=False
+            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("summary", sa.Text(), nullable=False),
         sa.Column("chroma_id", sa.String(), nullable=True),
@@ -130,7 +135,8 @@ def upgrade() -> None:
         sa.Column(
             "user_id",
             sa.String(),
-            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"), nullable=False
+            sa.ForeignKey("memory_user.user_id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("action", sa.String(), nullable=False),
         sa.Column("target", sa.String(), nullable=False),

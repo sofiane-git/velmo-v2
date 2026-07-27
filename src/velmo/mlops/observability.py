@@ -108,15 +108,23 @@ def _resolve_sink(explicit: ObservabilitySink | None) -> ObservabilitySink:
 
 class CostAccumulatingSink:
     """Enveloppe un `ObservabilitySink` quelconque (Langfuse réel ou
-    `NullSink`) pour accumuler `total_cost` localement — l'agrégat qui gate
-    (`Scores.cost`, `EvalRun.cost_per_conv`) ne doit jamais dépendre de la
-    présence d'un sink externe (principe directeur du chantier : Langfuse
-    hors chemin de gate). `run_eval` (Task 6) enveloppe systématiquement le
-    `sink` reçu avec celle-ci avant de le passer aux suites."""
+    `NullSink`) pour accumuler localement **le coût total et les latences par
+    composant** — les agrégats qui gatent (`Scores.cost`,
+    `EvalRun.cost_per_conv`) ou qui imputent un dépassement
+    (`Scores.latency_by_component`) ne doivent jamais dépendre de la présence
+    d'un sink externe (principe directeur du chantier : Langfuse hors chemin de
+    gate). `run_eval` enveloppe systématiquement le `sink` reçu avec celle-ci
+    avant de le passer aux suites."""
 
     def __init__(self, inner: ObservabilitySink) -> None:
         self._inner = inner
         self.total_cost = 0.0
+        # Latences ventilées par composant : le gate contrôle un total, mais un
+        # dépassement doit **désigner** un composant sans enquête (audit O-04,
+        # table d'allocation dans `mlops.budget`). Accumulé ici pour la même
+        # raison que le coût : l'agrégat publié ne doit pas dépendre d'un sink
+        # externe.
+        self.latencies_by_component: dict[str, list[float]] = {}
 
     def on_llm_call(
         self,
@@ -130,6 +138,7 @@ class CostAccumulatingSink:
         model: str | None = None,
     ) -> None:
         self.total_cost += cost
+        self.latencies_by_component.setdefault(component, []).append(latency_ms)
         self._inner.on_llm_call(
             component, tokens, latency_ms, cost, input=input, output=output, model=model
         )
