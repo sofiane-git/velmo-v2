@@ -63,3 +63,22 @@ def test_escalation_recorded_on_shipped_modification(db_session):
     update_order_item(db_session, "O-2024-0103", "C-marc-dubois", "M")
     after = len(db_session.scalars(select(Escalation)).all())
     assert after == before + 1
+
+
+def test_refund_cap_comes_from_versioned_config(db_session, monkeypatch):
+    """Le plafond décide quelles actions s'exécutent sans humain : il doit vivre
+    en configuration versionnée (donc dans le hash de version), pas en constante
+    de module invisible du gate (audit TOO-05)."""
+    from velmo.mlops.versioning import compute_version_hashes
+
+    before = compute_version_hashes()["guardrail_config_hash"]
+    monkeypatch.setenv("REFUND_CAP_EUR", "500")
+    assert compute_version_hashes()["guardrail_config_hash"] != before
+
+
+def test_refund_cap_override_changes_the_escalation_boundary(db_session, monkeypatch):
+    """Preuve que la valeur lue est bien celle de la config : un montant qui
+    escaladait auparavant passe en automatique sous un plafond relevé."""
+    monkeypatch.setenv("REFUND_CAP_EUR", "500")
+    result = trigger_refund(db_session, "O-2024-0101", "C-marc-dubois", 200.0, "geste commercial")
+    assert result["action"] == "refunded"

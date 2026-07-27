@@ -33,6 +33,7 @@ def _memory_config_hash() -> str:
 
 
 def _guardrail_config_hash() -> str:
+    from velmo.config import get_settings
     from velmo.guardrails.judge import SCOPE_POLICY_PATH
     from velmo.guardrails.pipeline import BLOCK_THRESHOLD, ESCALATE_THRESHOLD, FLAG_THRESHOLD
 
@@ -42,6 +43,9 @@ def _guardrail_config_hash() -> str:
         "flag_threshold": FLAG_THRESHOLD,
         "escalate_threshold": ESCALATE_THRESHOLD,
         "scope_policy": scope_policy_text,
+        # Plafond métier : il décide quelles actions s'exécutent sans humain,
+        # donc il fait partie de ce qui est évalué (Ch.4 §A3, audit TOO-05).
+        "refund_cap_eur": get_settings().refund_cap_eur,
     }
     return _sha256(json.dumps(payload, sort_keys=True))
 

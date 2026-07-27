@@ -5,7 +5,7 @@ from velmo.mlops.suites.guardrails import guardrails_confusion_matrix, run_guard
 
 def test_guardrails_suite_covers_all_cases() -> None:
     results = run_guardrails_suite(db_url="sqlite:///:memory:")
-    assert len(results) == 46  # cf. wc -l eval/guardrail_cases.jsonl — revérifier à
+    assert len(results) == 52  # cf. wc -l eval/guardrail_cases.jsonl — revérifier à
     # chaque ajout de fixture (la Task ajoute rarement des cas sans qu'un humain les
     # revoie, cf. conception §Gouvernance des fixtures : "tout ajout/modif de fixture
     # passe en PR").

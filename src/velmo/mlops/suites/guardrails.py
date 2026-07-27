@@ -52,8 +52,19 @@ def _build_engine(db_url: str | None, sink: ObservabilitySink) -> GuardrailEngin
 def _run_one_case(case: dict[str, Any], engine: GuardrailEngine) -> CaseResult:
     start = time.monotonic()
     try:
-        if case["where"] == "input":
+        where = case["where"]
+        if where == "input":
             decision = engine.check_input(case["message"], user_id=case["user_id"])
+        elif where == "retrieved":
+            # G8 : contenu récupéré (extrait de FAQ, champ métier). Écarter
+            # l'extrait compte comme « bloqué » au sens de la matrice de
+            # confusion — c'est bien un contenu qui n'atteint pas l'agent.
+            decision = engine.check_retrieved(case["message"], source=case.get("source", "faq"))
+        elif where == "memory_write":
+            # G8 : écriture mémoire candidate, fail-closed.
+            decision = engine.check_memory_write(
+                case["message"], kind=case.get("kind", "procedure")
+            )
         else:
             decision = engine.check_output(case["message"], user_id=case["user_id"])
         actually_blocked = decision.action != "allow"

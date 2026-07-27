@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..db import Escalation, Refund, RefundStatus
-from ._common import REFUND_CAP, new_id, owned_order
+from ._common import new_id, owned_order, refund_cap
 
 
 def trigger_refund(
@@ -18,7 +18,8 @@ def trigger_refund(
     if order is None:
         return {"error": "not_found_or_forbidden", "order_id": order_id}
 
-    if amount > REFUND_CAP:
+    cap = refund_cap()
+    if amount > cap:
         session.add(
             Refund(
                 id=new_id("rf"),
@@ -33,11 +34,11 @@ def trigger_refund(
                 id=new_id("esc"),
                 customer_id=user_id,
                 order_id=order_id,
-                reason=f"Remboursement {amount:.2f}€ au-dessus du plafond {REFUND_CAP:.0f}€",
+                reason=f"Remboursement {amount:.2f}€ au-dessus du plafond {cap:.0f}€",
             )
         )
         session.commit()
-        return {"action": "escalate", "amount": amount, "cap": REFUND_CAP}
+        return {"action": "escalate", "amount": amount, "cap": cap}
 
     refund_id = new_id("rf")
     session.add(
