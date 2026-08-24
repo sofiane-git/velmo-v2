@@ -61,6 +61,22 @@ docs/superpowers/
 # Playwright
 .playwright-mcp/
 
-docs/
+# Artefact de build mermaid-filter (docs/)
+*.err
+
+# docs/ : tout est ignoré sauf le sous-ensemble versionné ci-dessous
+# (reference/ et conceptions/ en markdown + un seul PDF, schemas/ sans archives).
+# Ordre significatif : git ne peut pas ré-inclure un fichier dont un répertoire
+# parent est exclu, d'où les `dir/*` au lieu de `dir/`.
+docs/*
+!docs/reference/
+docs/reference/*
+!docs/reference/*.md
+!docs/reference/conceptions/
+!docs/reference/schemas/
+docs/reference/conceptions/*
+!docs/reference/conceptions/*.md
+!docs/reference/conceptions/conception_chantiers_1-2-3.pdf
+docs/reference/schemas/archives/
 
 .claude/skills/
