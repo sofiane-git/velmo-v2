@@ -101,6 +101,9 @@ jobs:
     needs: check-model-drift
     if: needs.check-model-drift.outputs.quality_memory == 'true' || needs.check-model-drift.outputs.guardrails == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # azure/login OIDC (ouverture firewall Postgres ci-dessous)
     # Vrai modèle + baseline persistante (audit B4/B5) : un drift-check sur le
     # stub hors-ligne ne mesurerait rien. Mêmes secrets que release.yml.
     env:
@@ -134,6 +137,28 @@ jobs:
             echo "::error::DB_URL absent — mesures drift non persistantes (audit B5)."
             exit 1
           fi
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          # Identité nightly (§4, Reader) — federated credential scopée à
+          # `ref:refs/heads/main`, stable ici (cron sur main). Étendue d'un
+          # rôle Contributor scopé au SEUL serveur Postgres (pas le RG) pour
+          # ouvrir/fermer le firewall ci-dessous : l'IP du runner GitHub est
+          # dynamique et non listable à l'avance (même compromis que Container
+          # Apps, tuto_azure_deploiement.md §Firewall).
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Ouvre le firewall Postgres pour l'IP de ce runner
+        id: fw
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          RUNNER_IP=$(curl -s -4 https://ifconfig.me)
+          RULE_NAME="gha-${{ github.run_id }}"
+          echo "rule_name=$RULE_NAME" >> "$GITHUB_OUTPUT"
+          az postgres flexible-server firewall-rule create --resource-group "$RG" \
+            --server-name psql-velmo-prod --name "$RULE_NAME" \
+            --start-ip-address "$RUNNER_IP" --end-ip-address "$RUNNER_IP"
       - name: Migrations Alembic — Postgres, unique source du schéma (D2-04/D7-17)
         run: |
           if uv run python -c "import os,sys,sqlalchemy as sa; insp=sa.inspect(sa.create_engine(os.environ['DB_URL'])); sys.exit(0 if insp.has_table('customers') and not insp.has_table('alembic_version') else 1)"; then
@@ -150,9 +175,19 @@ jobs:
       # sous le plancher (audit D8-03), et l'alerte deux-nuits lit les EvalRun
       # nightly (pas la table drift_check_run) — elle appartient au job
       # scheduled-eval, pas au drift ponctuel (revue Lot 3).
+      - name: Referme le firewall Postgres (toujours, même si le run a échoué)
+        if: always() && steps.fw.outcome == 'success'
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          az postgres flexible-server firewall-rule delete --resource-group "$RG" \
+            --server-name psql-velmo-prod --name "${{ steps.fw.outputs.rule_name }}" --yes
 
   scheduled-eval:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # azure/login OIDC (ouverture firewall Postgres ci-dessous)
     # Vrai modèle + baseline persistante (audit B4/B5), cf. drift-check-eval.
     env:
       DB_URL: ${{ secrets.DB_URL }}
@@ -185,6 +220,28 @@ jobs:
             echo "::error::DB_URL absent — baseline non persistante (audit B5)."
             exit 1
           fi
+      - uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          # Identité nightly (§4, Reader) — federated credential scopée à
+          # `ref:refs/heads/main`, stable ici (cron sur main). Étendue d'un
+          # rôle Contributor scopé au SEUL serveur Postgres (pas le RG) pour
+          # ouvrir/fermer le firewall ci-dessous : l'IP du runner GitHub est
+          # dynamique et non listable à l'avance (même compromis que Container
+          # Apps, tuto_azure_deploiement.md §Firewall).
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Ouvre le firewall Postgres pour l'IP de ce runner
+        id: fw
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          RUNNER_IP=$(curl -s -4 https://ifconfig.me)
+          RULE_NAME="gha-${{ github.run_id }}"
+          echo "rule_name=$RULE_NAME" >> "$GITHUB_OUTPUT"
+          az postgres flexible-server firewall-rule create --resource-group "$RG" \
+            --server-name psql-velmo-prod --name "$RULE_NAME" \
+            --start-ip-address "$RUNNER_IP" --end-ip-address "$RUNNER_IP"
       - name: Migrations Alembic — Postgres, unique source du schéma (D2-04/D7-17)
         run: |
           if uv run python -c "import os,sys,sqlalchemy as sa; insp=sa.inspect(sa.create_engine(os.environ['DB_URL'])); sys.exit(0 if insp.has_table('customers') and not insp.has_table('alembic_version') else 1)"; then
@@ -211,3 +268,10 @@ jobs:
       - name: Alerte deux-nuits (dimensions gate)
         if: steps.gate.outputs.run == 'true'
         run: uv run python -m velmo.mlops.alerting
+      - name: Referme le firewall Postgres (toujours, même si le run a échoué)
+        if: always() && steps.fw.outcome == 'success'
+        env:
+          RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+        run: |
+          az postgres flexible-server firewall-rule delete --resource-group "$RG" \
+            --server-name psql-velmo-prod --name "${{ steps.fw.outputs.rule_name }}" --yes
