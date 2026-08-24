@@ -121,7 +121,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       - name: Garde anti-silence — le drift-check NE DOIT PAS évaluer le stub
         # Secrets absents => repli EchoLLM/SQLite silencieux : le drift-check
         # mesurerait le stub et écrirait une baseline bidon (audit B4/B5).
@@ -172,7 +172,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       - name: Garde anti-silence — le run bihebdomadaire NE DOIT PAS évaluer le stub
         # Sans secrets, la baseline EvalRun persistée serait celle du stub —
         # exactement B4/B5, et l'alerte deux-nuits relirait des runs bidon.

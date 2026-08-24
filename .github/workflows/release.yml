@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv python install 3.11
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       - name: Garde anti-silence — le gate release NE DOIT PAS évaluer le stub
         # Sans ce garde, secrets absents => repli EchoLLM/SQLite silencieux :
         # exactement les findings B4/B5 de l'audit, de retour sans bruit.
