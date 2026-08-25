@@ -288,7 +288,10 @@ class MemoryManager:
         session = self._Session()
         try:
             self._bind_user(session, user_id)
+            # `get_or_create_user` commit en interne pour un utilisateur
+            # nouveau — rebind après (voir docstring de `_bind_user`).
             get_or_create_user(session, user_id)
+            self._bind_user(session, user_id)
             thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
             config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
             with self._graph_lock:
@@ -341,6 +344,7 @@ class MemoryManager:
         try:
             self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
+            self._bind_user(session, user_id)
             thread = get_or_create_active_thread(session, user_id, self.session_gap_hours)
             config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
             with self._graph_lock:
@@ -483,6 +487,11 @@ class MemoryManager:
             session.close()
 
     def _maybe_compress(self, session: Session, user_id: str, thread: Thread) -> None:
+        # Rebind défensif : appelée après le(s) `session.commit()` de
+        # `_extract_and_persist`, qui peut avoir rendu la connexion au pool
+        # (même bug que `_maybe_add_episode_guarded` — RLS rejette `upsert_fact`
+        # plus bas si le GUC n'est plus posé sur la connexion courante).
+        self._bind_user(session, user_id)
         if thread.token_count <= self.token_budget:
             return
         config: RunnableConfig = {"configurable": {"thread_id": thread.thread_id}}
@@ -595,6 +604,7 @@ class MemoryManager:
         try:
             self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
+            self._bind_user(session, user_id)
             fact, _ = upsert_fact(session, user_id, key, value, "identity", 1.0, None)
             # Un "remember" explicite (ré-)établit délibérément la donnée : lever
             # un éventuel tombstone posé par un `forget()` antérieur sur cette
@@ -617,6 +627,7 @@ class MemoryManager:
         try:
             self._bind_user(session, user_id)
             get_or_create_user(session, user_id)
+            self._bind_user(session, user_id)
             proc, _ = upsert_procedure(session, user_id, trigger, rule, 1.0, None)
             resolve_tombstone(session, user_id, "procedure_trigger", proc.trigger)
             write_audit(session, user_id, "write", f"procedure:{trigger}")
@@ -710,6 +721,7 @@ class MemoryManager:
                 session.flush()
 
             get_or_create_user(session, user_id)
+            self._bind_user(session, user_id)
             # Tombstones posés APRÈS la recréation de l'utilisateur : sinon la
             # cascade FK (memory_tombstone.user_id ON DELETE CASCADE) les emporte
             # dans la même transaction et l'anti-résurrection est inopérante (B2).
