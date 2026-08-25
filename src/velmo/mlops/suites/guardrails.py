@@ -99,10 +99,13 @@ def run_guardrails_suite_steps(
     `run_eval_steps` streame la progression cas par cas."""
     sink = sink or NullSink()
     engine = _build_engine(db_url, sink)
-    for case in _load_cases():
-        yield CaseStepEvent("start", case["id"])
-        result = with_retry(functools.partial(_run_one_case, case, engine))
-        yield CaseStepEvent("done", case["id"], result)
+    try:
+        for case in _load_cases():
+            yield CaseStepEvent("start", case["id"])
+            result = with_retry(functools.partial(_run_one_case, case, engine))
+            yield CaseStepEvent("done", case["id"], result)
+    finally:
+        engine.close()
 
 
 def run_guardrails_suite(

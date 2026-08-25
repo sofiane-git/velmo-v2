@@ -87,6 +87,7 @@ def _run_recall_or_persistence_case(
     case: dict[str, Any], db_url: str | None, sink: ObservabilitySink
 ) -> CaseResult:
     start = time.monotonic()
+    manager = None
     try:
         manager = _build_manager(db_url, sink, token_budget=8000)
         _replay_turns(manager, case["user_id"], case["turns"])
@@ -108,12 +109,19 @@ def _run_recall_or_persistence_case(
             latency_ms=(time.monotonic() - start) * 1000,
             error_kind="infra",
         )
+    finally:
+        # Un `MemoryManager` frais par cas (isolation entre scénarios) laisse
+        # sinon son pool de connexions ouvert jusqu'au GC — épuisement
+        # Postgres constaté en prod (même bug que la suite Outils).
+        if manager is not None:
+            manager.close()
 
 
 def _run_forget_case(
     case: dict[str, Any], db_url: str | None, sink: ObservabilitySink
 ) -> CaseResult:
     start = time.monotonic()
+    manager = None
     try:
         manager = _build_manager(db_url, sink, token_budget=8000)
         # Ne rejoue que les tours avant la demande d'oubli (le "forget" est un
@@ -141,12 +149,16 @@ def _run_forget_case(
             latency_ms=(time.monotonic() - start) * 1000,
             error_kind="infra",
         )
+    finally:
+        if manager is not None:
+            manager.close()
 
 
 def _run_inspect_case(
     case: dict[str, Any], db_url: str | None, sink: ObservabilitySink
 ) -> CaseResult:
     start = time.monotonic()
+    manager = None
     try:
         manager = _build_manager(db_url, sink, token_budget=8000)
         _replay_turns(manager, case["user_id"], case["turns"])
@@ -178,6 +190,9 @@ def _run_inspect_case(
             latency_ms=(time.monotonic() - start) * 1000,
             error_kind="infra",
         )
+    finally:
+        if manager is not None:
+            manager.close()
 
 
 def _run_r3_group(
@@ -190,6 +205,15 @@ def _run_r3_group(
     les deux users R3 (isolation = propriété du couple, pas d'un cas seul)."""
     start = time.monotonic()
     manager = _build_manager(db_url, sink, token_budget=8000)
+    try:
+        return _run_r3_cases(manager, cases, start)
+    finally:
+        manager.close()
+
+
+def _run_r3_cases(
+    manager: MemoryManager, cases: list[dict[str, Any]], start: float
+) -> list[CaseResult]:
     for case in cases:
         _replay_turns(manager, case["user_id"], case["turns"])
 
@@ -301,6 +325,7 @@ def _run_recall_with_small_budget(
     case: dict[str, Any], db_url: str | None, sink: ObservabilitySink
 ) -> CaseResult:
     start = time.monotonic()
+    manager = None
     try:
         # Budget délibérément bas : force la compression sur ~16 messages
         # (cf. fixture R4-budget-dossier) sans affecter les autres cas.
@@ -324,3 +349,6 @@ def _run_recall_with_small_budget(
             latency_ms=(time.monotonic() - start) * 1000,
             error_kind="infra",
         )
+    finally:
+        if manager is not None:
+            manager.close()

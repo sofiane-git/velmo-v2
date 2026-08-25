@@ -219,8 +219,8 @@ class MemoryManager:
         self.session_gap_hours = session_gap_hours
         self.keep_last_n_turns = keep_last_n_turns
         resolved_db_url = db_url or get_settings().db_url
-        engine = make_memory_engine(db_url)
-        self._Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self.engine = make_memory_engine(db_url)
+        self._Session = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
         self._checkpointer_cm = get_checkpointer(resolved_db_url)
         self._checkpointer = self._checkpointer_cm.__enter__()
         self._graph = build_graph(self._checkpointer)
@@ -235,10 +235,16 @@ class MemoryManager:
         self.llm = llm or get_llm()
 
     def close(self) -> None:
-        """Ferme la connexion du checkpointer — à appeler à l'arrêt du process
-        (ou implicitement via `__del__` pour les instances de test à courte durée
-        de vie, cf. `_BACKGROUND_EXECUTOR`)."""
+        """Ferme la connexion du checkpointer et le pool de l'engine — à
+        appeler à l'arrêt du process (ou implicitement via `__del__` pour les
+        instances de test à courte durée de vie, cf. `_BACKGROUND_EXECUTOR`).
+        Sans le `dispose()` de l'engine, chaque `MemoryManager` reconstruit
+        (ex. un agent frais par cas dans la suite Outils, `mlops/suites/
+        tools.py`) laisse son pool de connexions ouvert jusqu'au GC — constaté
+        en prod : épuisement des connexions Postgres (`Standard_B1ms`) au
+        milieu d'un run réel."""
         self._checkpointer_cm.__exit__(None, None, None)
+        self.engine.dispose()
 
     def __del__(self) -> None:
         try:
@@ -249,14 +255,19 @@ class MemoryManager:
     def _bind_user(self, session: Session, user_id: str) -> None:
         """Positionne le GUC PostgreSQL consommé par les policies RLS.
 
-        `is_local=false` : le GUC survit aux `session.commit()` intermédiaires du
-        même appel (`get_or_create_user` puis `get_or_create_active_thread`
-        commitent chacun leur transaction). Sans quoi la policy RLS de la
-        deuxième table voit un GUC déjà effacé et rejette l'insert (constaté en
-        prod : `new row violates row-level security policy for table "thread"`
-        pour un utilisateur nouvellement créé). Sûr car chaque appel utilise une
-        session/connexion fraîche (`self._Session()`), pas de fuite inter-utilisateur.
-        No-op hors Postgres (SQLite de test) : les policies RLS n'existent pas.
+        `is_local=false` (`SET`, pas `SET LOCAL`) : le GUC survit à un
+        `session.commit()` **tant que la même connexion physique reste
+        rattachée à la session**. Insuffisant en soi : un `Session` lié à un
+        `Engine` (pool) peut rendre sa connexion au pool après un commit et en
+        réacquérir une autre pour la suite, qui n'a jamais reçu ce `SET` —
+        constaté en prod deux fois (`thread` lors de la création d'un nouvel
+        utilisateur, puis `episode` dans `_maybe_add_episode_guarded`). Tout
+        appelant qui écrit après un commit intermédiaire doit rappeler
+        `_bind_user` juste avant, pas supposer que le premier appel suffit
+        pour le reste de la méthode. Sûr côté isolation même en cas de
+        connexion changée : jamais de fuite inter-utilisateur, seulement un
+        rejet RLS (fail-closed). No-op hors Postgres (SQLite de test) : les
+        policies RLS n'existent pas.
         """
         if session.get_bind().dialect.name != "postgresql":
             return
@@ -389,6 +400,15 @@ class MemoryManager:
         """Écrit un épisode seulement si son résumé ne reprend aucune valeur
         sous tombstone actif (anti-résurrection étendue aux épisodes, D9-04).
         Retourne True si l'épisode a été écrit."""
+        # Rebind défensif : les deux appelants (`_extract_and_persist`,
+        # `_maybe_compress`) commitent des écritures intermédiaires avant
+        # d'arriver ici — un `commit()` peut rendre la connexion au pool et en
+        # réacquérir une autre pour la suite, qui n'a jamais reçu le `SET`
+        # `app.current_user_id` (contrairement à ce que documente `_bind_user`,
+        # constaté en prod : RLS rejette l'insert `episode`, même bug que le
+        # fix `thread` mais pour une connexion changée après commit, pas juste
+        # jamais posée).
+        self._bind_user(session, user_id)
         if self._active_value_tombstones_in(session, user_id, summary):
             # Pas la valeur elle-même dans le log : elle est censée être oubliée
             # (RGPD) — cf. M1.
