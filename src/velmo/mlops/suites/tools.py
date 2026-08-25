@@ -219,16 +219,24 @@ def run_tools_suite_steps(agent_factory: Any) -> Iterator[CaseStepEvent]:
     for case in _load_cases():
         yield CaseStepEvent(kind="start", case_id=case["id"])
         agent = agent_factory()
-        if case["kind"] == "selection":
-            result = with_retry(lambda c=case, a=agent: _run_selection_case(c, a))  # type: ignore[misc]
-        elif case["kind"] == "confirmation":
-            result = with_retry(
-                lambda c=case, a=agent: _run_confirmation_case(c, a.session)  # type: ignore[misc]
-            )
-        else:
-            result = with_retry(
-                lambda c=case, a=agent: _run_refusal_case(c, a.session)  # type: ignore[misc]
-            )
+        try:
+            if case["kind"] == "selection":
+                result = with_retry(lambda c=case, a=agent: _run_selection_case(c, a))  # type: ignore[misc]
+            elif case["kind"] == "confirmation":
+                result = with_retry(
+                    lambda c=case, a=agent: _run_confirmation_case(c, a.session)  # type: ignore[misc]
+                )
+            else:
+                result = with_retry(
+                    lambda c=case, a=agent: _run_refusal_case(c, a.session)  # type: ignore[misc]
+                )
+        finally:
+            # Un agent frais par cas (docstring ci-dessus) laisse sinon 3
+            # pools de connexions ouverts par cas jusqu'au GC — épuisement
+            # Postgres constaté en prod sur un run réel (`Standard_B1ms`).
+            agent.memory.close()
+            agent.guardrails.close()
+            agent.session.get_bind().dispose()
         yield CaseStepEvent(kind="done", case_id=case["id"], result=result)
 
 

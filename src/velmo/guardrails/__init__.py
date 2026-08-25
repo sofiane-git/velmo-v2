@@ -146,11 +146,18 @@ class GuardrailEngine:
         judge: Judge | None = None,
     ) -> None:
         self.events: list[dict[str, Any]] = []
-        engine = make_guardrails_engine(db_url)
-        self._Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        self.engine = make_guardrails_engine(db_url)
+        self._Session = sessionmaker(bind=self.engine, expire_on_commit=False, future=True)
         _warn_unconfigured_stages(get_settings())
         self.classifier = classifier or get_classifier()
         self.judge = judge or get_judge()
+
+    def close(self) -> None:
+        """Dispose le pool de connexions — à appeler quand cette instance est
+        jetable (ex. un agent frais par cas, `mlops/suites/tools.py`), sinon
+        chaque pool reste ouvert jusqu'au GC (constaté en prod : épuisement
+        des connexions Postgres, cf. `MemoryManager.close`)."""
+        self.engine.dispose()
 
     def check_input(
         self, message: str, user_id: str | None = None, source_thread_id: str | None = None
