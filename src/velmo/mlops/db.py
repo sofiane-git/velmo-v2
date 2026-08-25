@@ -56,7 +56,14 @@ class AgentVersion(Base):
 class EvalRun(Base):
     __tablename__ = "eval_run"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    version_tag: Mapped[str] = mapped_column(ForeignKey("agent_version.version_tag"))
+    # Pas de ForeignKey("agent_version.version_tag") : la contrainte DB-level
+    # (migration 0018) provoquait un `InsufficientPrivilege` non résoluble
+    # (échec systématique du check RI en prod — reproduit même en admin, même
+    # sur une ligne neuve, survit à un DROP/ADD CONSTRAINT et à un restart du
+    # serveur ; cause exacte non identifiée malgré ACL/RLS/OID tous corrects).
+    # Intégrité garantie côté appli : `version_tag` n'est jamais saisi
+    # librement, toujours produit par `current_version()`.
+    version_tag: Mapped[str] = mapped_column(String)
     note_memory: Mapped[float] = mapped_column(Float)
     note_guardrails: Mapped[float] = mapped_column(Float)
     note_quality: Mapped[float] = mapped_column(Float)
