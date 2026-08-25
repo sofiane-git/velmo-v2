@@ -91,6 +91,58 @@ class _MinIntervalRateLimiter:
 _MISTRAL_RATE_LIMITER = _MinIntervalRateLimiter(min_interval_s=4.5)
 
 
+def _estimate_tokens(*texts: str) -> int:
+    """Heuristique 4 caractères ≈ 1 token — même convention que
+    `MemoryManager` (`memory/__init__.py`) et `mlops/observability.py`."""
+    return sum(max(1, len(t) // 4) for t in texts)
+
+
+class _TokenBucket:
+    """Seau à jetons : se remplit à `rate_per_s` tokens/seconde jusqu'à
+    `capacity`, `wait(n)` bloque jusqu'à ce que `n` jetons soient
+    disponibles.
+
+    Le plafond req/min (`_MinIntervalRateLimiter`) ne protège pas d'un
+    plafond tokens/min séparé : le déploiement `Mistral-Large-3` est aussi
+    limité à 20 000 tokens/min, et les suites qualité/mémoire du gate
+    envoient des prompts (contexte + historique) et attendent des réponses
+    complètes — quelques appels volumineux suffisent à épuiser ce budget
+    bien avant que le rythme de 13/min ne pose problème. Constaté en prod :
+    Azure met la requête en file jusqu'à épuisement du timeout client
+    (`openai.APITimeoutError` à 45s), pour des appels pourtant sous le
+    plafond de requêtes."""
+
+    def __init__(self, capacity: float, rate_per_s: float) -> None:
+        self._capacity = capacity
+        self._rate_per_s = rate_per_s
+        self._tokens = capacity
+        self._last_refill = time.monotonic()
+        self._lock = threading.Lock()
+
+    def wait(self, needed: float) -> None:
+        with self._lock:
+            while True:
+                now = time.monotonic()
+                elapsed = now - self._last_refill
+                self._tokens = min(self._capacity, self._tokens + elapsed * self._rate_per_s)
+                self._last_refill = now
+                if self._tokens >= needed:
+                    self._tokens -= needed
+                    return
+                time.sleep((needed - self._tokens) / self._rate_per_s)
+
+
+# Capacité 18 000 (marge sous les 20 000/min réels — l'estimation par
+# caractères peut sous-évaluer le compte réel de tokens) rechargée à
+# 300/s (18 000/60).
+_MISTRAL_TOKEN_BUDGET = _TokenBucket(capacity=18_000, rate_per_s=300.0)
+
+# Budget de complétion pas connu à l'avance (pas de champ `usage` exposé
+# avant l'appel) — estimation conservatrice pour une réponse d'agent de
+# support typique, cf. `_TokenBucket`.
+_EXPECTED_COMPLETION_TOKENS = 800
+
+
 class AzureLLM:
     """Adapte le modèle de chat Azure AI Inference à l'interface `LLM`."""
 
@@ -103,6 +155,8 @@ class AzureLLM:
             messages.append({"role": "system", "content": f"Mémoire:\n{context}"})
         messages.append({"role": "user", "content": message})
         _MISTRAL_RATE_LIMITER.wait()
+        estimated_tokens = _estimate_tokens(system, context, message) + _EXPECTED_COMPLETION_TOKENS
+        _MISTRAL_TOKEN_BUDGET.wait(estimated_tokens)
         return cast(str, self._model.invoke(messages).content)
 
 
@@ -161,7 +215,14 @@ def get_llm() -> LLM:
         # lent/indisponible) bloque indéfiniment — observé en pratique lors
         # des tests de bout en bout de l'interface pédagogique (chat/stream).
         request_timeout=45.0,
-        max_retries=1,
+        # 0, pas 1 : un retry interne au client re-tape l'endpoint SANS
+        # repasser par `_MISTRAL_RATE_LIMITER`/`_MISTRAL_TOKEN_BUDGET` —
+        # aggrave la pression pile quand le quota tokens/min est déjà
+        # saturé (cause du run de release qui a expiré à 45s malgré le
+        # pacing). Le retry de niveau suite (`with_retry`,
+        # `mlops/suites/*.py`) rejoue l'appel via `AzureLLM.invoke`, donc
+        # respecte le rate limiter — c'est le seul retry voulu ici.
+        max_retries=0,
         # Cette ressource expose l'endpoint OpenAI-compatible `/openai/v1` ;
         # la Responses API (défaut de la classe) n'y répond jamais et fait
         # tourner l'appel jusqu'au timeout — confirmé en isolant l'appel
