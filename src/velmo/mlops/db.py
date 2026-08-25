@@ -22,7 +22,6 @@ from sqlalchemy import (
     DateTime,
     Engine,
     Float,
-    ForeignKey,
     Integer,
     String,
     create_engine,
@@ -91,7 +90,13 @@ class EvalRun(Base):
 class EvalCaseResult(Base):
     __tablename__ = "eval_case_result"
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    run_id: Mapped[str] = mapped_column(ForeignKey("eval_run.id"))
+    # Pas de ForeignKey("eval_run.id") : même bug que eval_run.version_tag
+    # (voir commit qui a retiré cette FK) — le check RI échoue en prod avec
+    # `InsufficientPrivilege: permission denied for table eval_run`, pour
+    # tous les rôles, cause non identifiée. Intégrité garantie côté appli :
+    # `run_id` est toujours le `run_id` généré par `run_eval_steps` pour CE
+    # run, jamais saisi librement.
+    run_id: Mapped[str] = mapped_column(String)
     case_id: Mapped[str] = mapped_column(String)
     suite: Mapped[str] = mapped_column(String)  # memory|guardrails|quality
     passed: Mapped[bool] = mapped_column(Boolean)
