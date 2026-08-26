@@ -165,6 +165,12 @@ jobs:
             uv run alembic stamp head
           fi
           uv run alembic upgrade head
+      - name: Seed FAQ (kb_article, pgvector) — idempotent, upsert par slug
+        # La suite qualité juge chaque réponse FAQ sans extrait source si
+        # kb_article est vide (cf. release.yml, même step) — nécessaire ici
+        # aussi puisque ce job peut tourner la suite qualité (drift).
+        if: needs.check-model-drift.outputs.quality_memory == 'true'
+        run: uv run python scripts/seed_kb.py
       - name: Qualité + Mémoire (drift Mistral-Large-3 / claude-opus-4-5)
         if: needs.check-model-drift.outputs.quality_memory == 'true'
         run: uv run python -m velmo.mlops.drift_check --suites quality,memory --triggered-by model-drift
@@ -258,6 +264,11 @@ jobs:
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Seed FAQ (kb_article, pgvector) — idempotent, upsert par slug
+        # cf. release.yml, même step : sans lui, la suite qualité juge chaque
+        # réponse FAQ sans extrait source (kb_article vide).
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python scripts/seed_kb.py
       # `--min-score 0.0` : ce run ENREGISTRE (baseline + historique) ; la
       # décision d'alerter appartient au step suivant (règle deux-nuits).
       - name: 3 suites (bihebdomadaire)

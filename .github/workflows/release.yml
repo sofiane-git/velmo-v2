@@ -59,6 +59,15 @@ jobs:
             uv run alembic stamp head
           fi
           uv run alembic upgrade head
+      - name: Seed FAQ (kb_article, pgvector) — idempotent, upsert par slug
+        # Sans ce step, kb_article reste vide sur un environnement neuf : la
+        # suite qualité du gate juge alors chaque réponse FAQ sans aucun
+        # extrait source (0 ligne retournée par PgVectorKB.search), et la
+        # note s'effondre — constaté sur le premier run réel contre la prod
+        # (note_quality 0.39-0.41, cas q-frais-port/q-delai/q-retour/
+        # q-authenticite/q-reassort tous < 0.2). `scripts/seed_kb.py` fait un
+        # upsert par `id` (slug du fichier) : rejouable sans dupliquer.
+        run: uv run python scripts/seed_kb.py
       - name: 3 suites contre le tag (gate bloquant, vrai modèle)
         run: uv run python -m velmo.mlops.score --triggered-by ci
 
